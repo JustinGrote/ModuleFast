@@ -292,9 +292,7 @@ function Install-Modulefast {
         $moduleNugetPath = (join-path $NugetCache $moduleRelativePath).tolower()
         $moduleTargetPath = join-path $Path $moduleRelativePath
 
-        #if (-not (Test-Path $moduleNugetPath)) {write-error "$moduleNugetPath doesn't exist";continue}
-        write-host -fore magenta $moduletargetpath
-        
+        if (-not (Test-Path $moduleNugetPath)) {write-error "$moduleNugetPath doesn't exist";continue}
         if (-not (Test-Path $moduleTargetPath) -and -not $force) {
             $ModuleFolder = (Split-Path $moduleTargetPath)
             #Create the parent target folder (as well as any hierarchy) if it doesn't exist
