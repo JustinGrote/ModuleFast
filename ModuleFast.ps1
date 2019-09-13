@@ -312,6 +312,3 @@ function Install-Modulefast {
     }
 }
 
-#$t = Install-ModuleFast (Get-ModuleFast az)
-Install-Modulefast (get-modulefast az)
-
