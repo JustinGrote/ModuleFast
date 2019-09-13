@@ -298,7 +298,7 @@ function Install-Modulefast {
         if (-not (Test-Path $moduleTargetPath) -and -not $force) {
             $ModuleFolder = (Split-Path $moduleTargetPath)
             #Create the parent target folder (as well as any hierarchy) if it doesn't exist
-            [io.directory]::createdirectory($ModuleFolder)
+            [void][io.directory]::createdirectory($ModuleFolder)
 
             #Create a symlink to the module in the package repository
             if ($PSCmdlet.ShouldProcess($moduleTargetPath,"Install Powershell Module $($ModuleItem.id) $($moduleitem.version)")) {
