@@ -302,7 +302,7 @@ function Install-Modulefast {
 
             #Create a symlink to the module in the package repository
             if ($PSCmdlet.ShouldProcess($moduleTargetPath,"Install Powershell Module $($ModuleItem.id) $($moduleitem.version)")) {
-                New-Item -ItemType SymbolicLink -Path $ModuleFolder -Name $moduleitem.version -value $moduleNugetPath
+                $null = New-Item -ItemType SymbolicLink -Path $ModuleFolder -Name $moduleitem.version -value $moduleNugetPath
             }
         } else {
             write-verbose "$moduleTargetPath already exists"
