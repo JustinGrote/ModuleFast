@@ -128,7 +128,7 @@ function Get-ModuleFast {
         $baseURI = 'https://www.powershellgallery.com/api/v2/Packages'
         write-progress -id 1 -activity 'Get-ModuleFast' -currentoperation "Fetching module information from Powershell Gallery"
     }
-    
+    PROCESS {
         #TODO: Add back Get-NotInstalledModules
         $modulesToInstall = @()
         $modulesToInstall += Get-PSGalleryModule ($Name)
@@ -153,6 +153,7 @@ function Get-ModuleFast {
         }
         $modulesToInstall = $modulesToInstall | Sort-Object id,version -unique
         return $modulesToInstall
+    }
 #endregion Main
 }
 function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFileName()) {
