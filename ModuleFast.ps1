@@ -1,3 +1,5 @@
+#requires -version 5 -module ThreadJob
+
 <#
 .SYNOPSIS
 High Performance Powershell Module Installation
@@ -14,7 +16,6 @@ It also doesn't generate the PowershellGet XML files currently, so PowershellGet
 if (-not (Get-Command 'nuget.exe')) {throw "This module requires nuget.exe to be in your path. Please install it."}
 
 function Get-ModuleFast {
-    #requires -version 5 -module ThreadJob
     [CmdletBinding()]
     param(
         #A list of modules to install, specified either as strings or as hashtables with version (e.g. @{Name='test';Version='1.0'})
@@ -307,4 +308,3 @@ function Install-Modulefast {
         #[io.directory]::createdirectory($moduleTargetPath)
     }
 }
-
