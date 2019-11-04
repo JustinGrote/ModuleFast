@@ -18,8 +18,8 @@ if (-not (Get-Command 'nuget.exe')) {throw "This module requires nuget.exe to be
 function Get-ModuleFast {
     [CmdletBinding()]
     param(
-        #A list of modules to install, specified either as strings or as hashtables with version (e.g. @{Name='test';Version='1.0'})
-        [Microsoft.PowerShell.Commands.ModuleSpecification[]]$Name,
+        #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
+        [Parameter(ValueFromPipeline)][Object[]]$Name,
         #Whether to include prerelease modules in the request
         [Switch]$AllowPrerelease,
         #How far down the dependency tree to go. This generally does not need to be adjusted and is primarily a dependency loop prevention mechanism.
