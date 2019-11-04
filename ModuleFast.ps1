@@ -42,7 +42,8 @@ function Get-ModuleFast {
         [CmdletBinding()]
         param (
             [Parameter(Mandatory)][Microsoft.PowerShell.Commands.ModuleSpecification[]]$Name,
-            [string[]]$Properties=[string[]]('Id','Version','NormalizedVersion','Dependencies')
+            [string[]]$Properties=[string[]]('Id','Version','NormalizedVersion','Dependencies'),
+            [Switch]$AllowPrerelease
         )
 
         $queries = Foreach ($ModuleSpecItem in $Name) {
@@ -53,7 +54,7 @@ function Get-ModuleFast {
             
             $FilterSet = @()
             $FilterSet += "Id eq '$ModuleId'"
-            $FilterSet += "IsPrerelease eq false"
+            $FilterSet += "IsPrerelease eq $AllowPrerelease"
             switch ($true) {
                 ([bool]$ModuleSpecItem.Version) {
                     $FilterSet += "Version eq '$($ModuleSpecItem.Version)'"
