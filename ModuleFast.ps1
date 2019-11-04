@@ -29,98 +29,98 @@ function Get-ModuleFast {
     BEGIN {
 #region Helpers
     #Check installation
-    function Get-NotInstalledModules ([String[]]$Name) {
-        $InstalledModules = Get-Module $Name -ListAvailable
-        $Name.where{
-            $isInstalled = $PSItem -notin $InstalledModules.Name
-            if ($isInstalled) {write-verbose "$PSItem is already installed. Skipping..."}
-            return $isInstalled
-        }
-    }
-    function Get-PSGalleryModule {
-        [CmdletBinding()]
-        param (
-            [Parameter(Mandatory)][Microsoft.PowerShell.Commands.ModuleSpecification[]]$Name,
-            [string[]]$Properties=[string[]]('Id','Version','NormalizedVersion','Dependencies'),
-            [Switch]$AllowPrerelease
-        )
-
-        $queries = Foreach ($ModuleSpecItem in $Name) {
-            $galleryQuery = [uribuilder]$baseUri
-            #Creates a Query Name Value Builder
-            $queryBuilder = [web.httputility]::ParseQueryString($null)
-            $ModuleId = $ModuleSpecItem.Name
-            
-            $FilterSet = @()
-            $FilterSet += "Id eq '$ModuleId'"
-            $FilterSet += "IsPrerelease eq $AllowPrerelease"
-            switch ($true) {
-                ([bool]$ModuleSpecItem.Version) {
-                    $FilterSet += "Version eq '$($ModuleSpecItem.Version)'"
-                    #Don't need to add required and minimum if an explicit version was specified, hence the break
-                    break
-                }
-                #We use "required" as "minimum" for purposes of the gallery query
-                ([bool]$ModuleSpecItem.RequiredVersion) {
-                    $FilterSet += "Version ge '$($ModuleSpecItem.RequiredVersion)'"
-                }
-                #We assume for now that if you set the max as "2.0" you really meant "1.99"
-                #TODO: Fix this to handle explicit/implicit dependencies
-                ([bool]$ModuleSpecItem.MaximumVersion) {
-                    $FilterSet += "Version lt '$($ModuleSpecItem.MaximumVersion)'"
-                }
-            }
-            #Construct the Odata Query
-            $Filter = $FilterSet -join ' and '
-            [void]$queryBuilder.Add('$top',"1")
-            [void]$queryBuilder.Add('$filter',$Filter)
-            [void]$queryBuilder.Add('$orderby','Version desc')
-            [void]$queryBuilder.Add('$select',($Properties -join ','))
-    
-            $galleryQuery.Query = $queryBuilder.tostring()
-            write-debug $galleryquery.uri
-            $httpClient.GetStringAsync($galleryQuery.Uri)
-        }
-
-        #Construct a summary object
-        foreach ($moduleItem in ($queries.result.foreach{[xml]$PSItem}).feed.entry) {
-            $OutputProperties = $Properties + @{N='Source';E={$ModuleItem.content.src}}
-            $ModuleItem.properties | select $OutputProperties
-        }
-    }
-    function Parse-NugetDependency ([String]$DependencyString) {
-        #NOTE: RequiredVersion is used for Minimumversion and ModuleVersion is RequiredVersion for purposes of Nuget query
-        $DependencyParts = $DependencyString -split '\:'
-        $dep = @{
-            ModuleName = $DependencyParts[0]
-        }
-        $Version = $DependencyParts[1]
-
-        if($Version)
-        {
-            #If it is an exact match version (has brackets and doesn't have a comma), set version accordingly
-            $ExactVersionRegex = '\[([^,]+)\]'
-            if ($version -match $ExactVersionRegex) {
-                return $dep.Version = $matches[1]
-            }
-
-            #Parse all other remainder options. For this purpose we ignore inclusive vs. exclusive
-            #TODO: Add inclusive/exclusive parsing
-            $version = $version -replace '[\[\(\)\]]','' -split ','
-            $requiredVersion = $version[0].trim()
-            $maximumVersion = $version[1].trim()
-            if ($requiredVersion -and $maximumVersion -and ($requiredversion -eq $maximumversion)) {
-                $dep.ModuleVersion = $requiredversion
-            } elseif ($requiredversion -or $maximumversion) {
-                if ($requiredversion) {$dep.RequiredVersion = $requiredVersion}
-                if ($maximumversion) {$dep.MaximumVersion  = $maximumVersion}
-            } else {
-                #If no matching version works, just set dep to a string of the modulename
-                [string]$dep = $DependencyParts[0]
+        function Get-NotInstalledModules ([String[]]$Name) {
+            $InstalledModules = Get-Module $Name -ListAvailable
+            $Name.where{
+                $isInstalled = $PSItem -notin $InstalledModules.Name
+                if ($isInstalled) {write-verbose "$PSItem is already installed. Skipping..."}
+                return $isInstalled
             }
         }
-        return [Microsoft.PowerShell.Commands.ModuleSpecification]$dep
-    }
+        function Get-PSGalleryModule {
+            [CmdletBinding()]
+            param (
+                [Parameter(Mandatory)][Microsoft.PowerShell.Commands.ModuleSpecification[]]$Name,
+                [string[]]$Properties=[string[]]('Id','Version','NormalizedVersion','Dependencies'),
+                [Switch]$AllowPrerelease
+            )
+
+            $queries = Foreach ($ModuleSpecItem in $Name) {
+                $galleryQuery = [uribuilder]$baseUri
+                #Creates a Query Name Value Builder
+                $queryBuilder = [web.httputility]::ParseQueryString($null)
+                $ModuleId = $ModuleSpecItem.Name
+                
+                $FilterSet = @()
+                $FilterSet += "Id eq '$ModuleId'"
+                $FilterSet += "IsPrerelease eq $AllowPrerelease"
+                switch ($true) {
+                    ([bool]$ModuleSpecItem.Version) {
+                        $FilterSet += "Version eq '$($ModuleSpecItem.Version)'"
+                        #Don't need to add required and minimum if an explicit version was specified, hence the break
+                        break
+                    }
+                    #We use "required" as "minimum" for purposes of the gallery query
+                    ([bool]$ModuleSpecItem.RequiredVersion) {
+                        $FilterSet += "Version ge '$($ModuleSpecItem.RequiredVersion)'"
+                    }
+                    #We assume for now that if you set the max as "2.0" you really meant "1.99"
+                    #TODO: Fix this to handle explicit/implicit dependencies
+                    ([bool]$ModuleSpecItem.MaximumVersion) {
+                        $FilterSet += "Version lt '$($ModuleSpecItem.MaximumVersion)'"
+                    }
+                }
+                #Construct the Odata Query
+                $Filter = $FilterSet -join ' and '
+                [void]$queryBuilder.Add('$top',"1")
+                [void]$queryBuilder.Add('$filter',$Filter)
+                [void]$queryBuilder.Add('$orderby','Version desc')
+                [void]$queryBuilder.Add('$select',($Properties -join ','))
+        
+                $galleryQuery.Query = $queryBuilder.tostring()
+                write-debug $galleryquery.uri
+                $httpClient.GetStringAsync($galleryQuery.Uri)
+            }
+
+            #Construct a summary object
+            foreach ($moduleItem in ($queries.result.foreach{[xml]$PSItem}).feed.entry) {
+                $OutputProperties = $Properties + @{N='Source';E={$ModuleItem.content.src}}
+                $ModuleItem.properties | select $OutputProperties
+            }
+        }
+        function Parse-NugetDependency ([String]$DependencyString) {
+            #NOTE: RequiredVersion is used for Minimumversion and ModuleVersion is RequiredVersion for purposes of Nuget query
+            $DependencyParts = $DependencyString -split '\:'
+            $dep = @{
+                ModuleName = $DependencyParts[0]
+            }
+            $Version = $DependencyParts[1]
+
+            if($Version)
+            {
+                #If it is an exact match version (has brackets and doesn't have a comma), set version accordingly
+                $ExactVersionRegex = '\[([^,]+)\]'
+                if ($version -match $ExactVersionRegex) {
+                    return $dep.Version = $matches[1]
+                }
+
+                #Parse all other remainder options. For this purpose we ignore inclusive vs. exclusive
+                #TODO: Add inclusive/exclusive parsing
+                $version = $version -replace '[\[\(\)\]]','' -split ','
+                $requiredVersion = $version[0].trim()
+                $maximumVersion = $version[1].trim()
+                if ($requiredVersion -and $maximumVersion -and ($requiredversion -eq $maximumversion)) {
+                    $dep.ModuleVersion = $requiredversion
+                } elseif ($requiredversion -or $maximumversion) {
+                    if ($requiredversion) {$dep.RequiredVersion = $requiredVersion}
+                    if ($maximumversion) {$dep.MaximumVersion  = $maximumVersion}
+                } else {
+                    #If no matching version works, just set dep to a string of the modulename
+                    [string]$dep = $DependencyParts[0]
+                }
+            }
+            return [Microsoft.PowerShell.Commands.ModuleSpecification]$dep
+        }
 #endregion Helpers
 #region Main
         #Only need one httpclient for all operations
@@ -129,7 +129,6 @@ function Get-ModuleFast {
         write-progress -id 1 -activity 'Get-ModuleFast' -currentoperation "Fetching module information from Powershell Gallery"
     }
     
-    PROCESS {
         #TODO: Add back Get-NotInstalledModules
         $modulesToInstall = @()
         $modulesToInstall += Get-PSGalleryModule ($Name)
@@ -154,7 +153,6 @@ function Get-ModuleFast {
         }
         $modulesToInstall = $modulesToInstall | Sort-Object id,version -unique
         return $modulesToInstall
-    }
 #endregion Main
 }
 function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFileName()) {
