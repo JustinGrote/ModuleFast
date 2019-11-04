@@ -20,6 +20,8 @@ function Get-ModuleFast {
     param(
         #A list of modules to install, specified either as strings or as hashtables with version (e.g. @{Name='test';Version='1.0'})
         [Microsoft.PowerShell.Commands.ModuleSpecification[]]$Name,
+        #Whether to include prerelease modules in the request
+        [Switch]$AllowPrerelease,
         #How far down the dependency tree to go. This generally does not need to be adjusted and is primarily a dependency loop prevention mechanism.
         $Depth = 10
     )
