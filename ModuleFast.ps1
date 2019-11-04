@@ -26,8 +26,7 @@ function Get-ModuleFast {
         $Depth = 10
     )
 
-    #parse the Name for hashtables
-
+#region Helpers
     #Check installation
     function Get-NotInstalledModules ([String[]]$Name) {
         $InstalledModules = Get-Module $Name -ListAvailable
@@ -37,12 +36,6 @@ function Get-ModuleFast {
             return $isInstalled
         }
     }
-
-    #Only need one httpclient for all operations
-    if (-not $httpclient) {$SCRIPT:httpClient = [Net.Http.HttpClient]::new()}
-    $baseURI = 'https://www.powershellgallery.com/api/v2/Packages'
-    write-progress -id 1 -activity 'Get-ModuleFast' -currentoperation "Fetching module information from Powershell Gallery"
-
     function Get-PSGalleryModule {
         [CmdletBinding()]
         param (
@@ -94,11 +87,6 @@ function Get-ModuleFast {
             $ModuleItem.properties | select $OutputProperties
         }
     }
-
-    #TODO: Add back Get-NotInstalledModules
-    $modulesToInstall = @()
-    $modulesToInstall += Get-PSGalleryModule ($Name)
-
     function Parse-NugetDependency ([String]$DependencyString) {
         #NOTE: RequiredVersion is used for Minimumversion and ModuleVersion is RequiredVersion for purposes of Nuget query
         $DependencyParts = $DependencyString -split '\:'
@@ -133,28 +121,43 @@ function Get-ModuleFast {
         return [Microsoft.PowerShell.Commands.ModuleSpecification]$dep
     }
 
-    #Loop through dependencies to the expected depth
-    $currentDependencies = @($modulesToInstall.dependencies.where{$PSItem})
-    $i=0
 
-    while ($currentDependencies -and ($i -le $depth)) {
-        write-verbose "$($currentDependencies.count) modules had additional dependencies, fetching..."
-        $i++
-        $dependencyName = $CurrentDependencies -split '\|' | ForEach-Object {
-            Parse-NugetDependency $PSItem
-        } | Sort-Object -unique
-        if ($dependencyName) {
-            $dependentModules = Get-PSGalleryModule $dependencyName
-            $modulesToInstall += $dependentModules
-            $currentDependencies = $dependentModules.dependencies.where{$PSItem}
-        } else {
-            $currentDependencies = $false
-        }
+#endregion Helpers
+#region Main
+    begin {
+        #Only need one httpclient for all operations
+        if (-not $httpclient) {$SCRIPT:httpClient = [Net.Http.HttpClient]::new()}
+        $baseURI = 'https://www.powershellgallery.com/api/v2/Packages'
+        write-progress -id 1 -activity 'Get-ModuleFast' -currentoperation "Fetching module information from Powershell Gallery"
     }
+    
+    process {
+        #TODO: Add back Get-NotInstalledModules
+        $modulesToInstall = @()
+        $modulesToInstall += Get-PSGalleryModule ($Name)
 
+        #Loop through dependencies to the expected depth
+        $currentDependencies = @($modulesToInstall.dependencies.where{$PSItem})
+        $i=0
 
-    $modulesToInstall = $modulesToInstall | Sort-Object id,version -unique
-    return $modulesToInstall
+        while ($currentDependencies -and ($i -le $depth)) {
+            write-verbose "$($currentDependencies.count) modules had additional dependencies, fetching..."
+            $i++
+            $dependencyName = $CurrentDependencies -split '\|' | ForEach-Object {
+                Parse-NugetDependency $PSItem
+            } | Sort-Object -unique
+            if ($dependencyName) {
+                $dependentModules = Get-PSGalleryModule $dependencyName
+                $modulesToInstall += $dependentModules
+                $currentDependencies = $dependentModules.dependencies.where{$PSItem}
+            } else {
+                $currentDependencies = $false
+            }
+        }
+        $modulesToInstall = $modulesToInstall | Sort-Object id,version -unique
+        return $modulesToInstall
+    }
+#endregion Main
 }
 function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFileName()) {
     $packageConfig = [xml.xmlwriter]::Create([string]$Path)
