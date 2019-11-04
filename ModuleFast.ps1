@@ -26,6 +26,8 @@ function Get-ModuleFast {
         $Depth = 10
     )
 
+    #parse the Name for hashtables
+
     #Check installation
     function Get-NotInstalledModules ([String[]]$Name) {
         $InstalledModules = Get-Module $Name -ListAvailable
