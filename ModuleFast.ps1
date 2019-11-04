@@ -26,6 +26,7 @@ function Get-ModuleFast {
         $Depth = 10
     )
 
+    BEGIN {
 #region Helpers
     #Check installation
     function Get-NotInstalledModules ([String[]]$Name) {
@@ -120,18 +121,15 @@ function Get-ModuleFast {
         }
         return [Microsoft.PowerShell.Commands.ModuleSpecification]$dep
     }
-
-
 #endregion Helpers
 #region Main
-    begin {
         #Only need one httpclient for all operations
         if (-not $httpclient) {$SCRIPT:httpClient = [Net.Http.HttpClient]::new()}
         $baseURI = 'https://www.powershellgallery.com/api/v2/Packages'
         write-progress -id 1 -activity 'Get-ModuleFast' -currentoperation "Fetching module information from Powershell Gallery"
     }
     
-    process {
+    PROCESS {
         #TODO: Add back Get-NotInstalledModules
         $modulesToInstall = @()
         $modulesToInstall += Get-PSGalleryModule ($Name)
