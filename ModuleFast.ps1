@@ -1,4 +1,4 @@
-#requires -version 5 -module ThreadJob
+#requires -version 5
 
 <#
 .SYNOPSIS
@@ -50,7 +50,7 @@ function Get-ModuleFast {
                 #Creates a Query Name Value Builder
                 $queryBuilder = [web.httputility]::ParseQueryString($null)
                 $ModuleId = $ModuleSpecItem.Name
-                
+
                 $FilterSet = @()
                 $FilterSet += "Id eq '$ModuleId'"
                 $FilterSet += "IsPrerelease eq $AllowPrerelease"
@@ -76,7 +76,7 @@ function Get-ModuleFast {
                 [void]$queryBuilder.Add('$filter',$Filter)
                 [void]$queryBuilder.Add('$orderby','Version desc')
                 [void]$queryBuilder.Add('$select',($Properties -join ','))
-        
+
                 $galleryQuery.Query = $queryBuilder.tostring()
                 write-debug $galleryquery.uri
                 $httpClient.GetStringAsync($galleryQuery.Uri)
@@ -176,7 +176,7 @@ function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFi
 function Install-Modulefast {
     [CmdletBinding()]
     param(
-        $ModulesToInstall, 
+        $ModulesToInstall,
         $Path,
         $ModuleCache = (New-Item -ItemType Directory -Force -Path (Join-Path ([io.path]::GetTempPath()) 'ModuleFastCache')),
         $NuGetCache = [io.path]::Combine([string[]]("$HOME",'.nuget','psgallery')),
@@ -191,7 +191,7 @@ function Install-Modulefast {
         if ($isLinux) {$envSeparator = ':'}
         $Path = ($env:PSModulePath -split $envSeparator)[0]
     }
-    
+
     if (-not $httpclient) {$SCRIPT:httpClient = [Net.Http.HttpClient]::new()}
     $baseURI = 'https://www.powershellgallery.com/api/v2/package/'
     write-progress -id 1 -activity 'Install-Modulefast' -Status "Creating Download Tasks for $($ModulesToInstall.count) modules"
@@ -269,7 +269,7 @@ function Install-Modulefast {
 
     $timer = [diagnostics.stopwatch]::startnew()
     $moduleCount = $modulestoinstall.id.count
-    $ipackage = 0 
+    $ipackage = 0
     #Initialize the files in the repository, if relevant
     & nuget.exe init $ModuleCache $NugetCache | where {$PSItem -match 'already exists|installing'} | foreach {
         if ($ipackage -lt $modulecount) {$ipackage++}
