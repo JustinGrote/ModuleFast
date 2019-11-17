@@ -88,6 +88,7 @@ function Get-ModuleFast {
                 $ModuleItem.properties | select $OutputProperties
             }
         }
+
         function Parse-NugetDependency ([String]$DependencyString) {
             #NOTE: RequiredVersion is used for Minimumversion and ModuleVersion is RequiredVersion for purposes of Nuget query
             $DependencyParts = $DependencyString -split '\:'
