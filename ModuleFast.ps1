@@ -53,7 +53,7 @@ function Get-ModuleFast {
 
                 $FilterSet = @()
                 $FilterSet += "Id eq '$ModuleId'"
-                $FilterSet += "IsPrerelease eq $($AllowPrerelease.tolower())"
+                $FilterSet += "IsPrerelease eq $(([String]$AllowPrerelease).tolower())"
                 switch ($true) {
                     ([bool]$ModuleSpecItem.Version) {
                         $FilterSet += "Version eq '$($ModuleSpecItem.Version)'"
