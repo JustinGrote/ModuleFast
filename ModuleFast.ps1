@@ -29,6 +29,24 @@ class ComparableModuleSpecification : ModuleSpecification {
     ComparableModuleSpecification(): base() {}
     ComparableModuleSpecification([string]$moduleName): base($moduleName) {}
     ComparableModuleSpecification([hashtable]$moduleSpecification): base($moduleSpecification) {}
+    hidden static [ComparableModuleSpecification] op_Implicit([ModuleSpecification]$spec) {
+        return [ComparableModuleSpecification]@{
+            Name            = $spec.Name
+            Guid            = $spec.Guid
+            Version         = $spec.Version
+            RequiredVersion = $spec.RequiredVersion
+            MaximumVersion  = $spec.MaximumVersion
+        }
+    }
+    [ModuleSpecification] ToModuleSpecification() {
+        return [ModuleSpecification]@{
+            Name            = $this.Name
+            Guid            = $this.Guid
+            Version         = $this.Version
+            RequiredVersion = $this.RequiredVersion
+            MaximumVersion  = $this.MaximumVersion
+        }
+    }
 
     # Concatenate the properties into a string to generate a hashcode
     [int] GetHashCode() {
@@ -50,7 +68,8 @@ function Get-ModuleFast {
     )
 
     BEGIN {
-        [List[ComparableModuleSpecification]]$modulesToResolve = @()
+        $ErrorActionPreference = 'Stop'
+        [HashSet[ComparableModuleSpecification]]$modulesToResolve = @()
 
         #Only need one httpclient for all operations
         if (-not $httpclient) {
@@ -58,14 +77,18 @@ function Get-ModuleFast {
             $httpHandler = [SocketsHttpHandler]@{
                 MaxConnectionsPerServer = 10
                 ConnectTimeout          = 1000
-
             }
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
         }
         Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
     PROCESS {
-        $ModulesToResolve.Add($Name)
+        foreach ($spec in $Name) {
+            if (-not $ModulesToResolve.Add($spec)) {
+                Write-Warning "Already searching for $($spec.Name)"
+            }
+        }
+
     }
     END {
         [List[Task[String]]]$resolveTasks = @()
@@ -424,3 +447,5 @@ filter Parse-NugetDependency ([Parameter(ValueFromPipeline)][String]$DependencyS
 }
 
 #endregion Helpers
+
+# Export-ModuleMember Get-ModuleFast
