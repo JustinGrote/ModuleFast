@@ -20,6 +20,25 @@ It also doesn't generate the PowershellGet XML files currently, so PowershellGet
 
 # if (-not (Get-Command 'nuget.exe')) {throw "This module requires nuget.exe to be in your path. Please install it."}
 
+
+<#
+A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
+values are the same. This should also be consistent across processes and can be cached.
+#>
+class ComparableModuleSpecification : ModuleSpecification {
+    ComparableModuleSpecification(): base() {}
+    ComparableModuleSpecification([string]$moduleName): base($moduleName) {}
+    ComparableModuleSpecification([hashtable]$moduleSpecification): base($moduleSpecification) {}
+
+    # Concatenate the properties into a string to generate a hashcode
+    [int] GetHashCode() {
+        return ($this.Name, $this.Guid, $this.Version, $this.MaximumVersion, $this.RequiredVersion -join ':').GetHashCode()
+    }
+    [bool] Equals($obj) {
+        return $this.GetHashCode().Equals($obj.GetHashCode())
+    }
+}
+
 function Get-ModuleFast {
     [CmdletBinding()]
     param(
@@ -31,13 +50,15 @@ function Get-ModuleFast {
     )
 
     BEGIN {
-        [List[ModuleSpecification]]$modulesToResolve = @()
+        [List[ComparableModuleSpecification]]$modulesToResolve = @()
 
         #Only need one httpclient for all operations
         if (-not $httpclient) {
-            #This is the modern default handler for HttpClient. We want more concurrent connections to improve our performance
+            #This is the modern default handler for HttpClient. We want more concurrent connections to improve our performance and fairly aggressive timeouts
             $httpHandler = [SocketsHttpHandler]@{
-                MaxConnectionsPerServer = 100
+                MaxConnectionsPerServer = 10
+                ConnectTimeout          = 1000
+
             }
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
         }
@@ -48,57 +69,76 @@ function Get-ModuleFast {
     }
     END {
         [List[Task[String]]]$resolveTasks = @()
-        [ConcurrentDictionary[String, ModuleSpecification]]$modulesToInstall = @{}
+        [ConcurrentDictionary[String, ComparableModuleSpecification]]$modulesToInstall = @{}
 
-        while ($modulesToResolve) {
-            foreach ($moduleToResolve in $modulesToResolve) {
-                $resolveTask = Get-PSGalleryModuleInfoAsync $moduleToResolve
-                $resolveTasks.Add($resolveTask)
+
+        foreach ($moduleToResolve in $modulesToResolve) {
+            $resolveTask = Get-PSGalleryModuleInfoAsync $moduleToResolve
+            $resolveTasks.Add($resolveTask)
+        }
+
+        while ($resolveTasks) {
+            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks)
+            $completedTask = $resolveTasks[$thisTaskIndex]
+            #Doing this provides a proper exception if there is an error rather than aggregate exception
+            #TODO: TryCatch logic for GetResult
+            [string]$moduleData = $completedTask.result
+            $moduleItem = ([xml]$moduleData).feed.entry
+            #TODO: Consolidate this
+            [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion')
+            $OutputProperties = $Properties + @{N = 'Source'; E = { $ModuleItem.content.src } } + @{N = 'Dependencies'; E = { $_.Dependencies.split(':|').TrimEnd(':') } }
+            $moduleInfo = $ModuleItem.properties | Select-Object $OutputProperties
+
+            #Create a module spec with our returned info
+            [ComparableModuleSpecification]$moduleSpec = @{
+                ModuleName      = $moduleInfo.Id
+                RequiredVersion = $moduleInfo.Version
             }
-            while ($resolveTasks) {
-                [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks)
-                $completedTask = $resolveTasks[$thisTaskIndex]
-                #Doing this provides a proper exception if there is an error rather than aggregate exception
-                #TODO: TryCatch logic for GetResult
-                [string]$moduleData = $completedTask.result
-                $moduleItem = ([xml]$moduleData).feed.entry
-                #TODO: Consolidate this
-                [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion')
-                $OutputProperties = $Properties + @{N = 'Source'; E = { $ModuleItem.content.src } } + @{N = 'Dependencies'; E = { $_.Dependencies.split(':|').TrimEnd(':') } }
-                $moduleInfo = $ModuleItem.properties | Select-Object $OutputProperties
+            #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
+            [string]$moduleKey = $moduleSpec.Name, $moduleSpec.RequiredVersion -join '-'
 
-                #Create a module spec with our returned info
-                [ModuleSpecification]$moduleSpec = @{
-                    ModuleName      = $moduleInfo.Id
-                    RequiredVersion = $moduleInfo.Version
-                }
-                #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
-                [string]$moduleKey = $moduleSpec.Name, $moduleSpec.RequiredVersion -join '-'
-
-                #Check if we have already processed this item and move on if we have
-                if ($modulesToInstall.ContainsKey($moduleKey)) {
-                    Write-Debug "$ModuleKey ModulesToInstall already exists. Skipping..."
-                    $resolveTasks.RemoveAt($thisTaskIndex)
-                    continue
-                }
-
-                Write-Debug "$ModuleKey Adding to ModulesToInstall. "
-
-                $modulesToInstall[$moduleKey] = $moduleSpec
-
-                #Determine dependencies and add them to the pending tasks
-                if ($moduleInfo.Dependencies) {
-                    [ModuleSpecification[]]$dependencyModuleInfo = $moduleInfo.Dependencies | Parse-NugetDependency
-                    Write-Debug "$($moduleSpec.Name) has $($dependencyModuleInfo.count) dependencies"
-                    $modulesToResolve.AddRange($dependencyModuleInfo)
-                }
-
+            #Check if we have already processed this item and move on if we have
+            if ($modulesToInstall.ContainsKey($moduleKey)) {
+                Write-Debug "$ModuleKey ModulesToInstall already exists. Skipping..."
                 $resolveTasks.RemoveAt($thisTaskIndex)
+                Write-Debug "Remaining Tasks: $($resolveTasks.count)"
+                continue
             }
-            Write-Debug "Finished processing ${$moduleToResolve.Name}"
-            if (-not $modulesToResolve.Remove($moduleToResolve)) {
-                throw 'There was an error removing a moduleToResolve. This should not happen'
+
+            Write-Debug "$ModuleKey Adding to ModulesToInstall. "
+
+            $modulesToInstall[$moduleKey] = $moduleSpec
+
+            #Determine dependencies and add them to the pending tasks
+            if ($moduleInfo.Dependencies) {
+                [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
+                Write-Debug "$($moduleSpec.Name) has $($dependencies.count) dependencies"
+                foreach ($dependency in $dependencies) {
+                    #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
+                    [string]$dependencyKey = $dependency.Name, $dependency.RequiredVersion -join '-'
+
+                    #Check if we have already processed this item and move on if we have
+                    if ($modulesToInstall.ContainsKey($dependencyKey)) {
+                        Write-Debug "$ModuleKey dependency - ModulesToInstall already exists. Skipping..."
+                        Write-Debug "Remaining Tasks: $($resolveTasks.count)"
+                        continue
+                    }
+
+                    #Check
+                    #TODO: Lookup instead of enumerable, should be fast enough for now
+
+                    Write-Debug "Start lookup for $ModuleKey"
+                    $resolveTask = Get-PSGalleryModuleInfoAsync $dependency
+                    $resolveTasks.Add($resolveTask)
+                }
             }
+
+            $resolveTasks.RemoveAt($thisTaskIndex)
+            Write-Debug "Remaining Tasks: $($resolveTasks.count)"
+        }
+        Write-Debug "Finished processing ${$moduleToResolve.Name}"
+        if (-not $modulesToResolve.Remove($moduleToResolve)) {
+            throw 'There was an error removing a moduleToResolve. This should not happen'
         }
     }
 
@@ -300,7 +340,7 @@ function Get-PSGalleryModuleInfoAsync {
     param (
         [Parameter(Mandatory, ValueFromPipeline)][Microsoft.PowerShell.Commands.ModuleSpecification]$Name,
         [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion', 'Dependencies'),
-        [string]$Uri = 'https://powershellgallery.com/api/v2/Packages',
+        [string]$Uri = 'https://www.powershellgallery.com/api/v2/Packages',
         [HttpClient]$HttpClient = [HttpClient]::new(),
         [Switch]$PreRelease
     )
@@ -315,14 +355,13 @@ function Get-PSGalleryModuleInfoAsync {
         $FilterSet += "Id eq '$ModuleId'"
         $FilterSet += "IsPrerelease eq $(([String]$PreRelease).ToLower())"
         switch ($true) {
-            ([bool]$Name.Version) {
-                $FilterSet += "Version eq '$($Name.Version)'"
-                #Don't need to add required and minimum if an explicit version was specified, hence the break
+            ([bool]$Name.RequiredVersion) {
+                $FilterSet += "Version eq '$($Name.RequiredVersion)'"
+                #RequiredVersion is exact, so we dont need to check other version fields
                 break
             }
-            #We use "required" as "minimum" for purposes of the gallery query
-            ([bool]$Name.RequiredVersion) {
-                $FilterSet += "Version ge '$($Name.RequiredVersion)'"
+            ([bool]$Name.Version) {
+                $FilterSet += "Version ge '$($Name.Version)'"
             }
             #We assume for now that if you set the max as "2.0" you really meant "1.99"
             #TODO: Fix this to handle explicit/implicit dependencies
@@ -342,13 +381,13 @@ function Get-PSGalleryModuleInfoAsync {
         Write-Debug $galleryquery.uri
         return $httpClient.GetStringAsync($galleryQuery.Uri)
     }
-
-
 }
 
 filter Parse-NugetDependency ([Parameter(ValueFromPipeline)][String]$DependencyString) {
     #NOTE: RequiredVersion is used for Minimumversion and ModuleVersion is RequiredVersion for purposes of Nuget query
     $DependencyParts = $DependencyString -split '\:'
+
+    #NOTE: This can't be a modulespecification from the start because modulespecs are immutable
     $dep = @{
         ModuleName = $DependencyParts[0]
     }
@@ -358,25 +397,30 @@ filter Parse-NugetDependency ([Parameter(ValueFromPipeline)][String]$DependencyS
         #If it is an exact match version (has brackets and doesn't have a comma), set version accordingly
         $ExactVersionRegex = '\[([^,]+)\]'
         if ($version -match $ExactVersionRegex) {
-            return $dep.Version = $matches[1]
+            $dep.RequiredVersion = $matches[1]
+            return [ComparableModuleSpecification]$dep
         }
 
         #Parse all other remainder options. For this purpose we ignore inclusive vs. exclusive
         #TODO: Add inclusive/exclusive parsing
         $version = $version -replace '[\[\(\)\]]', '' -split ','
-        $requiredVersion = $version[0].trim()
+
+        $minimumVersion = $version[0].trim()
         $maximumVersion = $version[1].trim()
-        if ($requiredVersion -and $maximumVersion -and ($requiredversion -eq $maximumversion)) {
-            $dep.ModuleVersion = $requiredversion
-        } elseif ($requiredversion -or $maximumversion) {
-            if ($requiredversion) { $dep.RequiredVersion = $requiredVersion }
-            if ($maximumversion) { $dep.MaximumVersion = $maximumVersion }
+        if ($minimumVersion -and $maximumVersion -and ($minimumVersion -eq $maximumVersion)) {
+            #If the minimum and maximum versions match, we treat this as an explicit version
+            $dep.RequiredVersion = $minimumVersion
+            return [ComparableModuleSpecification]$dep
+        } elseif ($minimumVersion -or $maximumVersion) {
+            if ($minimumVersion) { $dep.ModuleVersion = $minimumVersion }
+            if ($maximumVersion) { $dep.MaximumVersion = $maximumVersion }
         } else {
             #If no matching version works, just set dep to a string of the modulename
-            [string]$dep = $DependencyParts[0]
+            Write-Warning "$($dep.Name) has an invalid version spec, falling back to maximum version."
         }
     }
-    return [ModuleSpecification]$dep
+
+    return [ComparableModuleSpecification]$dep
 }
 
 #endregion Helpers
