@@ -79,16 +79,19 @@ function Get-ModuleFast {
                 ConnectTimeout          = 1000
             }
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
+            $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
+            $httpClient.DefaultRequestHeaders = @{
+                'Content-Type' = 'multipart/mixed; boundary=GetModuleFastBatch'
+            }
         }
         Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
     PROCESS {
         foreach ($spec in $Name) {
             if (-not $ModulesToResolve.Add($spec)) {
-                Write-Warning "Already searching for $($spec.Name)"
+                Write-Warning "$spec was specified twice, skipping duplicate"
             }
         }
-
     }
     END {
         [List[Task[String]]]$resolveTasks = @()
@@ -445,6 +448,36 @@ filter Parse-NugetDependency ([Parameter(ValueFromPipeline)][String]$DependencyS
 
     return [ComparableModuleSpecification]$dep
 }
+
+
+# Builds a multipart query using .NET objects that can be submitted via HTTP
+filter New-MultipartQuery ([string]$content, [string]$boundary = "powershell-$(New-Guid)") {
+    begin {
+        [MultipartContent]$request = [MultipartContent]::new('mixed', $boundary)
+        $request.Headers['Accept'] = 'application/xml'
+    }
+
+    [StringContent]
+}
+
+# Takes a group of queries and converts them to a single odata batch request body used for httpclient
+# filter ConvertTo-BatchRequest([Parameter(Mandatory,ValueFromPipeline)][string]$query, [string]$batchBoundary='GetModuleFastBatch') {
+#     begin {
+#         [text.StringBuilder]$body = @'
+# ---batch
+#         '@
+#     }
+
+#     $body.AppendLine(
+
+#     )
+# }
+
+# Create a http multipart query
+
+
+#Multipart stuff
+
 
 #endregion Helpers
 
