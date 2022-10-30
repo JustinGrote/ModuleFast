@@ -3,6 +3,6 @@ BeforeAll {
 }
 Describe 'Get-PSGalleryModule' {
   It 'Gets Module' {
-    Get-PS
+    Get-ModuleFast 'ImportExcel'
   }
 }

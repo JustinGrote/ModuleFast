@@ -81,9 +81,6 @@ function Get-ModuleFast {
             }
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
             $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
-            $httpClient.DefaultRequestHeaders = @{
-                'Content-Type' = 'multipart/mixed; boundary=GetModuleFastBatch'
-            }
         }
         Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
@@ -95,7 +92,7 @@ function Get-ModuleFast {
         }
     }
     END {
-        [List[Task[String]]]$resolveTasks = @()
+        [List[Task[HttpResponseMessage]]]$resolveTasks = @()
         [ConcurrentDictionary[String, ComparableModuleSpecification]]$modulesToInstall = @{}
 
 
@@ -105,64 +102,81 @@ function Get-ModuleFast {
         }
 
         while ($resolveTasks) {
-            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks)
+            #The timeout here allow ctrl-C to continue working in PowerShell
+            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks, 500)
+            # -1 indicates no task was complete before the timeout was reached
+            if ($thisTaskIndex -eq -1) { continue }
+
+            #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
+            #For now the content is small but this could be faster if we have another inner loop that WaitOne's on content
             $completedTask = $resolveTasks[$thisTaskIndex]
-            #Doing this provides a proper exception if there is an error rather than aggregate exception
+
+            # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
             #TODO: TryCatch logic for GetResult
-            [string]$moduleData = $completedTask.result
-            $moduleItem = ([xml]$moduleData).feed.entry
-            #TODO: Consolidate this
-            [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion')
-            $OutputProperties = $Properties + @{N = 'Source'; E = { $ModuleItem.content.src } } + @{N = 'Dependencies'; E = { $_.Dependencies.split(':|').TrimEnd(':') } }
-            $moduleInfo = $ModuleItem.properties | Select-Object $OutputProperties
+            [string[]]$response = ConvertFrom-MultiPartResponse $completedTask.GetAwaiter().GetResult()
 
-            #Create a module spec with our returned info
-            [ComparableModuleSpecification]$moduleSpec = @{
-                ModuleName      = $moduleInfo.Id
-                RequiredVersion = $moduleInfo.Version
-            }
-            #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
-            [string]$moduleKey = $moduleSpec.Name, $moduleSpec.RequiredVersion -join '-'
+            #HACK: We get back headers with this multipart response too. I can't find a good built-in method to parse
+            # this into an HttpResponse so we are going to make a *BIG* assumption that the body is the third "paragraph"
+            # after the Headers. This might not work cross-platform either.
+            #TODO: Find a more accurate and safe way of parsing this
+            $responseBody = $response.split([Environment]::NewLine * 2)[2]
 
-            #Check if we have already processed this item and move on if we have
-            if ($modulesToInstall.ContainsKey($moduleKey)) {
-                Write-Debug "$ModuleKey ModulesToInstall already exists. Skipping..."
-                $resolveTasks.RemoveAt($thisTaskIndex)
-                Write-Debug "Remaining Tasks: $($resolveTasks.count)"
-                continue
-            }
+            #TODO: This should be a separate function with a pipeline
+            foreach ($moduleData in $responseBody) {
+                $moduleItem = ([xml]$moduleData).feed.entry
+                #TODO: Consolidate this
+                [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion')
+                $OutputProperties = $Properties + @{N = 'Source'; E = { $ModuleItem.content.src } } + @{N = 'Dependencies'; E = { $_.Dependencies.split(':|').TrimEnd(':') } }
+                $moduleInfo = $ModuleItem.properties | Select-Object $OutputProperties
 
-            Write-Debug "$ModuleKey Adding to ModulesToInstall. "
+                #Create a module spec with our returned info
+                [ComparableModuleSpecification]$moduleSpec = @{
+                    ModuleName      = $moduleInfo.Id
+                    RequiredVersion = $moduleInfo.Version
+                }
+                #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
+                [string]$moduleKey = $moduleSpec.Name, $moduleSpec.RequiredVersion -join '-'
 
-            $modulesToInstall[$moduleKey] = $moduleSpec
+                #Check if we have already processed this item and move on if we have
+                if ($modulesToInstall.ContainsKey($moduleKey)) {
+                    Write-Debug "$ModuleKey ModulesToInstall already exists. Skipping..."
+                    $resolveTasks.RemoveAt($thisTaskIndex)
+                    Write-Debug "Remaining Tasks: $($resolveTasks.count)"
+                    continue
+                }
 
-            #Determine dependencies and add them to the pending tasks
-            if ($moduleInfo.Dependencies) {
-                [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
-                Write-Debug "$($moduleSpec.Name) has $($dependencies.count) dependencies"
-                foreach ($dependency in $dependencies) {
-                    #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
-                    [string]$dependencyKey = $dependency.Name, $dependency.RequiredVersion -join '-'
+                Write-Debug "$ModuleKey Adding to ModulesToInstall. "
 
-                    #Check if we have already processed this item and move on if we have
-                    if ($modulesToInstall.ContainsKey($dependencyKey)) {
-                        Write-Debug "$ModuleKey dependency - ModulesToInstall already exists. Skipping..."
-                        Write-Debug "Remaining Tasks: $($resolveTasks.count)"
-                        continue
+                $modulesToInstall[$moduleKey] = $moduleSpec
+
+                #Determine dependencies and add them to the pending tasks
+                if ($moduleInfo.Dependencies) {
+                    [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
+                    Write-Debug "$($moduleSpec.Name) has $($dependencies.count) dependencies"
+                    foreach ($dependency in $dependencies) {
+                        #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
+                        [string]$dependencyKey = $dependency.Name, $dependency.RequiredVersion -join '-'
+
+                        #Check if we have already processed this item and move on if we have
+                        if ($modulesToInstall.ContainsKey($dependencyKey)) {
+                            Write-Debug "$ModuleKey dependency - ModulesToInstall already exists. Skipping..."
+                            Write-Debug "Remaining Tasks: $($resolveTasks.count)"
+                            continue
+                        }
+
+                        #Check
+                        #TODO: Lookup instead of enumerable, should be fast enough for now
+
+                        Write-Debug "Start lookup for $ModuleKey"
+                        $resolveTask = Get-PSGalleryModuleInfoAsync $dependency
+                        $resolveTasks.Add($resolveTask)
                     }
-
-                    #Check
-                    #TODO: Lookup instead of enumerable, should be fast enough for now
-
-                    Write-Debug "Start lookup for $ModuleKey"
-                    $resolveTask = Get-PSGalleryModuleInfoAsync $dependency
-                    $resolveTasks.Add($resolveTask)
                 }
             }
-
             $resolveTasks.RemoveAt($thisTaskIndex)
             Write-Debug "Remaining Tasks: $($resolveTasks.count)"
         }
+
         Write-Debug "Finished processing ${$moduleToResolve.Name}"
         if (-not $modulesToResolve.Remove($moduleToResolve)) {
             throw 'There was an error removing a moduleToResolve. This should not happen'
@@ -367,13 +381,18 @@ function Get-PSGalleryModuleInfoAsync {
     param (
         [Parameter(Mandatory, ValueFromPipeline)][Microsoft.PowerShell.Commands.ModuleSpecification]$Name,
         [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion', 'Dependencies'),
-        [string]$Uri = 'https://www.powershellgallery.com/api/v2/Packages',
+        [string]$Uri = 'https://www.powershellgallery.com/api/v2/',
         [HttpClient]$HttpClient = [HttpClient]::new(),
         [Switch]$PreRelease
     )
+    begin {
+        #If we are given duplicate queries, we will deduplicate them to avoid unnecessary traffic.
+        [HashSet[string]]$queries = @()
+    }
 
     process {
         [uribuilder]$galleryQuery = $Uri
+        $galleryQuery.Path += 'Packages'
         #Creates a Query Name Value Builder
         $queryBuilder = [web.httputility]::ParseQueryString($null)
         $ModuleId = $Name.Name
@@ -406,7 +425,16 @@ function Get-PSGalleryModuleInfoAsync {
         # ToString is important here
         $galleryQuery.Query = $queryBuilder.ToString()
         Write-Debug $galleryquery.uri
-        return $httpClient.GetStringAsync($galleryQuery.Uri)
+        [void]$queries.Add($galleryQuery.Uri)
+    }
+    end {
+        # TODO: Do a direct query if a batch isn't required. This will require logic on the other side
+        if (-not $queries) { throw 'No queries were found. This is a bug.' }
+        #Build a batch query from our string queries
+        $request = $queries | New-MultipartGetQuery
+
+        #Will return a task to await the response
+        return $httpClient.PostAsync($($Uri + '/$batch'), $request)
     }
 }
 
@@ -478,11 +506,6 @@ function New-MultipartGetQuery {
         $httpRequest.Headers.ContentType = 'application/http'
         $httpRequest.Headers.Add('Content-Transfer-Encoding', 'binary')
         $request.Add($httpRequest)
-
-        [ByteArrayContent]$httpRequest = [Encoding]::UTF8.GetBytes("GET $content HTTP/1.1")
-        $httpRequest.Headers.ContentType = 'application/http'
-        $httpRequest.Headers.Add('Content-Transfer-Encoding', 'binary')
-        $request.Add($httpRequest)
     }
 
     end {
@@ -508,15 +531,24 @@ Takes a multipart response received from the API and breaks it into a string arr
 #>
 filter ConvertFrom-MultiPartResponse ([Parameter(ValueFromPipeline)][HttpResponseMessage]$response) {
     [string]$batchSeparator = ($response.Content.Headers.ContentType.Parameters | Where-Object Name -EQ 'boundary').Value
-    if (-not $batchSeparator) { throw 'Invalid Response from API, no batch separator header found' }
+    if (-not $batchSeparator) { throw 'Invalid Response from API, no batch separator header found. This should not happen and is probably a bug.' }
 
+    # This might be slow because we might be waiting on data to receive while other data might be ready to go.
+    #TODO: Move this processing up to the main operation and this function should take two parameters for the string
+    #response and the boundary
     $responseData = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+    #I can't find a good method to convert the string representation of an HTTP response into an object, so we will make
+    #A BIG assumption here that the headers have two separate newlines. This will probably be the source of a lot of
+    #Non-PSGallery Bugs
     [List[string]]$splitResponse = $responseData.Split("--$batchSeparator")
     #PSGallery adds an additional "--" to the last batch response header, we need to clean this up if present
     #This method is faster than doing where-object because we dont have to enumerate the response and evaluate each entry
     if ($splitResponse[-1].Trim() -eq '--') { $splitResponse.RemoveAt(($splitResponse.Count - 1)) }
 
-    return $splitResponse
+    #The Where-Object filters out blank entries.
+    #TODO: Faster way maybe?
+    return $splitResponse | Where-Object { $PSItem }
 }
 
 # Takes a group of queries and converts them to a single odata batch request body used for httpclient
