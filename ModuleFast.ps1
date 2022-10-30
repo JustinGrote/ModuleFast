@@ -58,7 +58,7 @@ class ComparableModuleSpecification : ModuleSpecification {
     }
 }
 
-function Get-ModuleFast {
+function Get-ModuleFastPlan {
     [CmdletBinding()]
     param(
         #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
@@ -94,7 +94,6 @@ function Get-ModuleFast {
     END {
         [List[Task[HttpResponseMessage]]]$resolveTasks = @()
         [ConcurrentDictionary[String, ComparableModuleSpecification]]$modulesToInstall = @{}
-
 
         foreach ($moduleToResolve in $modulesToResolve) {
             $resolveTask = Get-PSGalleryModuleInfoAsync $moduleToResolve
@@ -140,8 +139,6 @@ function Get-ModuleFast {
                 #Check if we have already processed this item and move on if we have
                 if ($modulesToInstall.ContainsKey($moduleKey)) {
                     Write-Debug "$ModuleKey ModulesToInstall already exists. Skipping..."
-                    $resolveTasks.RemoveAt($thisTaskIndex)
-                    Write-Debug "Remaining Tasks: $($resolveTasks.count)"
                     continue
                 }
 
@@ -153,27 +150,43 @@ function Get-ModuleFast {
                 if ($moduleInfo.Dependencies) {
                     [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
                     Write-Debug "$($moduleSpec.Name) has $($dependencies.count) dependencies"
-                    foreach ($dependency in $dependencies) {
+                    # TODO: Where loop filter maybe
+                    [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
                         #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
-                        [string]$dependencyKey = $dependency.Name, $dependency.RequiredVersion -join '-'
+                        [string]$dependencyKey = $PSItem.Name, $PSItem.RequiredVersion -join '-'
 
-                        #Check if we have already processed this item and move on if we have
-                        if ($modulesToInstall.ContainsKey($dependencyKey)) {
-                            Write-Debug "$ModuleKey dependency - ModulesToInstall already exists. Skipping..."
-                            Write-Debug "Remaining Tasks: $($resolveTasks.count)"
-                            continue
+                        if (-not $modulesToInstall.ContainsKey($dependencyKey)) {
+                            return $true
                         }
 
-                        #Check
-                        #TODO: Lookup instead of enumerable, should be fast enough for now
-
-                        Write-Debug "Start lookup for $ModuleKey"
-                        $resolveTask = Get-PSGalleryModuleInfoAsync $dependency
-                        $resolveTasks.Add($resolveTask)
+                        #If it didn't match, skip it
+                        Write-Debug "$ModuleKey dependency - ModulesToInstall already exists. Skipping..."
                     }
+
+                    # This will perform a batch lookup of all deduplicated dependencies
+                    Write-Debug "Start lookup for $ModuleKey"
+
+
+                    #Test, chunk the dependency resolutions into parallel batch requests.
+                    [int]$batchSize = ($dependenciesToResolve.count / 100) + 1
+
+                    $i = 0
+                    do {
+                        $resolveTask = $dependenciesToResolve[$i..($i + $batchSize)] | Get-PSGalleryModuleInfoAsync
+                        $resolveTasks.Add($resolveTask)
+                        $i += $batchSize + 1
+                    } until (
+                        $i -ge $dependenciesToResolve.count
+                    )
+
+
                 }
             }
-            $resolveTasks.RemoveAt($thisTaskIndex)
+            try {
+                $resolveTasks.RemoveAt($thisTaskIndex)
+            } catch {
+                Wait-Debugger
+            }
             Write-Debug "Remaining Tasks: $($resolveTasks.count)"
         }
 
@@ -434,7 +447,8 @@ function Get-PSGalleryModuleInfoAsync {
         $request = $queries | New-MultipartGetQuery
 
         #Will return a task to await the response
-        return $httpClient.PostAsync($($Uri + '/$batch'), $request)
+        #TODO: Saner batch attachment
+        return $httpClient.PostAsync($($Uri + '$batch'), $request)
     }
 }
 

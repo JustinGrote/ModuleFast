@@ -21,3 +21,4 @@ It makes a lot of very bad assumptions, all of which are safe for PowerShell Gal
 1. Nuget v2 Only
 1. OData Raw API (vs NuGet functions) is available, which has been deprecated. We use these because they are faster and more documented.
 1. Batch API is available
+1. PowerShellGet is built for compatibility with PSGetv2, I have no such compatibility restrictions and can build "from scratch"
