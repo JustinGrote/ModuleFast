@@ -1,4 +1,5 @@
 #requires -version 5
+using namespace System.Text
 using namespace System.Net.Http
 using namespace System.Threading.Tasks
 using namespace System.Collections.Generic
@@ -450,14 +451,72 @@ filter Parse-NugetDependency ([Parameter(ValueFromPipeline)][String]$DependencyS
 }
 
 
-# Builds a multipart query using .NET objects that can be submitted via HTTP
-filter New-MultipartQuery ([string]$content, [string]$boundary = "powershell-$(New-Guid)") {
+<#
+.SYNOPSIS
+Builds a multipart query from a list of strings that represent HTTP GET Queries
+#>
+function New-MultipartGetQuery {
+    [OutputType([StringContent])]
+    param (
+        [Parameter(Mandatory, ValueFromPipeline)][string]$content,
+        [string]$boundary = "powershell-$(New-Guid)",
+        [MultiPartContent]$request
+    )
+
     begin {
-        [MultipartContent]$request = [MultipartContent]::new('mixed', $boundary)
-        $request.Headers['Accept'] = 'application/xml'
+        if (-not $request) {
+            $request = [MultipartContent]::new('mixed', $boundary)
+        }
     }
 
-    [StringContent]
+    process {
+        # HttpContentMessage is part of ASP.NET, not HttpClient, so we have to roll our own
+
+        #Using Stringcontent and changing the headers is easier than using ByteArrayContent
+        #An extra newline separator is required by PowerShell Gallery for some reason.
+        [StringContent]$httpRequest = "GET $content HTTP/1.1" + [Environment]::NewLine
+        $httpRequest.Headers.ContentType = 'application/http'
+        $httpRequest.Headers.Add('Content-Transfer-Encoding', 'binary')
+        $request.Add($httpRequest)
+
+        [ByteArrayContent]$httpRequest = [Encoding]::UTF8.GetBytes("GET $content HTTP/1.1")
+        $httpRequest.Headers.ContentType = 'application/http'
+        $httpRequest.Headers.Add('Content-Transfer-Encoding', 'binary')
+        $request.Add($httpRequest)
+    }
+
+    end {
+        # BUG: MultiPartContent adds an additional batch separator line at the end, and Powershell Gallery does not like
+        # this and throws a 406 not acceptable, so we must trim this off.
+        # I couldn't find a way to do this in the multipart
+        # class directly so we instead make a new stringcontent from the multipart and trim manually.
+        # TODO: Maybe have a requestmessagehandler that can do it?
+        [string]$requestBody = $request.ReadAsStringAsync().GetAwaiter().GetResult()
+        # Strip the last boundary line
+        [StringContent]$fixedRequest = $requestBody.TrimEnd().Remove($requestBody.LastIndexOf("--$boundary"))
+        $fixedRequest.Headers.ContentType = $request.Headers.ContentType
+
+        # PowerShell wants to unwrap MultiPartContent since it is an ienumerable, the "," adds an "outer array" so that
+        # multipart content comes through correctly.
+        return $fixedRequest
+    }
+}
+
+<#
+.SYNOPSIS
+Takes a multipart response received from the API and breaks it into a string array based on the separators
+#>
+filter ConvertFrom-MultiPartResponse ([Parameter(ValueFromPipeline)][HttpResponseMessage]$response) {
+    [string]$batchSeparator = ($response.Content.Headers.ContentType.Parameters | Where-Object Name -EQ 'boundary').Value
+    if (-not $batchSeparator) { throw 'Invalid Response from API, no batch separator header found' }
+
+    $responseData = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    [List[string]]$splitResponse = $responseData.Split("--$batchSeparator")
+    #PSGallery adds an additional "--" to the last batch response header, we need to clean this up if present
+    #This method is faster than doing where-object because we dont have to enumerate the response and evaluate each entry
+    if ($splitResponse[-1].Trim() -eq '--') { $splitResponse.RemoveAt(($splitResponse.Count - 1)) }
+
+    return $splitResponse
 }
 
 # Takes a group of queries and converts them to a single odata batch request body used for httpclient
