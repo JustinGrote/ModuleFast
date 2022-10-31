@@ -48,9 +48,9 @@ function Get-ModuleFastPlan {
             #Only need one httpclient for all operations, hence why we set it at Script (Module) scope
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
             $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
+            $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (https://gist.github.com/JustinGrote/ecdf96b4179da43fb017dccbd1cc56f6)')
             #Default to HTTP/2. This will multiplex all queries over a single connection, minimizing TLS setup overhead
             $httpClient.DefaultRequestVersion = '2.0'
-
         }
         # Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
@@ -433,7 +433,7 @@ function Get-PSGalleryModuleInfoAsync {
     [CmdletBinding()]
     [OutputType([Task[string]])]
     param (
-        [Parameter(Mandatory, ValueFromPipeline)][Microsoft.PowerShell.Commands.ModuleSpecification]$Name,
+        [Parameter(Mandatory, ValueFromPipeline)][ComparableModuleSpecification]$Name,
         [string[]]$Properties = [string[]]('Id', 'NormalizedVersion', 'Dependencies', 'GUID'),
         [string]$Uri = 'https://www.powershellgallery.com/api/v2/',
         [Parameter(Mandatory)][HttpClient]$HttpClient,
@@ -471,6 +471,8 @@ function Get-PSGalleryModuleInfoAsync {
 
             # For all other queries, we need to filter the results client-side because odata filters are lexical
             # and a version like 2.10 will show as less than 2.2
+            #FIXME: Need to preserve state with a dictionary of the comparablemodulespec request and the http request
+            #So we can correlate the results
         }
 
         #Construct the Odata Query
