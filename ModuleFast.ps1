@@ -13,7 +13,6 @@ High Performance Powershell Module Installation
 This is a proof of concept for using the Powershell Gallery OData API and HTTPClient to parallel install packages
 It is also a demonstration of using async tasks in powershell appropriately. Who says powershell can't be fast?
 This drastically reduces the bandwidth/load against Powershell Gallery by only requesting the required data
-It also handles dependencies (via Nuget), checks for existing packages, and caches already downloaded packages
 .NOTES
 THIS IS NOT FOR PRODUCTION, it should be considered "Fragile" and has very little error handling and type safety
 It also doesn't generate the PowershellGet XML files currently, so PowershellGet will see them as "External" modules
@@ -21,7 +20,173 @@ It also doesn't generate the PowershellGet XML files currently, so PowershellGet
 
 # if (-not (Get-Command 'nuget.exe')) {throw "This module requires nuget.exe to be in your path. Please install it."}
 
+function Get-ModuleFastPlan {
+    [CmdletBinding()]
+    param(
+        #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
+        [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
+        #Whether to include prerelease modules in the request
+        [Switch]$PreRelease,
+        $Source = 'https://www.powershellgallery.com/api/v2/Packages',
+        #By default, every request is made individually as batch requests are processed serially. You may hit an API
+        #throttling limit due to this behavior, so you can set this value to how many concurrent connections you wish to do.
+        [int]$MaxBatchConnections = [int]::MaxValue
+    )
 
+    BEGIN {
+        $ErrorActionPreference = 'Stop'
+        [HashSet[ComparableModuleSpecification]]$modulesToResolve = @()
+
+        #Only need one httpclient for all operations
+        if (-not $httpclient) {
+            #This is the modern default handler for HttpClient. We want more concurrent connections to improve our performance and fairly aggressive timeouts
+            $httpHandler = [SocketsHttpHandler]@{
+                MaxConnectionsPerServer = 2
+                ConnectTimeout          = 1000
+            }
+            $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
+            $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
+            #Default to HTTP/2. This will multiplex all queries over a single connection, minimizing TLS setup overhead
+            $httpClient.DefaultRequestVersion = '2.0'
+
+        }
+        Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
+    }
+    PROCESS {
+        foreach ($spec in $Name) {
+            if (-not $ModulesToResolve.Add($spec)) {
+                Write-Warning "$spec was specified twice, skipping duplicate"
+            }
+        }
+    }
+    END {
+        [HashSet[ComparableModuleSpecification]]$modulesToInstall = @{}
+
+        #TODO: We are aggressive and assume the endpoint is a NuGet v2 endpoint.
+        #There should be logic that, if this request fails, do a test at the root endpoint and give the user
+        #A more friendly error that they probably are not pointing at a proper NuGet v2 repository.
+        [List[Task[HttpResponseMessage]]]$resolveTasks = $modulesToResolve | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
+
+        while ($resolveTasks) {
+            #The timeout here allow ctrl-C to continue working in PowerShell
+            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks, 500)
+            # -1 indicates no task was complete before the timeout was reached
+            if ($thisTaskIndex -eq -1) { continue }
+
+            #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
+            #For now the content is small but this could be faster if we have another inner loop that WaitOne's on content
+            $completedTask = $resolveTasks[$thisTaskIndex]
+
+            # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
+            #TODO: TryCatch logic for GetResult
+            $rawResponse = $completedTask.GetAwaiter().GetResult()
+
+            #TODO: Error handling for unknown data types
+            [string]$responseBody = if ($rawResponse.Content.Headers.ContentType.MediaType -eq 'multipart/mixed') {
+                $response = $rawResponse | ConvertFrom-MultiPartResponse
+
+                #HACK: We get back headers with this multipart response too. I can't find a good built-in method to parse
+                # this into an HttpResponse so we are going to make a *BIG* assumption that the body is the third "paragraph"
+                # after the Headers. This might not work cross-platform either.
+                #TODO: Find a more accurate and safe way of parsing this
+                $response.split([Environment]::NewLine * 2)[2]
+            } else {
+                $rawResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            }
+
+            #TODO: This should be a separate function with a pipeline
+            foreach ($moduleData in $responseBody) {
+                $moduleItem = ([xml]$moduleData).feed.entry
+                #TODO: Consolidate this
+                [string[]]$Properties = [string[]]('Id', 'NormalizedVersion', 'GUID')
+                $OutputProperties = $Properties + @{N = 'Source'; E = { $ModuleItem.content.src } } + @{N = 'Dependencies'; E = { $_.Dependencies.split(':|').TrimEnd(':') } }
+                $moduleInfo = $ModuleItem.properties | Select-Object $OutputProperties
+
+                #Create a module spec with our returned info
+                [ComparableModuleSpecification]$moduleSpec = @{
+                    ModuleName      = $moduleInfo.Id
+                    RequiredVersion = $moduleInfo.NormalizedVersion
+                    GUID            = $moduleInfo.Guid
+                }
+
+                #Check if we have already processed this item and move on if we have
+                if (-not $modulesToInstall.Add($moduleSpec)) {
+                    Write-Debug "$ModuleSpec ModulesToInstall already exists. Skipping..."
+                    continue
+                }
+
+                Write-Debug "$moduleSpec Added to ModulesToInstall. "
+
+
+                #Determine dependencies and add them to the pending tasks
+                if ($moduleInfo.Dependencies) {
+                    [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
+                    Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
+                    # TODO: Where loop filter maybe
+                    [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
+
+                        if (-not $modulesToInstall.Contains($PSItem)) {
+                            return $true
+                        }
+
+
+
+                        #If it didn't match, skip it
+                        Write-Debug "$moduleSpec dependency - ModulesToInstall already exists. Skipping..."
+                    }
+
+                    Write-Debug "Start lookup for $moduleSpec dependencies"
+
+                    #This will chunk requests into batches if requested.
+                    #By default individual requests are still made for max performance
+                    [int]$batchSize = ($dependenciesToResolve.count / $MaxBatchConnections ) + 1
+
+                    $i = 0
+                    do {
+                        $resolveTask = $dependenciesToResolve[$i..($i + $batchSize)] | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
+                        $resolveTasks.Add($resolveTask)
+                        $i += $batchSize + 1
+                    } until (
+                        $i -ge $dependenciesToResolve.count
+                    )
+                }
+            }
+            try {
+                $resolveTasks.RemoveAt($thisTaskIndex)
+            } catch {
+                Wait-Debugger
+            }
+            Write-Debug "Remaining Tasks: $($resolveTasks.count)"
+        }
+
+        return $modulesToInstall
+    }
+
+    #TODO: Port this logic
+    #Loop through dependencies to the expected depth
+    #     $currentDependencies = @($modulesToInstall.dependencies.where{ $PSItem })
+    #     $i = 0
+
+    #     while ($currentDependencies -and ($i -le $depth)) {
+    #         Write-Verbose "$($currentDependencies.count) modules had additional dependencies, fetching..."
+    #         $i++
+    #         $dependencyName = $CurrentDependencies -split '\|' | ForEach-Object {
+    #             Parse-NugetDependency $PSItem
+    #         } | Sort-Object -Unique
+    #         if ($dependencyName) {
+    #             $dependentModules = Get-PSGalleryModule $dependencyName
+    #             $modulesToInstall += $dependentModules
+    #             $currentDependencies = $dependentModules.dependencies.where{ $PSItem }
+    #         } else {
+    #             $currentDependencies = $false
+    #         }
+    #     }
+    #     $modulesToInstall = $modulesToInstall | Sort-Object id, version -Unique
+    #     return $modulesToInstall
+}
+# #endregion Main
+
+#region Classes
 <#
 A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
 values are the same. This should also be consistent across processes and can be cached.
@@ -60,172 +225,7 @@ class ComparableModuleSpecification : ModuleSpecification {
         return ($this.Name, $this.Guid, $this.Version, $this.MaximumVersion, $this.RequiredVersion -join ':')
     }
 }
-
-function Get-ModuleFastPlan {
-    [CmdletBinding()]
-    param(
-        #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
-        [Parameter(ValueFromPipeline)][Object]$Name,
-        #Whether to include prerelease modules in the request
-        [Switch]$PreRelease,
-        $Source = 'https://www.powershellgallery.com/api/v2/Packages',
-        #By default, every request is made individually as batch requests are processed serially. You may hit an API
-        #throttling limit due to this behavior, so you can set this value to how many concurrent connections you wish to do.
-        [int]$MaxBatchConnections = [int]::MaxValue
-    )
-
-    BEGIN {
-        $ErrorActionPreference = 'Stop'
-        [HashSet[ComparableModuleSpecification]]$modulesToResolve = @()
-
-        #Only need one httpclient for all operations
-        if (-not $httpclient) {
-            #This is the modern default handler for HttpClient. We want more concurrent connections to improve our performance and fairly aggressive timeouts
-            $httpHandler = [SocketsHttpHandler]@{
-                MaxConnectionsPerServer = 2
-                ConnectTimeout          = 1000
-            }
-            $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
-            $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
-            #Default to HTTP/2
-            $httpClient.DefaultRequestVersion = '2.0'
-
-        }
-        Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
-    }
-    PROCESS {
-        foreach ($spec in $Name) {
-            if (-not $ModulesToResolve.Add($spec)) {
-                Write-Warning "$spec was specified twice, skipping duplicate"
-            }
-        }
-    }
-    END {
-        [HashSet[ComparableModuleSpecification]]$modulesToInstall = @{}
-
-        #TODO: We are aggressive and assume the endpoint is a NuGet v2 endpoint.
-        #There should be logic that, if this request fails, do a test at the root endpoint and give the user
-        #A more friendly error that they probably are not pointing at a proper NuGet v2 repository.
-        [List[Task[HttpResponseMessage]]]$resolveTasks = $modulesToResolve | Get-PSGalleryModuleInfoAsync
-
-        while ($resolveTasks) {
-            #The timeout here allow ctrl-C to continue working in PowerShell
-            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks, 500)
-            # -1 indicates no task was complete before the timeout was reached
-            if ($thisTaskIndex -eq -1) { continue }
-
-            #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
-            #For now the content is small but this could be faster if we have another inner loop that WaitOne's on content
-            $completedTask = $resolveTasks[$thisTaskIndex]
-
-            # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
-            #TODO: TryCatch logic for GetResult
-            $rawResponse = $completedTask.GetAwaiter().GetResult()
-
-            #TODO: Error handling for unknown data types
-            [string]$responseBody = if ($rawResponse.Content.Headers.ContentType.MediaType -eq 'multipart/mixed') {
-                $response = $rawResponse | ConvertFrom-MultiPartResponse
-
-                #HACK: We get back headers with this multipart response too. I can't find a good built-in method to parse
-                # this into an HttpResponse so we are going to make a *BIG* assumption that the body is the third "paragraph"
-                # after the Headers. This might not work cross-platform either.
-                #TODO: Find a more accurate and safe way of parsing this
-                $response.split([Environment]::NewLine * 2)[2]
-            } else {
-                $rawResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-            }
-
-            #TODO: This should be a separate function with a pipeline
-            foreach ($moduleData in $responseBody) {
-                $moduleItem = ([xml]$moduleData).feed.entry
-                #TODO: Consolidate this
-                [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion')
-                $OutputProperties = $Properties + @{N = 'Source'; E = { $ModuleItem.content.src } } + @{N = 'Dependencies'; E = { $_.Dependencies.split(':|').TrimEnd(':') } }
-                $moduleInfo = $ModuleItem.properties | Select-Object $OutputProperties
-
-                #Create a module spec with our returned info
-                [ComparableModuleSpecification]$moduleSpec = @{
-                    ModuleName      = $moduleInfo.Id
-                    RequiredVersion = $moduleInfo.Version
-                }
-
-                #Check if we have already processed this item and move on if we have
-                if (-not $modulesToInstall.Add($moduleSpec)) {
-                    Write-Debug "$ModuleSpec ModulesToInstall already exists. Skipping..."
-                    continue
-                }
-
-                Write-Debug "$moduleSpec Added to ModulesToInstall. "
-
-
-                #Determine dependencies and add them to the pending tasks
-                if ($moduleInfo.Dependencies) {
-                    [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
-                    Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
-                    # TODO: Where loop filter maybe
-                    [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
-
-                        if (-not $modulesToInstall.Contains($PSItem)) {
-                            return $true
-                        }
-
-                        #If it didn't match, skip it
-                        Write-Debug "$moduleSpec dependency - ModulesToInstall already exists. Skipping..."
-                    }
-
-                    Write-Debug "Start lookup for $moduleSpec dependencies"
-
-                    #This will chunk requests into batches if requested.
-                    #By default individual requests are still made for max performance
-                    [int]$batchSize = ($dependenciesToResolve.count / $MaxBatchConnections ) + 1
-
-                    $i = 0
-                    do {
-                        $resolveTask = $dependenciesToResolve[$i..($i + $batchSize)] | Get-PSGalleryModuleInfoAsync
-                        $resolveTasks.Add($resolveTask)
-                        $i += $batchSize + 1
-                    } until (
-                        $i -ge $dependenciesToResolve.count
-                    )
-
-
-                }
-            }
-            try {
-                $resolveTasks.RemoveAt($thisTaskIndex)
-            } catch {
-                Wait-Debugger
-            }
-            Write-Debug "Remaining Tasks: $($resolveTasks.count)"
-        }
-
-        return $modulesToInstall
-    }
-
-    #TODO: Port this logic
-    #Loop through dependencies to the expected depth
-    #     $currentDependencies = @($modulesToInstall.dependencies.where{ $PSItem })
-    #     $i = 0
-
-    #     while ($currentDependencies -and ($i -le $depth)) {
-    #         Write-Verbose "$($currentDependencies.count) modules had additional dependencies, fetching..."
-    #         $i++
-    #         $dependencyName = $CurrentDependencies -split '\|' | ForEach-Object {
-    #             Parse-NugetDependency $PSItem
-    #         } | Sort-Object -Unique
-    #         if ($dependencyName) {
-    #             $dependentModules = Get-PSGalleryModule $dependencyName
-    #             $modulesToInstall += $dependentModules
-    #             $currentDependencies = $dependentModules.dependencies.where{ $PSItem }
-    #         } else {
-    #             $currentDependencies = $false
-    #         }
-    #     }
-    #     $modulesToInstall = $modulesToInstall | Sort-Object id, version -Unique
-    #     return $modulesToInstall
-}
-# #endregion Main
-
+#endRegion Classes
 
 #region Helpers
 function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFileName()) {
@@ -399,9 +399,9 @@ function Get-PSGalleryModuleInfoAsync {
     [OutputType([Task[string]])]
     param (
         [Parameter(Mandatory, ValueFromPipeline)][Microsoft.PowerShell.Commands.ModuleSpecification]$Name,
-        [string[]]$Properties = [string[]]('Id', 'Version', 'NormalizedVersion', 'Dependencies'),
+        [string[]]$Properties = [string[]]('Id', 'NormalizedVersion', 'Dependencies', 'GUID'),
         [string]$Uri = 'https://www.powershellgallery.com/api/v2/',
-        [HttpClient]$HttpClient = [HttpClient]::new(),
+        [Parameter(Mandatory)][HttpClient]$HttpClient,
         [Switch]$PreRelease
     )
     begin {
