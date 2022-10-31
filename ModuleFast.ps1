@@ -1,4 +1,4 @@
-#requires -version 5
+#requires -version 7
 using namespace System.Text
 using namespace System.Net.Http
 using namespace System.Threading.Tasks
@@ -71,9 +71,10 @@ function Get-ModuleFastPlan {
 
         while ($resolveTasks) {
             #The timeout here allow ctrl-C to continue working in PowerShell
+            $noTasksYetCompleted = -1
+
             [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks, 500)
-            # -1 indicates no task was complete before the timeout was reached
-            if ($thisTaskIndex -eq -1) { continue }
+            if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
 
             #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
             #For now the content is small but this could be faster if we have another inner loop that WaitOne's on content
@@ -125,14 +126,45 @@ function Get-ModuleFastPlan {
                 if ($moduleInfo.Dependencies) {
                     [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
                     Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
+
                     # TODO: Where loop filter maybe
                     [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
-                        if (-not $modulesToInstall.Contains($PSItem)) {
+                        # TODO: This dependency resolution logic should be a separate function
+                        # Maybe ModulesToInstall should be nested/grouped by Module Name then version to speed this up, as it currently
+                        # enumerates every time which shouldn't be a big deal for small dependency trees but might be a
+                        # meaninful performance difference on a whole-system upgrade.
+                        [HashSet[string]]$moduleNames = $modulesToInstall.Name
+                        if ($PSItem.Name -notin $ModuleNames) {
+                            Write-Debug "$PSItem not in ModulesToInstall. Performing lookup."
                             return $true
                         }
+
+                        $plannedVersions = $modulesToInstall
+                        | Where-Object Name -EQ $PSItem.Name
+                        | Sort-Object RequiredVersion -Descending
+
+                        $highestPlannedVersion = $plannedVersions[0].RequiredVersion
+
+                        if ($PSItem.Version -and ($PSItem.Version -gt $highestPlannedVersion)) {
+                            Write-Debug "$($PSItem.Name): Minimum Version $($PSItem.Version) not satisfied by highest existing match $highestPlannedVersion. Performing Lookup."
+                            return $true
+                        }
+
+                        if ($PSItem.MaximumVersion -and ($PSItem.MaximumVersion -lt $highestPlannedVersion)) {
+                            Write-Debug "$($PSItem.Name): $highestPlannedVersion is higher than Maximum Version $($PSItem.MaximumVersion). Performing Lookup"
+                            return $true
+                        }
+
+                        if ($PSItem.RequiredVersion -and ($PSItem.RequiredVersion -notin $plannedVersions.RequiredVersion)) {
+                            Write-Debug "$($PSItem.Name): Explicity Required Version $($PSItem.Required) is not within existing planned versions ($($plannedVersions.RequiredVersion -join ',')). Performing Lookup"
+                            return $true
+                        }
+
                         #If it didn't match, skip it
-                        Write-Debug "$moduleSpec dependency - ModulesToInstall already exists. Skipping..."
+                        Write-Debug "$($PSItem.Name) dependency satisfied by $highestPlannedVersion already in the plan"
                     }
+
+                    Write-Debug "Fetching info on remaining $($dependencies.count) dependencies"
 
                     #This will chunk requests into batches if requested.
                     #By default individual requests are still made for max performance
@@ -413,36 +445,39 @@ function Get-PSGalleryModuleInfoAsync {
     }
 
     process {
+        $moduleSpec = $Name
+        $ModuleId = $ModuleSpec.Name
+
         [uribuilder]$galleryQuery = $Uri
-        $galleryQuery.Path += 'Packages'
+
         #Creates a Query Name Value Builder
         $queryBuilder = [web.httputility]::ParseQueryString($null)
-        $ModuleId = $Name.Name
-
-        $FilterSet = @()
-        $FilterSet += "Id eq '$ModuleId'"
-        $FilterSet += "IsPrerelease eq $(([String]$PreRelease).ToLower())"
-        switch ($true) {
-            ([bool]$Name.RequiredVersion) {
-                $FilterSet += "Version eq '$($Name.RequiredVersion)'"
-                #RequiredVersion is exact, so we dont need to check other version fields
-                break
-            }
-            ([bool]$Name.Version) {
-                $FilterSet += "Version ge '$($Name.Version)'"
-            }
-            #We assume for now that if you set the max as "2.0" you really meant "1.99"
-            #TODO: Fix this to handle explicit/implicit dependencies
-            ([bool]$Name.MaximumVersion) {
-                $FilterSet += "Version lt '$($Name.MaximumVersion)'"
-            }
-        }
-        #Construct the Odata Query
-        $Filter = $FilterSet -join ' and '
-        [void]$queryBuilder.Add('$top', '1')
-        [void]$queryBuilder.Add('$filter', $Filter)
-        [void]$queryBuilder.Add('$orderby', 'Version desc')
         [void]$queryBuilder.Add('$select', ($Properties -join ','))
+        $FilterSet = @()
+
+        # If this is a RequiredVersion query, we can request the item directly
+        if ($ModuleSpec.RequiredVersion) {
+            $galleryQuery.Path += "Packages(Id='{0}',Version='{1}')" -f $moduleId, $ModuleSpec.RequiredVersion
+        } else {
+            $galleryQuery.Path += 'FindPackagesById()'
+            [void]$queryBuilder.Add('id', "'$ModuleId'")
+            [void]$queryBuilder.Add('semVerLevel', '2.0.0')
+            if ($Prerelease) { $filterSet += 'IsPrerelease eq true' }
+
+            # If no "upper" constraints are set, we can safely use the isLatestVersion query to minimize data result
+            if (-not $ModuleSpec.MaximumVersion) {
+                $FilterSet = $Prerelease ? 'IsAbsoluteLatestVersion eq true' : 'IsLatestVersion eq true'
+            }
+
+            # For all other queries, we need to filter the results client-side because odata filters are lexical
+            # and a version like 2.10 will show as less than 2.2
+        }
+
+        #Construct the Odata Query
+        if ($FilterSet) {
+            $Filter = $FilterSet -join ' and '
+            [void]$queryBuilder.Add('$filter', $Filter)
+        }
 
         # ToString is important here
         $galleryQuery.Query = $queryBuilder.ToString()
