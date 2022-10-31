@@ -9,7 +9,10 @@ used as a bootstrap.
 1. Uses a custom HTTPClient and async tasks to build the dependency tree quickly, querying with minimal data possible and
    using batch queries where possible to optimize for performance. This is all done in native PowerShell, no C# required
    (though C# would allow for certain operations to be even more parallelizable by chaining tasks).
-1. Uses HTTP/2 to speed up queries where available (PSGallery supports it)
+1. Uses HTTP/2 to run all queries in a single TCP conversation where possible (PSGallery supports it). If only HTTP/1.1
+is available, then the queries are run as fast as possible unless batching is enabled via a batching parameter to limit
+connections. Batches are still run serially so they are actually slower in most normal (fast) environments. Batches are
+better in high latency environments or environments with low port availability.
 
 ## What this script is not
 
@@ -21,6 +24,8 @@ It makes a lot of very bad assumptions, most of which are safe for PowerShell Ga
 
 1. Nuget v2 Only
 1. Powershell 7+ Only
+1. Modules with a particular GUID and version are immutable and never change. This is great for caching purposes, and is true for PSGallery,
+but may not be true for other galleries.
 1. OData Raw API (vs NuGet functions) is available, which has been deprecated. We use these because they are faster and more documented.
 1. Batch API is available
 1. PowerShellGet is built for compatibility with PSGetv2, I have no such compatibility restrictions and can build "from scratch"

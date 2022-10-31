@@ -30,27 +30,29 @@ function Get-ModuleFastPlan {
         $Source = 'https://www.powershellgallery.com/api/v2/Packages',
         #By default, every request is made individually as batch requests are processed serially. You may hit an API
         #throttling limit due to this behavior, so you can set this value to how many concurrent connections you wish to do.
-        [int]$MaxBatchConnections = [int]::MaxValue
+        [int]$MaxBatchConnections = -1
     )
 
     BEGIN {
         $ErrorActionPreference = 'Stop'
         [HashSet[ComparableModuleSpecification]]$modulesToResolve = @()
 
-        #Only need one httpclient for all operations
         if (-not $httpclient) {
-            #This is the modern default handler for HttpClient. We want more concurrent connections to improve our performance and fairly aggressive timeouts
+            #SocketsHttpHandler is the modern .NET 5+ default handler for HttpClient.
+            #We want more concurrent connections to improve our performance and fairly aggressive timeouts
+            #The max connections are only in case we end up using HTTP/1.1 instead of HTTP/2 for whatever reason.
             $httpHandler = [SocketsHttpHandler]@{
-                MaxConnectionsPerServer = 2
-                ConnectTimeout          = 1000
+                MaxConnectionsPerServer = 100
+                # ConnectTimeout          = 1000
             }
+            #Only need one httpclient for all operations, hence why we set it at Script (Module) scope
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
             $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
             #Default to HTTP/2. This will multiplex all queries over a single connection, minimizing TLS setup overhead
             $httpClient.DefaultRequestVersion = '2.0'
 
         }
-        Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
+        # Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
     PROCESS {
         foreach ($spec in $Name) {
@@ -82,14 +84,16 @@ function Get-ModuleFastPlan {
             $rawResponse = $completedTask.GetAwaiter().GetResult()
 
             #TODO: Error handling for unknown data types
-            [string]$responseBody = if ($rawResponse.Content.Headers.ContentType.MediaType -eq 'multipart/mixed') {
+            [string[]]$responseBody = if ($rawResponse.Content.Headers.ContentType.MediaType -eq 'multipart/mixed') {
                 $response = $rawResponse | ConvertFrom-MultiPartResponse
 
                 #HACK: We get back headers with this multipart response too. I can't find a good built-in method to parse
                 # this into an HttpResponse so we are going to make a *BIG* assumption that the body is the third "paragraph"
                 # after the Headers. This might not work cross-platform either.
                 #TODO: Find a more accurate and safe way of parsing this
-                $response.split([Environment]::NewLine * 2)[2]
+                foreach ($responseItem in $response) {
+                    $responseItem.split([Environment]::NewLine * 2)[2]
+                }
             } else {
                 $rawResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
             }
@@ -117,38 +121,37 @@ function Get-ModuleFastPlan {
 
                 Write-Debug "$moduleSpec Added to ModulesToInstall. "
 
-
                 #Determine dependencies and add them to the pending tasks
                 if ($moduleInfo.Dependencies) {
                     [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
                     Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
                     # TODO: Where loop filter maybe
                     [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
-
                         if (-not $modulesToInstall.Contains($PSItem)) {
                             return $true
                         }
-
-
-
                         #If it didn't match, skip it
                         Write-Debug "$moduleSpec dependency - ModulesToInstall already exists. Skipping..."
                     }
 
-                    Write-Debug "Start lookup for $moduleSpec dependencies"
-
                     #This will chunk requests into batches if requested.
                     #By default individual requests are still made for max performance
-                    [int]$batchSize = ($dependenciesToResolve.count / $MaxBatchConnections ) + 1
+                    if ($maxBatchConnections -le 0) {
+                        foreach ($dependency in $dependenciesToResolve) {
+                            $resolveTasks.Add((Get-PSGalleryModuleInfoAsync -HttpClient $httpclient -Name $dependency))
+                        }
+                    } else {
+                        [int]$batchSize = ($dependenciesToResolve.count / $MaxBatchConnections ) + 1
 
-                    $i = 0
-                    do {
-                        $resolveTask = $dependenciesToResolve[$i..($i + $batchSize)] | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
-                        $resolveTasks.Add($resolveTask)
-                        $i += $batchSize + 1
-                    } until (
-                        $i -ge $dependenciesToResolve.count
-                    )
+                        $i = 0
+                        do {
+                            $resolveTask = $dependenciesToResolve[$i..($i + $batchSize)] | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
+                            $resolveTasks.Add($resolveTask)
+                            $i += $batchSize + 1
+                        } until (
+                            $i -ge $dependenciesToResolve.count
+                        )
+                    }
                 }
             }
             try {

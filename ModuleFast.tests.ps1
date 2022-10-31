@@ -9,6 +9,11 @@ Describe 'Get-ModuleFastPlan' {
     Get-ModuleFastPlan 'Az.Compute'
   }
   It 'Gets Module with lots of dependencies (Az)' {
-    Get-ModuleFastPlan 'Az'
+    #TODO: Mocks
+    Get-ModuleFastPlan 'Az' | Should -HaveCount 77
+  }
+  It 'Gets Az Module limiting batch connections to 4' {
+    #TODO: Mocks
+    Get-ModuleFastPlan 'Az' -MaxBatchConnections 4 | Should -HaveCount 77
   }
 }
