@@ -51,10 +51,13 @@ class ComparableModuleSpecification : ModuleSpecification {
 
     # Concatenate the properties into a string to generate a hashcode
     [int] GetHashCode() {
-        return ($this.Name, $this.Guid, $this.Version, $this.MaximumVersion, $this.RequiredVersion -join ':').GetHashCode()
+        return ($this.ToString()).GetHashCode()
     }
     [bool] Equals($obj) {
         return $this.GetHashCode().Equals($obj.GetHashCode())
+    }
+    [string] ToString() {
+        return ($this.Name, $this.Guid, $this.Version, $this.MaximumVersion, $this.RequiredVersion -join ':')
     }
 }
 
@@ -65,7 +68,10 @@ function Get-ModuleFastPlan {
         [Parameter(ValueFromPipeline)][Object]$Name,
         #Whether to include prerelease modules in the request
         [Switch]$PreRelease,
-        $Source = 'https://www.powershellgallery.com/api/v2/Packages'
+        $Source = 'https://www.powershellgallery.com/api/v2/Packages',
+        #By default, every request is made individually as batch requests are processed serially. You may hit an API
+        #throttling limit due to this behavior, so you can set this value to how many concurrent connections you wish to do.
+        [int]$MaxBatchConnections = [int]::MaxValue
     )
 
     BEGIN {
@@ -76,11 +82,14 @@ function Get-ModuleFastPlan {
         if (-not $httpclient) {
             #This is the modern default handler for HttpClient. We want more concurrent connections to improve our performance and fairly aggressive timeouts
             $httpHandler = [SocketsHttpHandler]@{
-                MaxConnectionsPerServer = 10
+                MaxConnectionsPerServer = 2
                 ConnectTimeout          = 1000
             }
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
             $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
+            #Default to HTTP/2
+            $httpClient.DefaultRequestVersion = '2.0'
+
         }
         Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
@@ -92,13 +101,12 @@ function Get-ModuleFastPlan {
         }
     }
     END {
-        [List[Task[HttpResponseMessage]]]$resolveTasks = @()
-        [ConcurrentDictionary[String, ComparableModuleSpecification]]$modulesToInstall = @{}
+        [HashSet[ComparableModuleSpecification]]$modulesToInstall = @{}
 
-        foreach ($moduleToResolve in $modulesToResolve) {
-            $resolveTask = Get-PSGalleryModuleInfoAsync $moduleToResolve
-            $resolveTasks.Add($resolveTask)
-        }
+        #TODO: We are aggressive and assume the endpoint is a NuGet v2 endpoint.
+        #There should be logic that, if this request fails, do a test at the root endpoint and give the user
+        #A more friendly error that they probably are not pointing at a proper NuGet v2 repository.
+        [List[Task[HttpResponseMessage]]]$resolveTasks = $modulesToResolve | Get-PSGalleryModuleInfoAsync
 
         while ($resolveTasks) {
             #The timeout here allow ctrl-C to continue working in PowerShell
@@ -112,13 +120,20 @@ function Get-ModuleFastPlan {
 
             # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
             #TODO: TryCatch logic for GetResult
-            [string[]]$response = ConvertFrom-MultiPartResponse $completedTask.GetAwaiter().GetResult()
+            $rawResponse = $completedTask.GetAwaiter().GetResult()
 
-            #HACK: We get back headers with this multipart response too. I can't find a good built-in method to parse
-            # this into an HttpResponse so we are going to make a *BIG* assumption that the body is the third "paragraph"
-            # after the Headers. This might not work cross-platform either.
-            #TODO: Find a more accurate and safe way of parsing this
-            $responseBody = $response.split([Environment]::NewLine * 2)[2]
+            #TODO: Error handling for unknown data types
+            [string]$responseBody = if ($rawResponse.Content.Headers.ContentType.MediaType -eq 'multipart/mixed') {
+                $response = $rawResponse | ConvertFrom-MultiPartResponse
+
+                #HACK: We get back headers with this multipart response too. I can't find a good built-in method to parse
+                # this into an HttpResponse so we are going to make a *BIG* assumption that the body is the third "paragraph"
+                # after the Headers. This might not work cross-platform either.
+                #TODO: Find a more accurate and safe way of parsing this
+                $response.split([Environment]::NewLine * 2)[2]
+            } else {
+                $rawResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            }
 
             #TODO: This should be a separate function with a pipeline
             foreach ($moduleData in $responseBody) {
@@ -133,42 +148,36 @@ function Get-ModuleFastPlan {
                     ModuleName      = $moduleInfo.Id
                     RequiredVersion = $moduleInfo.Version
                 }
-                #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
-                [string]$moduleKey = $moduleSpec.Name, $moduleSpec.RequiredVersion -join '-'
 
                 #Check if we have already processed this item and move on if we have
-                if ($modulesToInstall.ContainsKey($moduleKey)) {
-                    Write-Debug "$ModuleKey ModulesToInstall already exists. Skipping..."
+                if (-not $modulesToInstall.Add($moduleSpec)) {
+                    Write-Debug "$ModuleSpec ModulesToInstall already exists. Skipping..."
                     continue
                 }
 
-                Write-Debug "$ModuleKey Adding to ModulesToInstall. "
+                Write-Debug "$moduleSpec Added to ModulesToInstall. "
 
-                $modulesToInstall[$moduleKey] = $moduleSpec
 
                 #Determine dependencies and add them to the pending tasks
                 if ($moduleInfo.Dependencies) {
                     [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
-                    Write-Debug "$($moduleSpec.Name) has $($dependencies.count) dependencies"
+                    Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
                     # TODO: Where loop filter maybe
                     [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
-                        #Create a key to uniquely identify this moduleSpec so we dont do duplicate queries
-                        [string]$dependencyKey = $PSItem.Name, $PSItem.RequiredVersion -join '-'
 
-                        if (-not $modulesToInstall.ContainsKey($dependencyKey)) {
+                        if (-not $modulesToInstall.Contains($PSItem)) {
                             return $true
                         }
 
                         #If it didn't match, skip it
-                        Write-Debug "$ModuleKey dependency - ModulesToInstall already exists. Skipping..."
+                        Write-Debug "$moduleSpec dependency - ModulesToInstall already exists. Skipping..."
                     }
 
-                    # This will perform a batch lookup of all deduplicated dependencies
-                    Write-Debug "Start lookup for $ModuleKey"
+                    Write-Debug "Start lookup for $moduleSpec dependencies"
 
-
-                    #Test, chunk the dependency resolutions into parallel batch requests.
-                    [int]$batchSize = ($dependenciesToResolve.count / 100) + 1
+                    #This will chunk requests into batches if requested.
+                    #By default individual requests are still made for max performance
+                    [int]$batchSize = ($dependenciesToResolve.count / $MaxBatchConnections ) + 1
 
                     $i = 0
                     do {
@@ -190,10 +199,7 @@ function Get-ModuleFastPlan {
             Write-Debug "Remaining Tasks: $($resolveTasks.count)"
         }
 
-        Write-Debug "Finished processing ${$moduleToResolve.Name}"
-        if (-not $modulesToResolve.Remove($moduleToResolve)) {
-            throw 'There was an error removing a moduleToResolve. This should not happen'
-        }
+        return $modulesToInstall
     }
 
     #TODO: Port this logic
@@ -441,8 +447,10 @@ function Get-PSGalleryModuleInfoAsync {
         [void]$queries.Add($galleryQuery.Uri)
     }
     end {
-        # TODO: Do a direct query if a batch isn't required. This will require logic on the other side
         if (-not $queries) { throw 'No queries were found. This is a bug.' }
+        if ($queries.Count -eq 1) {
+            return $httpClient.GetAsync($queries[0])
+        }
         #Build a batch query from our string queries
         $request = $queries | New-MultipartGetQuery
 
