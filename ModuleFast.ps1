@@ -4,6 +4,7 @@ using namespace System.Net.Http
 using namespace System.Threading.Tasks
 using namespace System.Collections.Generic
 using namespace System.Collections.Concurrent
+using namespace System.Collections.Specialized
 using namespace Microsoft.PowerShell.Commands
 
 <#
@@ -20,6 +21,7 @@ It also doesn't generate the PowershellGet XML files currently, so PowershellGet
 
 # if (-not (Get-Command 'nuget.exe')) {throw "This module requires nuget.exe to be in your path. Please install it."}
 
+
 function Get-ModuleFastPlan {
     [CmdletBinding()]
     param(
@@ -27,7 +29,9 @@ function Get-ModuleFastPlan {
         [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
         #Whether to include prerelease modules in the request
         [Switch]$PreRelease,
-        $Source = 'https://pwsh-gallery-preview.jwg.workers.dev/index.json'
+        $Source = 'https://preview.pwsh.gallery/index.json',
+        #TODO: Support all PS targets as well as a custom target
+        $Target
     )
 
     BEGIN {
@@ -42,17 +46,22 @@ function Get-ModuleFastPlan {
                 MaxConnectionsPerServer = 100
                 # ConnectTimeout          = 1000
             }
+
             #Only need one httpclient for all operations, hence why we set it at Script (Module) scope
+            #This is not as big of a deal as it used to be.
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
             $httpClient.BaseAddress = $Source
-            $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (https://gist.github.com/JustinGrote/ecdf96b4179da43fb017dccbd1cc56f6)')
+            $userHeaderAdded = $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (https://gist.github.com/JustinGrote/ecdf96b4179da43fb017dccbd1cc56f6)')
+            if (-not $userHeaderAdded) {
+                throw 'Failed to add User-Agent header to HttpClient. This is a bug'
+            }
             #For now, drop support for HTTP/1.1 (curious if this will be a problem)
             #This will multiplex all queries over a single connection, minimizing TLS setup overhead
             #Should also support HTTP/3 on newest PS versions
             $httpClient.DefaultRequestVersion = '2.0'
             $httpClient.DefaultVersionPolicy = [HttpVersionPolicy]::RequestVersionOrHigher
             #This should enable HTTP/3 on Win11 22H2+ and PS 7.2+
-            [AppContext]::SetSwitch('System.Net.SocketsHttpHandler.Http3Support', $true)
+            [void][AppContext]::SetSwitch('System.Net.SocketsHttpHandler.Http3Support', $true)
         }
         # Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
@@ -66,23 +75,22 @@ function Get-ModuleFastPlan {
     END {
         [HashSet[ComparableModuleSpecification]]$modulesToInstall = @{}
 
-        # We will use this to track progress of module resolution, bringing our context along with us
-        # We have to wrap GetModuleInfoAsync in an array because an individual keyvaluepair wont cast properly to a dictionary.
-        [Dictionary[Task[String], [ComparableModuleSpecification]]]$resolveTasks = @{}
+        # We use this as a fast lookup table for the context of the request
+        [Dictionary[Task[String], ComparableModuleSpecification]]$resolveTasks = @{}
 
-        $ModulesToResolve
-        | Get-ModuleInfoAsync -HttpClient $httpclient -Uri $Source
-        | ForEach-Object {
-            $resolveTasks.Add($PSItem.Key, $PSItem.Value)
+        #We use this to track the tasks that are currently running
+        #We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
+        [List[Task[String]]]$currentTasks = @()
+
+        foreach ($moduleSpec in $ModulesToResolve) {
+            $task = Get-ModuleInfoAsync -Name $moduleSpec -HttpClient $httpclient -Uri $Source
+            $resolveTasks[$task] = $moduleSpec
+            $currentTasks.Add($task)
         }
-
-        # This is a reference value and automatically updates even as new items are added, it's not a "new" collection
-        $currentTasks = $resolveTasks.Keys
 
         while ($currentTasks.Count -gt 0) {
             #The timeout here allow ctrl-C to continue working in PowerShell
             $noTasksYetCompleted = -1
-
             [int]$thisTaskIndex = [Task]::WaitAny($currentTasks, 500)
             if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
 
@@ -92,6 +100,8 @@ function Get-ModuleFastPlan {
 
             #BUG: For some reason even when indexed we still get a keycollection back, select is the only thing that unwraps it.
             [Task[string]]$completedTask = $currentTasks[$thisTaskIndex] | Select-Object -First 1
+
+            if (-not $completedTask) { throw "Task $thisTaskIndex was not found in the keycollection. This is a bug" }
             [ComparableModuleSpecification]$moduleSpec = $resolveTasks[$completedTask]
 
             # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
@@ -99,8 +109,17 @@ function Get-ModuleFastPlan {
             $response = $completedTask.GetAwaiter().GetResult()
             | ConvertFrom-Json
 
+            # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
+            $responseItems = $response.catalogEntry ? $response.catalogEntry : $response.items.items.catalogEntry
+
             #TODO: This should be a separate function with a pipeline
-            foreach ($moduleInfo in $response.items.items.catalogEntry) {
+            foreach ($moduleInfo in $responseItems) {
+                # FIXME: Support Preview Releases
+                if ($moduleInfo.version.contains('-')) {
+                    Write-Warning "Skipping $($moduleInfo.id) $($moduleInfo.version) candidate because it is a preview release. This will be implemented later"
+                    continue
+                }
+
                 #Create a module spec with our returned info
                 [ComparableModuleSpecification]$moduleSpec = @{
                     ModuleName      = $moduleInfo.id
@@ -114,7 +133,7 @@ function Get-ModuleFastPlan {
                     continue
                 }
 
-                Write-Debug "$moduleSpec Added to ModulesToInstall. "
+                Write-Debug "$moduleSpec Added to ModulesToInstall."
 
                 # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
                 # TODO: Should it? Should we check for the target framework and only install if it matches?
@@ -122,7 +141,6 @@ function Get-ModuleFastPlan {
 
                 #Determine dependencies and add them to the pending tasks
                 if ($dependencyInfo) {
-                    # FIXME: This is written for v2 and needs updated to v3
                     # HACK: I should be using the Id provided by the server, for now I'm just guessing because
                     # I need to add it to the ComparableModuleSpec class
                     [List[ComparableModuleSpecification]]$dependencies = $dependencyInfo | Parse-NugetDependency
@@ -165,48 +183,34 @@ function Get-ModuleFastPlan {
                         Write-Debug "$($PSItem.Name) dependency satisfied by $highestPlannedVersion already in the plan"
                     }
 
-                    Write-Debug "Fetching info on remaining $($dependencies.count) dependencies"
+                    if (-not $dependenciesToResolve) {
+                        Write-Debug "$moduleSpec has no remaining dependencies that need resolving"
+                        continue
+                    }
 
-                    $dependencies
-                    | Get-ModuleInfoAsync -HttpClient $httpclient -Uri $Source
-                    | ForEach-Object {
-                        $resolveTasks.Add($PSItem.Key, $PSItem.Value)
+                    Write-Debug "Fetching info on remaining $($dependenciesToResolve.count) dependencies"
+
+                    # We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
+                    # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
+                    foreach ($moduleSpec in $dependenciesToResolve) {
+                        $task = Get-ModuleInfoAsync -Name $moduleSpec -HttpClient $httpclient -Uri $Source
+                        $resolveTasks[$task] = $moduleSpec
+                        $currentTasks.Add($task)
                     }
 
                 }
             }
             try {
-                $resolveTasks.Remove($completedTask)
+                [void]$resolveTasks.Remove($completedTask)
+                [void]$currentTasks.Remove($completedTask)
             } catch {
-                Wait-Debugger
+                throw
             }
             Write-Debug "Remaining Tasks: $($currentTasks.count)"
         }
 
         return $modulesToInstall
     }
-
-    #TODO: Port this logic
-    #Loop through dependencies to the expected depth
-    #     $currentDependencies = @($modulesToInstall.dependencies.where{ $PSItem })
-    #     $i = 0
-
-    #     while ($currentDependencies -and ($i -le $depth)) {
-    #         Write-Verbose "$($currentDependencies.count) modules had additional dependencies, fetching..."
-    #         $i++
-    #         $dependencyName = $CurrentDependencies -split '\|' | ForEach-Object {
-    #             Parse-NugetDependency $PSItem
-    #         } | Sort-Object -Unique
-    #         if ($dependencyName) {
-    #             $dependentModules = Get-PSGalleryModule $dependencyName
-    #             $modulesToInstall += $dependentModules
-    #             $currentDependencies = $dependentModules.dependencies.where{ $PSItem }
-    #         } else {
-    #             $currentDependencies = $false
-    #         }
-    #     }
-    #     $modulesToInstall = $modulesToInstall | Sort-Object id, version -Unique
-    #     return $modulesToInstall
 }
 # #endregion Main
 
@@ -420,37 +424,35 @@ function Get-NotInstalledModules ([String[]]$Name) {
 
 filter Get-ModuleInfoAsync {
     [CmdletBinding()]
+    [OutputType([Task[String]])]
     param (
-        [Parameter(Mandatory, ValueFromPipeline)][ComparableModuleSpecification]$Name,
+        [Parameter(Mandatory)][ComparableModuleSpecification]$Name,
         [Parameter(Mandatory)][string]$Uri,
         [Parameter(Mandatory)][HttpClient]$HttpClient
     )
-    process {
+    end {
         $moduleSpec = $Name
         $ModuleId = $ModuleSpec.Name
-        if ($ModuleSpec.RequiredVersion) {
-            throw [NotImplementedException]'Still need to wire up the API for a direct version call'
-        }
 
         #Strip any *.json path which might be at the end of the uri
         $endpoint = $Uri -replace '/\w+\.json$'
 
         #HACK: We are making a *big* assumption here about the structure of the nuget repository to save an API call
         #TODO: Error handling if we are wrong by checking the main index.json manifest
-        $moduleInfoUri = "$endpoint/registration/$ModuleId/index.json"
+
+        if ($Name.MaximumVersion) {
+            throw [NotImplementedException]"$Name has a maximum version. This is not implemented yet."
+        }
+        $moduleInfoUriBase = "$endpoint/registration/$ModuleId"
+        if ($moduleSpec.RequiredVersion) {
+            $moduleInfoUri = "$moduleInfoUriBase/$($moduleSpec.RequiredVersion).json"
+        } else {
+            $moduleInfoUri = "$moduleInfoUriBase/index.json"
+        }
 
         #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
         Write-Debug "$ModuleId`: fetch info from $moduleInfoUri"
-
-        $getModuleInfoTask = $HttpClient.GetStringAsync($moduleInfoUri)
-
-        #Since in PowerShell we can't "await" and we lose state after the call is finished, we have to bring our context
-        #with us. Key value pairs are a great way to do this because they can be easily added to a Dictionary
-
-        [KeyValuePair[Task[string], [ComparableModuleSpecification]]]::new(
-            $getModuleInfoTask,
-            $ModuleSpec
-        )
+        return $HttpClient.GetStringAsync($moduleInfoUri)
     }
 }
 
