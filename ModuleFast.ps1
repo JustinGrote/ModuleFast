@@ -27,10 +27,7 @@ function Get-ModuleFastPlan {
         [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
         #Whether to include prerelease modules in the request
         [Switch]$PreRelease,
-        $Source = 'https://www.powershellgallery.com/api/v2/Packages',
-        #By default, every request is made individually as batch requests are processed serially. You may hit an API
-        #throttling limit due to this behavior, so you can set this value to how many concurrent connections you wish to do.
-        [int]$MaxBatchConnections = -1
+        $Source = 'https://pwsh-gallery-preview.jwg.workers.dev/index.json'
     )
 
     BEGIN {
@@ -47,10 +44,15 @@ function Get-ModuleFastPlan {
             }
             #Only need one httpclient for all operations, hence why we set it at Script (Module) scope
             $SCRIPT:httpClient = [HttpClient]::new($httpHandler)
-            $httpClient.BaseAddress = 'https://www.powershellgallery.com/api/v2'
+            $httpClient.BaseAddress = $Source
             $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (https://gist.github.com/JustinGrote/ecdf96b4179da43fb017dccbd1cc56f6)')
-            #Default to HTTP/2. This will multiplex all queries over a single connection, minimizing TLS setup overhead
+            #For now, drop support for HTTP/1.1 (curious if this will be a problem)
+            #This will multiplex all queries over a single connection, minimizing TLS setup overhead
+            #Should also support HTTP/3 on newest PS versions
             $httpClient.DefaultRequestVersion = '2.0'
+            $httpClient.DefaultVersionPolicy = [HttpVersionPolicy]::RequestVersionOrHigher
+            #This should enable HTTP/3 on Win11 22H2+ and PS 7.2+
+            [AppContext]::SetSwitch('System.Net.SocketsHttpHandler.Http3Support', $true)
         }
         # Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
@@ -64,58 +66,46 @@ function Get-ModuleFastPlan {
     END {
         [HashSet[ComparableModuleSpecification]]$modulesToInstall = @{}
 
-        #TODO: We are aggressive and assume the endpoint is a NuGet v2 endpoint.
-        #There should be logic that, if this request fails, do a test at the root endpoint and give the user
-        #A more friendly error that they probably are not pointing at a proper NuGet v2 repository.
-        #FIXME: This needs to become a dictionary so we can correlate original request to the response
-        #This is needed because we have to (rarely) evaluate the version client-side for some requests.
-        [Dictionary[Task[HttpResponseMessage], [ComparableModuleSpecification[]]]]$resolveTasks = $modulesToResolve | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
+        # We will use this to track progress of module resolution, bringing our context along with us
+        # We have to wrap GetModuleInfoAsync in an array because an individual keyvaluepair wont cast properly to a dictionary.
+        [Dictionary[Task[String], [ComparableModuleSpecification]]]$resolveTasks = @{}
 
-        while ($resolveTasks.Keys.Count -gt 0) {
-            $currentTasks = $resolveTasks.Keys
+        $ModulesToResolve
+        | Get-ModuleInfoAsync -HttpClient $httpclient -Uri $Source
+        | ForEach-Object {
+            $resolveTasks.Add($PSItem.Key, $PSItem.Value)
+        }
+
+        # This is a reference value and automatically updates even as new items are added, it's not a "new" collection
+        $currentTasks = $resolveTasks.Keys
+
+        while ($currentTasks.Count -gt 0) {
             #The timeout here allow ctrl-C to continue working in PowerShell
             $noTasksYetCompleted = -1
 
-            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks.Keys, 500)
+            [int]$thisTaskIndex = [Task]::WaitAny($currentTasks, 500)
             if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
 
             #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
             #For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
-            $completedTask = $currentTasks[$thisTaskIndex]
-            $moduleSpec = $resolveTasks[$completedTask]
+            #TODO: Perform a HEAD query to see if something has changed
+
+            #BUG: For some reason even when indexed we still get a keycollection back, select is the only thing that unwraps it.
+            [Task[string]]$completedTask = $currentTasks[$thisTaskIndex] | Select-Object -First 1
+            [ComparableModuleSpecification]$moduleSpec = $resolveTasks[$completedTask]
 
             # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
             #TODO: TryCatch logic for GetResult
-            $rawResponse = $completedTask.GetAwaiter().GetResult()
-
-            #TODO: Error handling for unknown data types
-            [string[]]$responseBody = if ($rawResponse.Content.Headers.ContentType.MediaType -eq 'multipart/mixed') {
-                $response = $rawResponse | ConvertFrom-MultiPartResponse
-
-                #HACK: We get back headers with this multipart response too. I can't find a good built-in method to parse
-                # this into an HttpResponse so we are going to make a *BIG* assumption that the body is the third "paragraph"
-                # after the Headers. This might not work cross-platform either.
-                #TODO: Find a more accurate and safe way of parsing this
-                foreach ($responseItem in $response) {
-                    $responseItem.split([Environment]::NewLine * 2)[2]
-                }
-            } else {
-                $rawResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-            }
+            $response = $completedTask.GetAwaiter().GetResult()
+            | ConvertFrom-Json
 
             #TODO: This should be a separate function with a pipeline
-            foreach ($moduleData in $responseBody) {
-                $moduleItem = ([xml]$moduleData).feed.entry
-                #TODO: Consolidate this
-                [string[]]$Properties = [string[]]('Id', 'NormalizedVersion', 'GUID')
-                $OutputProperties = $Properties + @{N = 'Source'; E = { $ModuleItem.content.src } } + @{N = 'Dependencies'; E = { $_.Dependencies.split(':|').TrimEnd(':') } }
-                $moduleInfo = $ModuleItem.properties | Select-Object $OutputProperties
-
+            foreach ($moduleInfo in $response.items.items.catalogEntry) {
                 #Create a module spec with our returned info
                 [ComparableModuleSpecification]$moduleSpec = @{
-                    ModuleName      = $moduleInfo.Id
-                    RequiredVersion = $moduleInfo.NormalizedVersion
-                    GUID            = $moduleInfo.Guid
+                    ModuleName      = $moduleInfo.id
+                    RequiredVersion = $moduleInfo.version
+                    #TODO: Fix in Server API GUID            = $moduleInfo.Guid
                 }
 
                 #Check if we have already processed this item and move on if we have
@@ -126,9 +116,16 @@ function Get-ModuleFastPlan {
 
                 Write-Debug "$moduleSpec Added to ModulesToInstall. "
 
+                # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
+                # TODO: Should it? Should we check for the target framework and only install if it matches?
+                $dependencyInfo = $moduleInfo.dependencyGroups.dependencies
+
                 #Determine dependencies and add them to the pending tasks
-                if ($moduleInfo.Dependencies) {
-                    [List[ComparableModuleSpecification]]$dependencies = $moduleInfo.Dependencies | Parse-NugetDependency
+                if ($dependencyInfo) {
+                    # FIXME: This is written for v2 and needs updated to v3
+                    # HACK: I should be using the Id provided by the server, for now I'm just guessing because
+                    # I need to add it to the ComparableModuleSpec class
+                    [List[ComparableModuleSpecification]]$dependencies = $dependencyInfo | Parse-NugetDependency
                     Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
 
                     # TODO: Where loop filter maybe
@@ -170,32 +167,20 @@ function Get-ModuleFastPlan {
 
                     Write-Debug "Fetching info on remaining $($dependencies.count) dependencies"
 
-                    #This will chunk requests into batches if requested.
-                    #By default individual requests are still made for max performance
-                    if ($maxBatchConnections -le 0) {
-                        foreach ($dependency in $dependenciesToResolve) {
-                            $resolveTasks.Add((Get-PSGalleryModuleInfoAsync -HttpClient $httpclient -Name $dependency))
-                        }
-                    } else {
-                        [int]$batchSize = ($dependenciesToResolve.count / $MaxBatchConnections ) + 1
-
-                        $i = 0
-                        do {
-                            $resolveTask = $dependenciesToResolve[$i..($i + $batchSize)] | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
-                            $resolveTasks.Add($resolveTask)
-                            $i += $batchSize + 1
-                        } until (
-                            $i -ge $dependenciesToResolve.count
-                        )
+                    $dependencies
+                    | Get-ModuleInfoAsync -HttpClient $httpclient -Uri $Source
+                    | ForEach-Object {
+                        $resolveTasks.Add($PSItem.Key, $PSItem.Value)
                     }
+
                 }
             }
             try {
-                $resolveTasks.RemoveAt($thisTaskIndex)
+                $resolveTasks.Remove($completedTask)
             } catch {
                 Wait-Debugger
             }
-            Write-Debug "Remaining Tasks: $($resolveTasks.count)"
+            Write-Debug "Remaining Tasks: $($currentTasks.count)"
         }
 
         return $modulesToInstall
@@ -433,92 +418,50 @@ function Get-NotInstalledModules ([String[]]$Name) {
     }
 }
 
-function Get-PSGalleryModuleInfoAsync {
+filter Get-ModuleInfoAsync {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory, ValueFromPipeline)][ComparableModuleSpecification]$Name,
-        [string[]]$Properties = [string[]]('Id', 'NormalizedVersion', 'Dependencies', 'GUID'),
-        [string]$Uri = 'https://www.powershellgallery.com/api/v2/',
-        [Parameter(Mandatory)][HttpClient]$HttpClient,
-        [Switch]$PreRelease
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][HttpClient]$HttpClient
     )
-    begin {
-        #If we are given duplicate queries, we will deduplicate them to avoid unnecessary traffic.
-        [HashSet[string]]$queries = @()
-        #We need to collect the comparable module specs passed in the pipeline to provide context for both individual
-        #and batch queries
-        [List[ComparableModuleSpecification]]$moduleSpecs = @()
-    }
-
     process {
         $moduleSpec = $Name
         $ModuleId = $ModuleSpec.Name
-        $moduleSpecs.Add($moduleSpec)
-
-        [uribuilder]$galleryQuery = $Uri
-
-        #Creates a Query Name Value Builder
-        $queryBuilder = [web.httputility]::ParseQueryString($null)
-        [void]$queryBuilder.Add('$select', ($Properties -join ','))
-        $FilterSet = @()
-
-        # If this is a RequiredVersion query, we can request the item directly
         if ($ModuleSpec.RequiredVersion) {
-            $galleryQuery.Path += "Packages(Id='{0}',Version='{1}')" -f $moduleId, $ModuleSpec.RequiredVersion
-        } else {
-            $galleryQuery.Path += 'FindPackagesById()'
-            [void]$queryBuilder.Add('id', "'$ModuleId'")
-            [void]$queryBuilder.Add('semVerLevel', '2.0.0')
-            if ($Prerelease) { $filterSet += 'IsPrerelease eq true' }
-
-            # If no "upper" constraints are set, we can safely use the isLatestVersion query to minimize data result
-            if (-not $ModuleSpec.MaximumVersion) {
-                $FilterSet = $Prerelease ? 'IsAbsoluteLatestVersion eq true' : 'IsLatestVersion eq true'
-            }
-
-            # For all other queries, we need to filter the results client-side because odata filters are lexical
-            # and a version like 2.10 will show as less than 2.2
-            #FIXME: Need to preserve state with a dictionary of the comparablemodulespec request and the http request
-            #So we can correlate the results
+            throw [NotImplementedException]'Still need to wire up the API for a direct version call'
         }
 
-        #Construct the Odata Query
-        if ($FilterSet) {
-            $Filter = $FilterSet -join ' and '
-            [void]$queryBuilder.Add('$filter', $Filter)
-        }
+        #Strip any *.json path which might be at the end of the uri
+        $endpoint = $Uri -replace '/\w+\.json$'
 
-        # ToString is important here
-        $galleryQuery.Query = $queryBuilder.ToString()
-        Write-Debug $galleryquery.uri
-        [void]$queries.Add($galleryQuery.Uri)
-    }
-    end {
-        if (-not $queries) { throw 'No queries were found. This is a bug.' }
-        if ($queries.Count -eq 1) {
-            return $httpClient.GetAsync($queries[0])
-        }
-        #Build a batch query from our string queries
-        $request = $queries | New-MultipartGetQuery
+        #HACK: We are making a *big* assumption here about the structure of the nuget repository to save an API call
+        #TODO: Error handling if we are wrong by checking the main index.json manifest
+        $moduleInfoUri = "$endpoint/registration/$ModuleId/index.json"
 
-        #Will return a task along with the original query to await the response
-        #TODO: Saner batch attachment
-        $task = $httpClient.PostAsync($($Uri + '$batch'), $request)
+        #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
+        Write-Debug "$ModuleId`: fetch info from $moduleInfoUri"
 
-        #We use KeyValuePair because it will easily get cast into a dictionary
-        return [KeyValuePair[Task[HttpResponseMessage], [ComparableModuleSpecification[]]]]::new($task, $moduleSpecs)
+        $getModuleInfoTask = $HttpClient.GetStringAsync($moduleInfoUri)
+
+        #Since in PowerShell we can't "await" and we lose state after the call is finished, we have to bring our context
+        #with us. Key value pairs are a great way to do this because they can be easily added to a Dictionary
+
+        [KeyValuePair[Task[string], [ComparableModuleSpecification]]]::new(
+            $getModuleInfoTask,
+            $ModuleSpec
+        )
     }
 }
 
-filter Parse-NugetDependency ([Parameter(ValueFromPipeline)][String]$DependencyString) {
-    #NOTE: RequiredVersion is used for Minimumversion and ModuleVersion is RequiredVersion for purposes of Nuget query
-    $DependencyParts = $DependencyString -split '\:'
+filter Parse-NugetDependency ([Parameter(ValueFromPipeline)]$Dependency) {
+    #TODO: Dependency should be more strictly typed
 
     #NOTE: This can't be a modulespecification from the start because modulespecs are immutable
     $dep = @{
-        ModuleName = $DependencyParts[0]
+        ModuleName = $Dependency.id
     }
-    $Version = $DependencyParts[1]
+    $Version = $Dependency.range
 
     if ($Version) {
         #If it is an exact match version (has brackets and doesn't have a comma), set version accordingly
