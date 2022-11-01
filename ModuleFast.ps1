@@ -67,18 +67,22 @@ function Get-ModuleFastPlan {
         #TODO: We are aggressive and assume the endpoint is a NuGet v2 endpoint.
         #There should be logic that, if this request fails, do a test at the root endpoint and give the user
         #A more friendly error that they probably are not pointing at a proper NuGet v2 repository.
-        [List[Task[HttpResponseMessage]]]$resolveTasks = $modulesToResolve | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
+        #FIXME: This needs to become a dictionary so we can correlate original request to the response
+        #This is needed because we have to (rarely) evaluate the version client-side for some requests.
+        [Dictionary[Task[HttpResponseMessage], [ComparableModuleSpecification[]]]]$resolveTasks = $modulesToResolve | Get-PSGalleryModuleInfoAsync -HttpClient $httpclient
 
-        while ($resolveTasks) {
+        while ($resolveTasks.Keys.Count -gt 0) {
+            $currentTasks = $resolveTasks.Keys
             #The timeout here allow ctrl-C to continue working in PowerShell
             $noTasksYetCompleted = -1
 
-            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks, 500)
+            [int]$thisTaskIndex = [Task]::WaitAny($resolveTasks.Keys, 500)
             if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
 
             #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
-            #For now the content is small but this could be faster if we have another inner loop that WaitOne's on content
-            $completedTask = $resolveTasks[$thisTaskIndex]
+            #For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
+            $completedTask = $currentTasks[$thisTaskIndex]
+            $moduleSpec = $resolveTasks[$completedTask]
 
             # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
             #TODO: TryCatch logic for GetResult
@@ -431,7 +435,6 @@ function Get-NotInstalledModules ([String[]]$Name) {
 
 function Get-PSGalleryModuleInfoAsync {
     [CmdletBinding()]
-    [OutputType([Task[string]])]
     param (
         [Parameter(Mandatory, ValueFromPipeline)][ComparableModuleSpecification]$Name,
         [string[]]$Properties = [string[]]('Id', 'NormalizedVersion', 'Dependencies', 'GUID'),
@@ -442,11 +445,15 @@ function Get-PSGalleryModuleInfoAsync {
     begin {
         #If we are given duplicate queries, we will deduplicate them to avoid unnecessary traffic.
         [HashSet[string]]$queries = @()
+        #We need to collect the comparable module specs passed in the pipeline to provide context for both individual
+        #and batch queries
+        [List[ComparableModuleSpecification]]$moduleSpecs = @()
     }
 
     process {
         $moduleSpec = $Name
         $ModuleId = $ModuleSpec.Name
+        $moduleSpecs.Add($moduleSpec)
 
         [uribuilder]$galleryQuery = $Uri
 
@@ -494,9 +501,12 @@ function Get-PSGalleryModuleInfoAsync {
         #Build a batch query from our string queries
         $request = $queries | New-MultipartGetQuery
 
-        #Will return a task to await the response
+        #Will return a task along with the original query to await the response
         #TODO: Saner batch attachment
-        return $httpClient.PostAsync($($Uri + '$batch'), $request)
+        $task = $httpClient.PostAsync($($Uri + '$batch'), $request)
+
+        #We use KeyValuePair because it will easily get cast into a dictionary
+        return [KeyValuePair[Task[HttpResponseMessage], [ComparableModuleSpecification[]]]]::new($task, $moduleSpecs)
     }
 }
 
