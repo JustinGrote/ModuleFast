@@ -1,6 +1,7 @@
 #requires -version 7
 using namespace System.Text
 using namespace System.IO
+using namespace System.Net
 using namespace System.Net.Http
 using namespace System.Threading.Tasks
 using namespace System.Collections.Generic
@@ -116,8 +117,21 @@ function Get-ModuleFastPlan {
             Write-Debug "$moduleSpec`: Processing Response"
             # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
             #TODO: TryCatch logic for GetResult
-            $response = $completedTask.GetAwaiter().GetResult()
-            | ConvertFrom-Json
+            try {
+                $response = $completedTask.GetAwaiter().GetResult()
+                | ConvertFrom-Json
+            } catch {
+                $taskException = $PSItem.Exception.InnerException
+                #TODO: Rewrite this as a handle filter
+                if ($PSItem.Exception.InnerException -isnot [HttpRequestException]) { throw }
+                [HttpRequestException]$err = $PSItem.Exception.InnerException
+                if ($err.StatusCode -eq [HttpStatusCode]::NotFound) {
+                    throw [InvalidOperationException]"$moduleSpec`: module was not found in the $Source repository. Check the spelling and try again."
+                }
+
+                #All other cases
+                $PSItem.ErrorDetails = "$moduleSpec`: Failed to fetch module $moduleSpec from $Source. Error: $($PSItem.ErrorDetails.Message)"
+            }
 
             # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
             $responseItems = $response.catalogEntry ? $response.catalogEntry : $response.items.items.catalogEntry
@@ -676,3 +690,10 @@ function Get-HighestSatisfiesVersion {
 #endregion Helpers
 
 # Export-ModuleMember Get-ModuleFast
+
+
+### ISSUES
+# FIXME: When doing directory match comparison for local modules, need to preserve original folder name. See: Reflection 4.8
+# FIXME: DBops dependency version issue
+# FIXME: Dependency range when it is just a version number with a really high build - Vmware.Vimautomation.core 10.0.0.xxxxxxxx
+# FIXME: Semver and 4 octet modules are incompatible, need to handle this
