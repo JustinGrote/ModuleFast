@@ -3,6 +3,7 @@ using namespace System.Text
 using namespace System.IO
 using namespace System.Net
 using namespace System.Net.Http
+using namespace System.Threading
 using namespace System.Threading.Tasks
 using namespace System.Collections.Generic
 using namespace System.Collections.Concurrent
@@ -40,6 +41,9 @@ function Get-ModuleFastPlan {
     BEGIN {
         $ErrorActionPreference = 'Stop'
         [HashSet[ComparableModuleSpecification]]$modulesToResolve = @()
+
+        #We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient
+        $cancelToken = [CancellationTokenSource]::new()
 
         if (-not $httpclient) {
             #SocketsHttpHandler is the modern .NET 5+ default handler for HttpClient.
@@ -86,159 +90,173 @@ function Get-ModuleFastPlan {
         #We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
         [List[Task[String]]]$currentTasks = @()
 
-        foreach ($moduleSpec in $ModulesToResolve) {
-            $localMatch = Find-LocalModule $moduleSpec
-            if ($localMatch) {
-                Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
-                #TODO: Capture this somewhere that we can use it to report in the deploy plan
-                continue
-            }
-            $task = Get-ModuleInfoAsync -Name $moduleSpec -HttpClient $httpclient -Uri $Source
-            $resolveTasks[$task] = $moduleSpec
-            $currentTasks.Add($task)
-        }
-
-        while ($currentTasks.Count -gt 0) {
-            #The timeout here allow ctrl-C to continue working in PowerShell
-            $noTasksYetCompleted = -1
-            [int]$thisTaskIndex = [Task]::WaitAny($currentTasks, 500)
-            if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
-
-            #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
-            #For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
-            #TODO: Perform a HEAD query to see if something has changed
-
-            #BUG: For some reason even when indexed we still get a keycollection back, select is the only thing that unwraps it.
-            [Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
-
-            if (-not $completedTask) { throw "Task $thisTaskIndex was not found in the keycollection. This is a bug" }
-            [ComparableModuleSpecification]$moduleSpec = $resolveTasks[$completedTask]
-
-            Write-Debug "$moduleSpec`: Processing Response"
-            # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
-            #TODO: TryCatch logic for GetResult
-            try {
-                $response = $completedTask.GetAwaiter().GetResult()
-                | ConvertFrom-Json
-            } catch {
-                $taskException = $PSItem.Exception.InnerException
-                #TODO: Rewrite this as a handle filter
-                if ($PSItem.Exception.InnerException -isnot [HttpRequestException]) { throw }
-                [HttpRequestException]$err = $PSItem.Exception.InnerException
-                if ($err.StatusCode -eq [HttpStatusCode]::NotFound) {
-                    throw [InvalidOperationException]"$moduleSpec`: module was not found in the $Source repository. Check the spelling and try again."
-                }
-
-                #All other cases
-                $PSItem.ErrorDetails = "$moduleSpec`: Failed to fetch module $moduleSpec from $Source. Error: $($PSItem.ErrorDetails.Message)"
-            }
-
-            # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
-            $responseItems = $response.catalogEntry ? $response.catalogEntry : $response.items.items.catalogEntry
-
-            #TODO: This should be a separate function with a pipeline
-            foreach ($moduleInfo in $responseItems) {
-                # FIXME: Support Preview Releases
-                if ($moduleInfo.version.contains('-')) {
-                    Write-Verbose "WARN: Skipping $($moduleInfo.id) $($moduleInfo.version) candidate because it is a preview release. This will be implemented later"
+        #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
+        try {
+            foreach ($moduleSpec in $ModulesToResolve) {
+                $localMatch = Find-LocalModule $moduleSpec
+                if ($localMatch) {
+                    Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
+                    #TODO: Capture this somewhere that we can use it to report in the deploy plan
                     continue
                 }
+                $task = Get-ModuleInfoAsync -Name $moduleSpec -HttpClient $httpclient -Uri $Source -CancellationToken $cancelToken.Token
+                $resolveTasks[$task] = $moduleSpec
+                $currentTasks.Add($task)
+            }
 
-                #Create a module spec with our returned info
-                [ComparableModuleSpecification]$moduleSpec = @{
-                    ModuleName      = $moduleInfo.id
-                    RequiredVersion = $moduleInfo.version
-                    #TODO: Fix in Server API GUID            = $moduleInfo.Guid
-                }
+            while ($currentTasks.Count -gt 0) {
+                #The timeout here allow ctrl-C to continue working in PowerShell
+                $noTasksYetCompleted = -1
+                [int]$thisTaskIndex = [Task]::WaitAny($currentTasks, 500)
+                if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
 
-                #Check if we have already processed this item and move on if we have
-                if (-not $modulesToInstall.Add($moduleSpec)) {
-                    Write-Debug "$ModuleSpec ModulesToInstall already exists. Skipping..."
-                    continue
-                }
+                #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
+                #For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
+                #TODO: Perform a HEAD query to see if something has changed
 
-                Write-Debug "$moduleSpec Added to ModulesToInstall."
+                [Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
+                [ComparableModuleSpecification]$moduleSpec = $resolveTasks[$completedTask]
 
-                # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
-                # TODO: Should it? Should we check for the target framework and only install if it matches?
-                $dependencyInfo = $moduleInfo.dependencyGroups.dependencies
-
-                #Determine dependencies and add them to the pending tasks
-                if ($dependencyInfo) {
-                    # HACK: I should be using the Id provided by the server, for now I'm just guessing because
-                    # I need to add it to the ComparableModuleSpec class
-                    [List[ComparableModuleSpecification]]$dependencies = $dependencyInfo | Parse-NugetDependency
-                    Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
-
-                    # TODO: Where loop filter maybe
-                    [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
-                        # TODO: This dependency resolution logic should be a separate function
-                        # Maybe ModulesToInstall should be nested/grouped by Module Name then version to speed this up, as it currently
-                        # enumerates every time which shouldn't be a big deal for small dependency trees but might be a
-                        # meaninful performance difference on a whole-system upgrade.
-                        [HashSet[string]]$moduleNames = $modulesToInstall.Name
-                        if ($PSItem.Name -notin $ModuleNames) {
-                            Write-Debug "$PSItem not in ModulesToInstall. Performing lookup."
-                            return $true
-                        }
-
-                        $plannedVersions = $modulesToInstall
-                        | Where-Object Name -EQ $PSItem.Name
-                        | Sort-Object RequiredVersion -Descending
-
-                        $highestPlannedVersion = $plannedVersions[0].RequiredVersion
-
-                        if ($PSItem.Version -and ($PSItem.Version -gt $highestPlannedVersion)) {
-                            Write-Debug "$($PSItem.Name): Minimum Version $($PSItem.Version) not satisfied by highest existing match $highestPlannedVersion. Performing Lookup."
-                            return $true
-                        }
-
-                        if ($PSItem.MaximumVersion -and ($PSItem.MaximumVersion -lt $highestPlannedVersion)) {
-                            Write-Debug "$($PSItem.Name): $highestPlannedVersion is higher than Maximum Version $($PSItem.MaximumVersion). Performing Lookup"
-                            return $true
-                        }
-
-                        if ($PSItem.RequiredVersion -and ($PSItem.RequiredVersion -notin $plannedVersions.RequiredVersion)) {
-                            Write-Debug "$($PSItem.Name): Explicity Required Version $($PSItem.Required) is not within existing planned versions ($($plannedVersions.RequiredVersion -join ',')). Performing Lookup"
-                            return $true
-                        }
-
-                        #If it didn't match, skip it
-                        Write-Debug "$($PSItem.Name) dependency satisfied by $highestPlannedVersion already in the plan"
+                Write-Debug "$moduleSpec`: Processing Response"
+                # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
+                #TODO: TryCatch logic for GetResult
+                try {
+                    $response = $completedTask.GetAwaiter().GetResult()
+                    | ConvertFrom-Json
+                } catch {
+                    $taskException = $PSItem.Exception.InnerException
+                    #TODO: Rewrite this as a handle filter
+                    if ($PSItem.Exception.InnerException -isnot [HttpRequestException]) { throw }
+                    [HttpRequestException]$err = $PSItem.Exception.InnerException
+                    if ($err.StatusCode -eq [HttpStatusCode]::NotFound) {
+                        throw [InvalidOperationException]"$moduleSpec`: module was not found in the $Source repository. Check the spelling and try again."
                     }
 
-                    if (-not $dependenciesToResolve) {
-                        Write-Debug "$moduleSpec has no remaining dependencies that need resolving"
+                    #All other cases
+                    $PSItem.ErrorDetails = "$moduleSpec`: Failed to fetch module $moduleSpec from $Source. Error: $PSItem"
+                    throw $PSItem
+                }
+
+                # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
+                $responseItems = $response.catalogEntry ? $response.catalogEntry : $response.items.items.catalogEntry
+
+                #TODO: This should be a separate function with a pipeline
+                foreach ($moduleInfo in $responseItems) {
+                    # FIXME: Support Preview Releases
+                    if ($moduleInfo.version.contains('-')) {
+                        Write-Verbose "WARN: Skipping $($moduleInfo.id) $($moduleInfo.version) candidate because it is a preview release. This will be implemented later"
                         continue
                     }
 
-                    Write-Debug "Fetching info on remaining $($dependenciesToResolve.count) dependencies"
-
-                    # We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
-                    # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
-                    foreach ($dependencySpec in $dependenciesToResolve) {
-                        $localMatch = Find-LocalModule $dependencySpec
-                        if ($localMatch) {
-                            Write-Verbose "Found local module $localMatch that satisfies dependency $dependencySpec. Skipping..."
-                            #TODO: Capture this somewhere that we can use it to report in the deploy plan
-                            continue
-                        }
-                        $task = Get-ModuleInfoAsync -Name $dependencySpec -HttpClient $httpclient -Uri $Source
-                        $resolveTasks[$task] = $dependencySpec
-                        $currentTasks.Add($task)
+                    #Create a module spec with our returned info
+                    [ComparableModuleSpecification]$moduleSpec = @{
+                        ModuleName      = $moduleInfo.id
+                        RequiredVersion = $moduleInfo.version
+                        #TODO: Fix in Server API GUID            = $moduleInfo.Guid
                     }
 
-                }
-            }
-            try {
-                [void]$resolveTasks.Remove($completedTask)
-                [void]$currentTasks.Remove($completedTask)
-            } catch {
-                throw
-            }
-            Write-Debug "Remaining Tasks: $($currentTasks.count)"
-        }
+                    #Check if we have already processed this item and move on if we have
+                    if (-not $modulesToInstall.Add($moduleSpec)) {
+                        Write-Debug "$ModuleSpec ModulesToInstall already exists. Skipping..."
+                        continue
+                    }
 
+                    Write-Debug "$moduleSpec Added to ModulesToInstall."
+
+                    # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
+                    # TODO: Should it? Should we check for the target framework and only install if it matches?
+                    $dependencyInfo = $moduleInfo.dependencyGroups.dependencies
+
+                    #Determine dependencies and add them to the pending tasks
+                    if ($dependencyInfo) {
+                        # HACK: I should be using the Id provided by the server, for now I'm just guessing because
+                        # I need to add it to the ComparableModuleSpec class
+                        Write-Debug "$moduleSpec`: Processing dependencies"
+                        try {
+                            [List[ComparableModuleSpecification]]$dependencies = $dependencyInfo | Parse-NugetDependency
+
+                        } catch { Wait-Debugger }
+                        Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
+
+                        # TODO: Where loop filter maybe
+                        [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
+                            # TODO: This dependency resolution logic should be a separate function
+                            # Maybe ModulesToInstall should be nested/grouped by Module Name then version to speed this up, as it currently
+                            # enumerates every time which shouldn't be a big deal for small dependency trees but might be a
+                            # meaninful performance difference on a whole-system upgrade.
+                            [HashSet[string]]$moduleNames = $modulesToInstall.Name
+                            if ($PSItem.Name -notin $ModuleNames) {
+                                Write-Debug "$PSItem not already in ModulesToInstall. Resolving..."
+                                return $true
+                            }
+
+                            $plannedVersions = $modulesToInstall
+                            | Where-Object Name -EQ $PSItem.Name
+                            | Sort-Object RequiredVersion -Descending
+
+                            # TODO: Consolidate with Get-HighestSatisfiesVersion function
+                            $highestPlannedVersion = $plannedVersions[0].RequiredVersion
+
+                            if ($PSItem.Version -and ($PSItem.Version -gt $highestPlannedVersion)) {
+                                Write-Debug "$($PSItem.Name): Minimum Version $($PSItem.Version) not satisfied by highest existing match $highestPlannedVersion. Performing Lookup."
+                                return $true
+                            }
+
+                            if ($PSItem.MaximumVersion -and ($PSItem.MaximumVersion -lt $highestPlannedVersion)) {
+                                Write-Debug "$($PSItem.Name): $highestPlannedVersion is higher than Maximum Version $($PSItem.MaximumVersion). Performing Lookup"
+                                return $true
+                            }
+
+                            if ($PSItem.RequiredVersion -and ($PSItem.RequiredVersion -notin $plannedVersions.RequiredVersion)) {
+                                Write-Debug "$($PSItem.Name): Explicity Required Version $($PSItem.RequiredVersion) is not within existing planned versions ($($plannedVersions.RequiredVersion -join ',')). Performing Lookup"
+                                return $true
+                            }
+
+                            #If it didn't match, skip it
+                            Write-Debug "$($PSItem.Name) dependency satisfied by $highestPlannedVersion already in the plan"
+                        }
+
+                        if (-not $dependenciesToResolve) {
+                            Write-Debug "$moduleSpec has no remaining dependencies that need resolving"
+                            continue
+                        }
+
+                        Write-Debug "Fetching info on remaining $($dependenciesToResolve.count) dependencies"
+
+                        # We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
+                        # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
+                        foreach ($dependencySpec in $dependenciesToResolve) {
+                            $localMatch = Find-LocalModule $dependencySpec
+                            if ($localMatch) {
+                                Write-Verbose "Found local module $localMatch that satisfies dependency $dependencySpec. Skipping..."
+                                #TODO: Capture this somewhere that we can use it to report in the deploy plan
+                                continue
+                            }
+                            Write-Debug "$moduleSpec`: Fetching dependency $dependencySpec"
+                            $task = Get-ModuleInfoAsync -Name $dependencySpec -HttpClient $httpclient -Uri $Source -CancellationToken $cancelToken.Token
+                            $resolveTasks[$task] = $dependencySpec
+                            $currentTasks.Add($task)
+                        }
+
+                    }
+                }
+                try {
+                    [void]$resolveTasks.Remove($completedTask)
+                    [void]$currentTasks.Remove($completedTask)
+                } catch {
+                    throw
+                }
+                Write-Debug "Remaining Tasks: $($currentTasks.count)"
+            }
+        } finally {
+            #This gets called even if ctrl-c occured during the process
+            #Should cancel any outstanding requests
+            if ($currentTasks.count -gt 0) {
+                Write-Debug "Cancelling $($currentTasks.count) outstanding tasks"
+            }
+
+            $cancelToken.Dispose()
+        }
         return $modulesToInstall
     }
 }
@@ -491,7 +509,8 @@ filter Get-ModuleInfoAsync {
     param (
         [Parameter(Mandatory)][ComparableModuleSpecification]$Name,
         [Parameter(Mandatory)][string]$Uri,
-        [Parameter(Mandatory)][HttpClient]$HttpClient
+        [Parameter(Mandatory)][HttpClient]$HttpClient,
+        [CancellationToken]$CancellationToken
     )
     end {
         $moduleSpec = $Name
@@ -515,11 +534,11 @@ filter Get-ModuleInfoAsync {
 
         #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
         Write-Debug "$ModuleId`: fetch info from $moduleInfoUri"
-        return $HttpClient.GetStringAsync($moduleInfoUri)
+        return $HttpClient.GetStringAsync($moduleInfoUri, $CancellationToken)
     }
 }
 
-filter Parse-NugetDependency ([Parameter(ValueFromPipeline)]$Dependency) {
+filter Parse-NugetDependency ([Parameter(Mandatory, ValueFromPipeline)]$Dependency) {
     #TODO: Dependency should be more strictly typed
 
     #NOTE: This can't be a modulespecification from the start because modulespecs are immutable
@@ -528,37 +547,48 @@ filter Parse-NugetDependency ([Parameter(ValueFromPipeline)]$Dependency) {
     }
     $Version = $Dependency.range
 
-    if ($Version) {
-        #If it is an open bound, set ModuleVersion to 0.0.0 (meaning any version)
-        if ($version -eq '(, )') {
-            $dep.ModuleVersion = '0.0.0'
-            return [ComparableModuleSpecification]$dep
-        }
+    # Treat a null result as "any"
+    if ([String]::IsNullOrEmpty($Version)) {
+        $dep.ModuleVersion = '0.0.0'
+        return [ComparableModuleSpecification]$dep
+    }
 
-        #If it is an exact match version (has brackets and doesn't have a comma), set version accordingly
-        $ExactVersionRegex = '\[([^,]+)\]'
-        if ($version -match $ExactVersionRegex) {
-            $dep.RequiredVersion = $matches[1]
-            return [ComparableModuleSpecification]$dep
-        }
+    #If it is a direct module specification, treat this as a required version.
+    $exactVersion = $null
+    if ([Version]::TryParse($Version, [ref]$exactVersion)) {
+        $dep.RequiredVersion = $exactVersion
+        return [ComparableModuleSpecification]$dep
+    }
 
-        #Parse all other remainder options. For this purpose we ignore inclusive vs. exclusive
-        #TODO: Add inclusive/exclusive parsing
-        $version = $version -replace '[\[\(\)\]]', '' -split ','
+    #If it is an open bound, set ModuleVersion to 0.0.0 (meaning any version)
+    if ($version -eq '(, )') {
+        $dep.ModuleVersion = '0.0.0'
+        return [ComparableModuleSpecification]$dep
+    }
 
-        $minimumVersion = $version[0].trim()
-        $maximumVersion = $version[1].trim()
-        if ($minimumVersion -and $maximumVersion -and ($minimumVersion -eq $maximumVersion)) {
-            #If the minimum and maximum versions match, we treat this as an explicit version
-            $dep.RequiredVersion = $minimumVersion
-            return [ComparableModuleSpecification]$dep
-        } elseif ($minimumVersion -or $maximumVersion) {
-            if ($minimumVersion) { $dep.ModuleVersion = $minimumVersion }
-            if ($maximumVersion) { $dep.MaximumVersion = $maximumVersion }
-        } else {
-            #If no matching version works, just set dep to a string of the modulename
-            Write-Warning "$($dep.ModuleName) has an invalid version spec, falling back to maximum version."
-        }
+    #If it is an exact match version (has brackets and doesn't have a comma), set version accordingly
+    $ExactVersionRegex = '\[([^,]+)\]'
+    if ($version -match $ExactVersionRegex) {
+        $dep.RequiredVersion = $matches[1]
+        return [ComparableModuleSpecification]$dep
+    }
+
+    #Parse all other remainder options. For this purpose we ignore inclusive vs. exclusive
+    #TODO: Add inclusive/exclusive parsing
+    $version = $version -replace '[\[\(\)\]]', '' -split ','
+
+    $minimumVersion = $version[0].trim()
+    $maximumVersion = $version[1].trim()
+    if ($minimumVersion -and $maximumVersion -and ($minimumVersion -eq $maximumVersion)) {
+        #If the minimum and maximum versions match, we treat this as an explicit version
+        $dep.RequiredVersion = $minimumVersion
+        return [ComparableModuleSpecification]$dep
+    } elseif ($minimumVersion -or $maximumVersion) {
+        if ($minimumVersion) { $dep.ModuleVersion = $minimumVersion }
+        if ($maximumVersion) { $dep.MaximumVersion = $maximumVersion }
+    } else {
+        #If no matching version works, just set dep to a string of the modulename
+        Write-Warning "$($dep.ModuleName) has an invalid version spec, falling back to maximum version."
     }
 
     return [ComparableModuleSpecification]$dep
@@ -625,9 +655,9 @@ function Find-LocalModule {
             $moduleNamePath = Join-Path $modulePath $ModuleSpec.Name
             if (-not ([Directory]::Exists($moduleNamePath))) { continue }
             $folders = [System.IO.Directory]::GetDirectories($moduleNamePath) | Split-Path -Leaf
-            [SemanticVersion[]]$candidateVersions = foreach ($folder in $folders) {
-                [SemanticVersion]$version = $null
-                if ([SemanticVersion]::TryParse($folder, [ref]$version)) { $version } else {
+            [Version[]]$candidateVersions = foreach ($folder in $folders) {
+                [Version]$version = $null
+                if ([Version]::TryParse($folder, [ref]$version)) { $version } else {
                     Write-Warning "Could not parse $folder in $moduleNamePath as a valid version. This is probably a bad module directory and should be removed."
                 }
             }
@@ -636,7 +666,7 @@ function Find-LocalModule {
                 Write-Verbose "$moduleSpec`: module folder exists at $moduleNamePath but no modules found that match the version spec."
                 continue
             }
-            $versionMatch = Get-HighestSatisfiesVersion -ModuleSpec $ModuleSpec -Versions $candidateVersions
+            $versionMatch = Get-HighestSatisfiesVersion -ModuleSpec $ModuleSpec -Version $candidateVersions
             if ($versionMatch) {
                 $manifestPath = Join-Path $moduleNamePath $([Version]$versionMatch) "$($ModuleSpec.Name).psd1"
                 if (-not [File]::Exists($manifestPath)) {
@@ -658,8 +688,10 @@ Given an array of versions, find the highest one that satisfies the module spec.
 function Get-HighestSatisfiesVersion {
     param(
         [Parameter(Mandatory)][ComparableModuleSpecification]$ModuleSpec,
-        [Parameter(Mandatory)][HashSet[SemanticVersion]]$Versions
+        #Versions that are potential candidates to satisfy the modulespec
+        [Parameter(Mandatory)][HashSet[Version]]$Version
     )
+    # TODO: Semver-compatible version of this function
 
     # RequiredVersion is an easy explicit compare
     if ($ModuleSpec.RequiredVersion) {
