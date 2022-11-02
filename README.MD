@@ -22,18 +22,26 @@ PowerShellGet, which has much broader support for multiple repos, authentication
 
 It makes a lot of very bad assumptions, most of which are safe for PowerShell Gallery at least
 
-1. Nuget v2 Only
+1. Nuget v3 Only
 1. Powershell 7+ Only
 1. Modules with a particular GUID and version are immutable and never change. This is great for caching purposes, and is true for PSGallery,
 but may not be true for other galleries.
-1. OData Raw API (vs NuGet functions) is available, which has been deprecated. We use these because they are faster and more documented.
-1. Batch API is available
 1. PowerShellGet is built for compatibility with PSGetv2, I have no such compatibility restrictions and can build "from scratch"
 1. It currently has very little error handling and aggressive timeouts, and not recommended for slow or unreliable
    network connections. It will "fail fast" as much as possible.
 1. Dependency resolution only takes into account the modules in the direct target folder. For example, if modules are
 installed in local computer that would satisfy the dependency graph, they'll be installed into user module folder anyways
-and vice versa.
+and vice versa. (TODO!)
+1. Local PSModule folders that don't have the format folder/moduleName/moduleVersion/moduleName.psd1 are not considered
+1. Non-Local PSModule folders for dependency resolution are not supported
+1. The .psd1 file isn't actually read to verify the module is correct/not corrupt.
+
+## Lessons learned
+
+1. Multipart $batch queries suck, they still only execute server-side in parallel. I wrote a full multipart implementation only to throw it away
+1. HTTP/2 is magic for high speed testing. Fiddler only supports HTTP/1.1 and can give false positives about how many connections are actually being made. Use wireshark to be sure.
+1. [Dictionary].keys is not a stable target at all for task iteration, best to maintain a separate list
+1. PSGetv3 doesn't follow the nuget server v3 spec of optional params (stuff marked optional will cause psgetv3 to throw if not present)
 
 ## Dependency Resolution
 

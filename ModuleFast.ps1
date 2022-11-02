@@ -1,10 +1,12 @@
 #requires -version 7
 using namespace System.Text
+using namespace System.IO
 using namespace System.Net.Http
 using namespace System.Threading.Tasks
 using namespace System.Collections.Generic
 using namespace System.Collections.Concurrent
 using namespace System.Collections.Specialized
+using namespace System.Management.Automation
 using namespace Microsoft.PowerShell.Commands
 
 <#
@@ -23,15 +25,15 @@ It also doesn't generate the PowershellGet XML files currently, so PowershellGet
 
 
 function Get-ModuleFastPlan {
-    [CmdletBinding()]
     param(
         #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
         [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
+        #The repository to scan for modules. TODO: Multi-repo support
+        [string]$Source = 'https://preview.pwsh.gallery/index.json',
         #Whether to include prerelease modules in the request
         [Switch]$PreRelease,
-        $Source = 'https://preview.pwsh.gallery/index.json',
-        #TODO: Support all PS targets as well as a custom target
-        $Target
+        #By default we use in-place modules if they satisfy the version requirements. This switch will force a search for all latest modules
+        [Switch]$Latest
     )
 
     BEGIN {
@@ -58,7 +60,8 @@ function Get-ModuleFastPlan {
             #For now, drop support for HTTP/1.1 (curious if this will be a problem)
             #This will multiplex all queries over a single connection, minimizing TLS setup overhead
             #Should also support HTTP/3 on newest PS versions
-            $httpClient.DefaultRequestVersion = '2.0'
+            #Disabled for now as CF worker troubleshooting seems to have an issue maybe
+            # $httpClient.DefaultRequestVersion = '2.0'
             $httpClient.DefaultVersionPolicy = [HttpVersionPolicy]::RequestVersionOrHigher
             #This should enable HTTP/3 on Win11 22H2+ and PS 7.2+
             [void][AppContext]::SetSwitch('System.Net.SocketsHttpHandler.Http3Support', $true)
@@ -83,6 +86,12 @@ function Get-ModuleFastPlan {
         [List[Task[String]]]$currentTasks = @()
 
         foreach ($moduleSpec in $ModulesToResolve) {
+            $localMatch = Find-LocalModule $moduleSpec
+            if ($localMatch) {
+                Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
+                #TODO: Capture this somewhere that we can use it to report in the deploy plan
+                continue
+            }
             $task = Get-ModuleInfoAsync -Name $moduleSpec -HttpClient $httpclient -Uri $Source
             $resolveTasks[$task] = $moduleSpec
             $currentTasks.Add($task)
@@ -99,11 +108,12 @@ function Get-ModuleFastPlan {
             #TODO: Perform a HEAD query to see if something has changed
 
             #BUG: For some reason even when indexed we still get a keycollection back, select is the only thing that unwraps it.
-            [Task[string]]$completedTask = $currentTasks[$thisTaskIndex] | Select-Object -First 1
+            [Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
 
             if (-not $completedTask) { throw "Task $thisTaskIndex was not found in the keycollection. This is a bug" }
             [ComparableModuleSpecification]$moduleSpec = $resolveTasks[$completedTask]
 
+            Write-Debug "$moduleSpec`: Processing Response"
             # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
             #TODO: TryCatch logic for GetResult
             $response = $completedTask.GetAwaiter().GetResult()
@@ -116,7 +126,7 @@ function Get-ModuleFastPlan {
             foreach ($moduleInfo in $responseItems) {
                 # FIXME: Support Preview Releases
                 if ($moduleInfo.version.contains('-')) {
-                    Write-Warning "Skipping $($moduleInfo.id) $($moduleInfo.version) candidate because it is a preview release. This will be implemented later"
+                    Write-Verbose "WARN: Skipping $($moduleInfo.id) $($moduleInfo.version) candidate because it is a preview release. This will be implemented later"
                     continue
                 }
 
@@ -192,9 +202,15 @@ function Get-ModuleFastPlan {
 
                     # We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
                     # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
-                    foreach ($moduleSpec in $dependenciesToResolve) {
-                        $task = Get-ModuleInfoAsync -Name $moduleSpec -HttpClient $httpclient -Uri $Source
-                        $resolveTasks[$task] = $moduleSpec
+                    foreach ($dependencySpec in $dependenciesToResolve) {
+                        $localMatch = Find-LocalModule $dependencySpec
+                        if ($localMatch) {
+                            Write-Verbose "Found local module $localMatch that satisfies dependency $dependencySpec. Skipping..."
+                            #TODO: Capture this somewhere that we can use it to report in the deploy plan
+                            continue
+                        }
+                        $task = Get-ModuleInfoAsync -Name $dependencySpec -HttpClient $httpclient -Uri $Source
+                        $resolveTasks[$task] = $dependencySpec
                         $currentTasks.Add($task)
                     }
 
@@ -280,8 +296,41 @@ function Install-Modulefast {
         $Path,
         $ModuleCache = (New-Item -ItemType Directory -Force -Path (Join-Path ([io.path]::GetTempPath()) 'ModuleFastCache')),
         $NuGetCache = [io.path]::Combine([string[]]("$HOME", '.nuget', 'psgallery')),
-        [Switch]$Force
+        [Switch]$Force,
+        #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
+        [Switch]$NoPSModulePathUpdate,
+        #Setting this won't add the default destination to your profile.
+        [Switch]$NoProfileUpdate
     )
+
+
+    # Setup the Destination repository
+    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath()) 'powershell/modules')
+    if (-not $Destination) {
+        $Destination = $defaultRepoPath
+    }
+    # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
+    if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
+        if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
+            New-Item -ItemType Directory -Path $Destination -Force
+        }
+    }
+    # Should error if not present
+    $Destination = Resolve-Path $Destination
+
+    if ($Destination -ne $defaultRepoPath) {
+        if (-not $NoProfileUpdate) {
+            Write-Warning 'Parameter -Destination is set to a custom path. We assume you know what you are doing, so it will not automatically be added to your Profile but will be added to PSModulePath. Set -NoProfileUpdate to suppress this message in the future.'
+        }
+        $NoProfileUpdate = $true
+    }
+    if (-not $NoPSModulePathUpdate) {
+        $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include $Destination"
+        if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage)) { return }
+
+        Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
+
+    }
 
     #Do a really crappy guess for the current user modules folder.
     #TODO: "Scope CurrentUser" type logic
@@ -466,6 +515,12 @@ filter Parse-NugetDependency ([Parameter(ValueFromPipeline)]$Dependency) {
     $Version = $Dependency.range
 
     if ($Version) {
+        #If it is an open bound, set ModuleVersion to 0.0.0 (meaning any version)
+        if ($version -eq '(, )') {
+            $dep.ModuleVersion = '0.0.0'
+            return [ComparableModuleSpecification]$dep
+        }
+
         #If it is an exact match version (has brackets and doesn't have a comma), set version accordingly
         $ExactVersionRegex = '\[([^,]+)\]'
         if ($version -match $ExactVersionRegex) {
@@ -488,104 +543,135 @@ filter Parse-NugetDependency ([Parameter(ValueFromPipeline)]$Dependency) {
             if ($maximumVersion) { $dep.MaximumVersion = $maximumVersion }
         } else {
             #If no matching version works, just set dep to a string of the modulename
-            Write-Warning "$($dep.Name) has an invalid version spec, falling back to maximum version."
+            Write-Warning "$($dep.ModuleName) has an invalid version spec, falling back to maximum version."
         }
     }
 
     return [ComparableModuleSpecification]$dep
 }
 
+<#
+.SYNOPSIS
+Adds an existing PowerShell Modules path to the current session as well as the profile
+#>
+function Add-DestinationToPSModulePath ([string]$Destination, [switch]$NoProfileUpdate) {
+    $ErrorActionPreference = 'Stop'
+    $Destination = Resolve-Path $Destination #Will error if it doesn't exist
+
+    $env:PSModulePath = $Destination + [Path]::PathSeparator + $env:PSModulePath
+
+    # Check if the destination is in the PSModulePath
+    [string[]]$modulePaths = $env:PSModulePath -split [Path]::PathSeparator
+
+    if ($Destination -notin $modulePaths) {
+        Write-Warning "$Destination is not in current PSModulePath list. Adding to both the current session and Current User All Hosts profile."
+        $modulePaths += $Destination
+        $env:PSModulePath = $modulePaths -join [Path]::PathSeparator
+
+        if (-not $NoProfileUpdate) {
+            $myProfile = $profile.CurrentUserAllHosts
+            if (-not (Test-Path $myProfile)) {
+                Write-Verbose 'User All Hosts profile not found, creating one.'
+                New-Item -ItemType File -Path $Destination -Force
+            }
+            $ProfileLine = "`$env:PSModulePath += [System.IO.Path]::PathSeparator + $Destination #Added by ModuleFast. If you dont want this, add -NoProfileUpdate to your command."
+            #FIXME: Complete this when I get to the Install-Module part
+            # if (Get-Content -Raw $Profile) -notmatch
+            Add-Content -Path $profile -Value "`$env:PSModulePath += ';$Destination'"
+        } else {
+            Write-Warning 'The module repository is not in your PSModulePath. Please add it to use the modules.'
+        }
+    }
+}
 
 <#
 .SYNOPSIS
-Builds a multipart query from a list of strings that represent HTTP GET Queries
+Searches local PSModulePath repositories
 #>
-function New-MultipartGetQuery {
-    [OutputType([StringContent])]
-    param (
-        [Parameter(Mandatory, ValueFromPipeline)][string]$content,
-        [string]$boundary = "powershell-$(New-Guid)",
-        [MultiPartContent]$request
+function Find-LocalModule {
+    param(
+        [Parameter(Mandatory)][ComparableModuleSpecification]$ModuleSpec,
+        [string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator)
     )
+    $ErrorActionPreference = 'Stop'
+    # BUG: Prerelease Module paths are still not recognized by internal PS commands and can break things
 
-    begin {
-        if (-not $request) {
-            $request = [MultipartContent]::new('mixed', $boundary)
+    # Search all psmodulepaths for the module
+    $modulePaths = $env:PSModulePath -split [Path]::PathSeparator
+
+    # NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
+    foreach ($modulePath in $modulePaths) {
+        if ($moduleSpec.RequiredVersion) {
+            #We can speed up the search for explicit requiredVersion matches
+            #HACK: We assume a release version can satisfy a prerelease version constraint here.
+            $manifestPath = Join-Path $modulePath $ModuleSpec.Name $([Version]$ModuleSpec.RequiredVersion) "$($ModuleSpec.Name).psd1"
+            if ([File]::Exists($manifestPath)) { return $manifestPath }
+        } else {
+            #Get all the version folders for the moduleName
+            $moduleNamePath = Join-Path $modulePath $ModuleSpec.Name
+            if (-not ([Directory]::Exists($moduleNamePath))) { continue }
+            $folders = [System.IO.Directory]::GetDirectories($moduleNamePath) | Split-Path -Leaf
+            [SemanticVersion[]]$candidateVersions = foreach ($folder in $folders) {
+                [SemanticVersion]$version = $null
+                if ([SemanticVersion]::TryParse($folder, [ref]$version)) { $version } else {
+                    Write-Warning "Could not parse $folder in $moduleNamePath as a valid version. This is probably a bad module directory and should be removed."
+                }
+            }
+
+            if (-not $candidateVersions) {
+                Write-Verbose "$moduleSpec`: module folder exists at $moduleNamePath but no modules found that match the version spec."
+                continue
+            }
+            $versionMatch = Get-HighestSatisfiesVersion -ModuleSpec $ModuleSpec -Versions $candidateVersions
+            if ($versionMatch) {
+                $manifestPath = Join-Path $moduleNamePath $([Version]$versionMatch) "$($ModuleSpec.Name).psd1"
+                if (-not [File]::Exists($manifestPath)) {
+                    # Our matching method doesn't make it easy to match on "next highest" version, so we have to do this.
+                    throw "A matching module folder was found for $ModuleSpec but the manifest is not present at $manifestPath. This indicates a corrupt module and should be removed before proceeding."
+                } else {
+                    return $manifestPath
+                }
+            }
         }
     }
 
-    process {
-        # HttpContentMessage is part of ASP.NET, not HttpClient, so we have to roll our own
-
-        #Using Stringcontent and changing the headers is easier than using ByteArrayContent
-        #An extra newline separator is required by PowerShell Gallery for some reason.
-        [StringContent]$httpRequest = "GET $content HTTP/1.1" + [Environment]::NewLine
-        $httpRequest.Headers.ContentType = 'application/http'
-        $httpRequest.Headers.Add('Content-Transfer-Encoding', 'binary')
-        $request.Add($httpRequest)
-    }
-
-    end {
-        # BUG: MultiPartContent adds an additional batch separator line at the end, and Powershell Gallery does not like
-        # this and throws a 406 not acceptable, so we must trim this off.
-        # I couldn't find a way to do this in the multipart
-        # class directly so we instead make a new stringcontent from the multipart and trim manually.
-        # TODO: Maybe have a requestmessagehandler that can do it?
-        [string]$requestBody = $request.ReadAsStringAsync().GetAwaiter().GetResult()
-        # Strip the last boundary line
-        [StringContent]$fixedRequest = $requestBody.TrimEnd().Remove($requestBody.LastIndexOf("--$boundary"))
-        $fixedRequest.Headers.ContentType = $request.Headers.ContentType
-
-        # PowerShell wants to unwrap MultiPartContent since it is an ienumerable, the "," adds an "outer array" so that
-        # multipart content comes through correctly.
-        return $fixedRequest
-    }
+    return $false
 }
 
 <#
-.SYNOPSIS
-Takes a multipart response received from the API and breaks it into a string array based on the separators
+Given an array of versions, find the highest one that satisfies the module spec. Returns $false if no match is found.
 #>
-filter ConvertFrom-MultiPartResponse ([Parameter(ValueFromPipeline)][HttpResponseMessage]$response) {
-    [string]$batchSeparator = ($response.Content.Headers.ContentType.Parameters | Where-Object Name -EQ 'boundary').Value
-    if (-not $batchSeparator) { throw 'Invalid Response from API, no batch separator header found. This should not happen and is probably a bug.' }
+function Get-HighestSatisfiesVersion {
+    param(
+        [Parameter(Mandatory)][ComparableModuleSpecification]$ModuleSpec,
+        [Parameter(Mandatory)][HashSet[SemanticVersion]]$Versions
+    )
 
-    # This might be slow because we might be waiting on data to receive while other data might be ready to go.
-    #TODO: Move this processing up to the main operation and this function should take two parameters for the string
-    #response and the boundary
-    $responseData = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    # RequiredVersion is an easy explicit compare
+    if ($ModuleSpec.RequiredVersion) {
+        if ($Versions.Contains($ModuleSpec.RequiredVersion)) {
+            return $ModuleSpec.RequiredVersion
+        } else {
+            return $false
+        }
+    }
 
-    #I can't find a good method to convert the string representation of an HTTP response into an object, so we will make
-    #A BIG assumption here that the headers have two separate newlines. This will probably be the source of a lot of
-    #Non-PSGallery Bugs
-    [List[string]]$splitResponse = $responseData.Split("--$batchSeparator")
-    #PSGallery adds an additional "--" to the last batch response header, we need to clean this up if present
-    #This method is faster than doing where-object because we dont have to enumerate the response and evaluate each entry
-    if ($splitResponse[-1].Trim() -eq '--') { $splitResponse.RemoveAt(($splitResponse.Count - 1)) }
+    $candidateVersions = foreach ($version in $versions) {
+        if ($ModuleSpec.MaximumVersion -and $version -gt $ModuleSpec.MaximumVersion) { continue }
+        if ($ModuleSpec.Version -and $version -lt $ModuleSpec.Version) { continue }
+        $version
+    }
 
-    #The Where-Object filters out blank entries.
-    #TODO: Faster way maybe?
-    return $splitResponse | Where-Object { $PSItem }
+    $highestFilteredVersion = $candidateVersions
+    | Sort-Object -Descending
+    | Select-Object -First 1
+
+    if ($highestFilteredVersion) {
+        return $highestFilteredVersion
+    } else {
+        return $false
+    }
 }
-
-# Takes a group of queries and converts them to a single odata batch request body used for httpclient
-# filter ConvertTo-BatchRequest([Parameter(Mandatory,ValueFromPipeline)][string]$query, [string]$batchBoundary='GetModuleFastBatch') {
-#     begin {
-#         [text.StringBuilder]$body = @'
-# ---batch
-#         '@
-#     }
-
-#     $body.AppendLine(
-
-#     )
-# }
-
-# Create a http multipart query
-
-
-#Multipart stuff
-
 
 #endregion Helpers
 
