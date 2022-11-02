@@ -3,9 +3,21 @@
 This is a PowerShell module installer that is optimized for high performance and no external dependencies so it can be
 used as a bootstrap.
 
+## Goals
+
+Given a set of packages, install the packages and their dependencies as fast as possible in a declarative plan/apply incremental approach.
+Packages once deployed should be fully compatible with built-in *-Module commands, PSGetv2, and PSGetv3
+Support a "complete" mode that will clean up packages that aren't the latest versions of the specified modules.
+
+## Non-Goals
+
+**This is not a replacement for PowerShellGetv3** This is a compliment to the hard work being done there. The focus with
+PSGetv3 is compatibility, the focus with ModuleFast is speed at the expense of backwards compatability.
+
 ## How this script works
 
 1. Takes your module specifications and builds a declarative dependency tree, following a IaC plan/apply approach to installing modules.
+1. For PowerShell gallery, uses an optimized CloudFlare Worker to resolve dependencies as fast as possible.
 1. Uses a custom HTTPClient and async tasks to build the dependency tree quickly, querying with minimal data possible and
    using batch queries where possible to optimize for performance. This is all done in native PowerShell, no C# required
    (though C# would allow for certain operations to be even more parallelizable by chaining tasks).
