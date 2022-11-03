@@ -54,12 +54,16 @@ and vice versa. (TODO!)
 1. HTTP/2 is magic for high speed testing. Fiddler only supports HTTP/1.1 and can give false positives about how many connections are actually being made. Use wireshark to be sure.
 1. [Dictionary].keys is not a stable target at all for task iteration, best to maintain a separate list
 1. PSGetv3 doesn't follow the nuget server v3 spec of optional params (stuff marked optional will cause psgetv3 to throw if not present)
+1. Initially the logic would fetch the main page and resolve dependencies by fetching individual versions. Turns out its
+   only barely slower to return all versions of a module in single call, probably because the PSGallery server-side filtering
+   doesnt cache, so we instead fetch all versions of a module in a reduced way from our Cloudflare worker and use that as a cache.
+1. Parallel dependency lookups (lots of Az dependencies require Az.Account) resulted in lots of duplicate calls for Az.Account. Since
+   all task calls bottleneck through our main async loop logic, we can safely inspect existing dependency calls just before
+   execution to determine if the existing call will satisfy it, and then add the context on to the existing object to prevent the duplicate calls.
 
 ## Dependency Resolution
 
 This module uses a custom dependency resolution algorithm that selects the newest available modules that satisfy all the
 dependency criteria. If a version of a locally installed module satisfies the "latest" criteria of the dependency graph,
-it will be used rather than fetching what is newest on the gallery.
-
-`Update-ModuleFast` will only update the explicitly requested modules, but downstream dependencies will not be updated
-unless `-All` is specified.
+it will be used rather than fetching what is newest on the gallery. This can be overriden with the `-Update` switch that
+will recheck whats available in the remote.
