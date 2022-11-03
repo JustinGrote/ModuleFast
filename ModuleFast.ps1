@@ -75,6 +75,12 @@ function Get-ModuleFastPlan {
             #This should enable HTTP/3 on Win11 22H2+ (or linux with http3 library) and PS 7.2+
             [void][AppContext]::SetSwitch('System.Net.SocketsHttpHandler.Http3Support', $true)
         }
+
+        #We pass this splat to all our HTTP requests to cut down on boilerplate
+        $httpContext = @{
+            HttpClient        = $httpClient
+            CancellationToken = $cancelToken.Token
+        }
         # Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
     }
     PROCESS {
@@ -85,6 +91,7 @@ function Get-ModuleFastPlan {
         }
     }
     END {
+        # A deduplicated list of modules to install
         [HashSet[ComparableModuleSpecification]]$modulesToInstall = @{}
 
         # We use this as a fast lookup table for the context of the request
@@ -103,7 +110,7 @@ function Get-ModuleFastPlan {
                     #TODO: Capture this somewhere that we can use it to report in the deploy plan
                     continue
                 }
-                $task = Get-ModuleInfoAsync -Name $moduleSpec -HttpClient $httpclient -Uri $Source -CancellationToken $cancelToken.Token
+                $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $moduleSpec.Name
                 $resolveTasks[$task] = $moduleSpec
                 $currentTasks.Add($task)
             }
@@ -119,52 +126,111 @@ function Get-ModuleFastPlan {
                 #TODO: Perform a HEAD query to see if something has changed
 
                 [Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
-                [ComparableModuleSpecification]$moduleSpec = $resolveTasks[$completedTask]
+                [ComparableModuleSpecification]$currentModuleSpec = $resolveTasks[$completedTask]
 
-                Write-Debug "$moduleSpec`: Processing Response"
+                Write-Debug "$currentModuleSpec`: Processing Response"
                 # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
                 #TODO: TryCatch logic for GetResult
                 try {
                     $response = $completedTask.GetAwaiter().GetResult()
                     | ConvertFrom-Json
+                    Write-Debug "$currentModuleSpec`: Received Response with $($response.Count) pages"
                 } catch {
                     $taskException = $PSItem.Exception.InnerException
                     #TODO: Rewrite this as a handle filter
                     if ($taskException -isnot [HttpRequestException]) { throw }
                     [HttpRequestException]$err = $taskException
                     if ($err.StatusCode -eq [HttpStatusCode]::NotFound) {
-                        throw [InvalidOperationException]"$moduleSpec`: module was not found in the $Source repository. Check the spelling and try again."
+                        throw [InvalidOperationException]"$currentModuleSpec`: module was not found in the $Source repository. Check the spelling and try again."
                     }
 
                     #All other cases
-                    $PSItem.ErrorDetails = "$moduleSpec`: Failed to fetch module $moduleSpec from $Source. Error: $PSItem"
+                    $PSItem.ErrorDetails = "$currentModuleSpec`: Failed to fetch module $currentModuleSpec from $Source. Error: $PSItem"
                     throw $PSItem
                 }
 
-                # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
-                $responseItems = $response.catalogEntry ? $response.catalogEntry : $response.items.items.catalogEntry
-
-                #TODO: This should be a separate function with a pipeline
-
-                [Version[]]$candidateVersions = $responseItems.Version
-                | Where-Object { -not $PSItem.contains('-') } #TODO: Support Prerelease
-
-                $selectedVersion = Find-HighestSatisfiesVersion $moduleSpec $candidateVersions
-                if (-not $selectedVersion) {
-                    throw "No module that satisfies $moduleSpec was found in $Source"
+                if (-not $response.count) {
+                    throw [InvalidDataException]"$currentModuleSpec`: invalid result received from $Source. This is probably a bug. Content: $response"
                 }
 
-                $selectedModule = $responseItems | Where-Object Version -EQ $selectedVersion
-                if ($selectedModule.count -ne 1) {
-                    throw 'More than one selectedModule was specified. '
+                #If what we are looking for exists in the response, we can stop looking
+                #HACK: We are making a big assumption that the v3 API will always return the latest version(s) in the index
+                #TODO: Check every version range that our selected item might not have a higher candidate in a non-inlined index
+                #TODO: Type the responses and check on the type, not the existence of a property.
+                $entries = $response.items.items.catalogEntry
+                [version[]]$inlinedVersions = $entries.version
+                | Where-Object {
+                    $PSItem -and !$PSItem.contains('-')
+                }
+
+                [Version]$versionMatch = $moduleSpec.FindHighestMatch($inlinedVersions)
+                if ($versionMatch) {
+                    Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in the inlined index. TODO: Resolve dependencies"
+                    $selectedEntry = $entries | Where-Object version -EQ $versionMatch
+                    #TODO: Resolve dependencies in separate function
+                } else {
+                    #Do a more detailed resolution
+                    Write-Debug "$currentModuleSpec`: not found in inlined index. Determining appropriate page(s) to query"
+                    throw [NotImplementedException]'TODO: Find and fetch additional info from the paging'
+                    #If not inlined, we need to find what page(s) might have the candidate info we are looking for.
+                    #While this may seem inefficient, all pages but latest are static and have a long lifetime so we trade a
+                    #longer cold start to a nearly infinite requery, which will handle all subsequent dependency lookups.
+                    #stats show most modules have a few common dependencies, so caching all versions of those dependencies is
+                    #very helpful for fast performance
+
+                    # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
+                    # TODO: Should probably typesafe and validate this using classes
+
+                    #Lookup that ties ranges to their page leaf ID
+                    [Dictionary[ComparableModuleSpecification, String]]$ranges = @{}
+                    foreach ($range in $response.items) {
+                        $spec = @{
+                            Name = $currentModuleSpec.Name
+                        }
+                        if ($range.lower -eq $range.upper) {
+                            $spec.RequiredVersion = $range.lower
+                        } else {
+                            $spec.MinimumVersion = $range.lower
+                            $spec.MaximumVersion = $range.upper
+                        }
+                        $ranges[$spec] = $range.'@id'
+                    }
+                    $pages = $moduleSpec.FindMatches($ranges.Keys).foreach{
+                        $ranges[$PSItem]
+                    }
+                    if (-not $pages) {
+                        throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. If this happens during dependency lookup, it is a bug in ModuleFast."
+                    }
+                    Write-Debug "$currentModuleSpec`: Found $($pages.Count) pages that might match the query."
+
+                    #TODO: This is relatively slow and blocking, but we would need complicated logic to process it in the main task handler loop.
+                    #I really should make a pipeline that breaks off tasks based on the type of the response.
+                    #Good news is these pages should basically cache forever
+                    foreach ($page in $pages) {
+                        $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Uri $page
+                        $resolveTasks[$task] = $currentModuleSpec
+                        $currentTasks.Add($task)
+                    }
+                    # [Version[]]$candidateVersions = $responseItems.Version
+                    # | Where-Object { -not $PSItem.contains('-') } #TODO: Support Prerelease
+
+                    # $selectedVersion = Find-HighestSatisfiesVersion $moduleSpec $candidateVersions
+                    # if (-not $selectedVersion) {
+                    #     throw "No module that satisfies $moduleSpec was found in $Source"
+                    # }
+
+                    # $selectedEntry = $responseItems | Where-Object Version -EQ $selectedVersion
+                }
+
+                if ($selectedEntry.count -ne 1) {
+                    throw 'Something other than exactly 1 selectedModule was specified. This should never happen and is a bug'
                 }
 
                 $moduleInfo = [ComparableModuleSpecification]@{
-                    ModuleName      = $selectedModule.id
-                    RequiredVersion = $selectedModule.version
+                    ModuleName      = $selectedEntry.id
+                    RequiredVersion = $selectedEntry.version
                     #TODO: Fix in Server API GUID            = $moduleInfo.Guid
                 }
-
 
                 #Check if we have already processed this item and move on if we have
                 if (-not $modulesToInstall.Add($moduleInfo)) {
@@ -175,22 +241,22 @@ function Get-ModuleFastPlan {
                     continue
                 }
 
-                Write-Verbose "$moduleInfo Added to ModulesToInstall."
+                Write-Debug "$moduleInfo Added to ModulesToInstall."
 
                 # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
                 # TODO: Should it? Should we check for the target framework and only install if it matches?
-                $dependencyInfo = $selectedModule.dependencyGroups.dependencies
+                $dependencyInfo = $selectedEntry.dependencyGroups.dependencies
 
                 #Determine dependencies and add them to the pending tasks
                 if ($dependencyInfo) {
                     # HACK: I should be using the Id provided by the server, for now I'm just guessing because
                     # I need to add it to the ComparableModuleSpec class
-                    Write-Debug "$moduleSpec`: Processing dependencies"
+                    Write-Debug "$currentModuleSpec`: Processing dependencies"
                     try {
                         [List[ComparableModuleSpecification]]$dependencies = $dependencyInfo | Parse-NugetDependency
 
                     } catch { Wait-Debugger }
-                    Write-Debug "$moduleSpec has $($dependencies.count) dependencies"
+                    Write-Debug "$currentModuleSpec has $($dependencies.count) dependencies"
 
                     # TODO: Where loop filter maybe
                     [ComparableModuleSpecification[]]$dependenciesToResolve = $dependencies | Where-Object {
@@ -249,8 +315,8 @@ function Get-ModuleFastPlan {
                         # TODO: Deduplicate in-flight queries (az.accounts is a good example)
                         # Write-Debug "$moduleSpec`: Checking if $dependencySpec already has an in-flight request that satisfies the requirement"
 
-                        Write-Debug "$moduleSpec`: Fetching dependency $dependencySpec"
-                        $task = Get-ModuleInfoAsync -Name $dependencySpec -HttpClient $httpclient -Uri $Source -CancellationToken $cancelToken.Token
+                        Write-Debug "$currentModuleSpec`: Fetching dependency $dependencySpec"
+                        $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $dependencySpec.Name
                         $resolveTasks[$task] = $dependencySpec
                         $currentTasks.Add($task)
                     }
@@ -277,6 +343,12 @@ function Get-ModuleFastPlan {
 }
 # #endregion Main
 
+#region PlanHelpers
+#endregion PlanHelpers
+
+
+
+
 #region Classes
 <#
 A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
@@ -295,6 +367,7 @@ class ComparableModuleSpecification : ModuleSpecification {
             MaximumVersion  = $spec.MaximumVersion
         }
     }
+
     [ModuleSpecification] ToModuleSpecification() {
         return [ModuleSpecification]@{
             Name            = $this.Name
@@ -303,6 +376,51 @@ class ComparableModuleSpecification : ModuleSpecification {
             RequiredVersion = $this.RequiredVersion
             MaximumVersion  = $this.MaximumVersion
         }
+    }
+
+    # Return only module specifications that match this specification. Good for determining which ranges will satisfy this module
+    [ComparableModuleSpecification[]] FindMatch([ComparableModuleSpecification[]]$candidates) {
+        $matchSpecs = foreach ($candidate in $candidates) {
+            if ($this.Name -and ($this.Name -ne $candidate.Name)) {
+                Write-Error ('The names of the module specifications you are trying to compare do not match ({0} vs {1})' -f $this.Name, $candidate.Name)
+                continue
+            }
+            if ($this.Guid -and ($this.Guid -ne $candidate.Guid)) {
+                Write-Error ('The GUIDs of the module specifications you are trying to compare do not match ({0} vs {1})' -f $this.Name, $candidate.Name)
+                continue
+            }
+            if ($this.RequiredVersion -and ($this.RequiredVersion -ne $candidate.Version)) {
+                continue
+            }
+            if ($this.Version -and ($candidate.Version -gt $this.Version )) {
+                continue
+            }
+            if ($this.MaximumVersion -and ($this.MaximumVersion -lt $candidate.Version)) {
+                continue
+            }
+            $candidate
+        }
+
+        return $matchSpecs
+    }
+
+    [Version[]] FindMatch([Version[]]$versions) {
+        $candidates = foreach ($version in $versions) {
+            [ComparableModuleSpecification]@{
+                ModuleName      = $this.Name
+                RequiredVersion = $version
+            }
+        }
+        return $this.FindMatch($candidates).RequiredVersion
+    }
+
+    # Return the highest version that satisfies this module specification
+    [ComparableModuleSpecification] FindHighestMatch([ComparableModuleSpecification[]]$candidates) {
+        return $this.findMatch($candidates) | Sort-Object Version -Descending | Select-Object -First 1
+    }
+
+    [Version] FindHighestMatch([Version[]]$versions) {
+        return $this.findMatch($versions) | Sort-Object -Descending | Select-Object -First 1
     }
 
     # Concatenate the properties into a string to generate a hashcode
@@ -315,6 +433,7 @@ class ComparableModuleSpecification : ModuleSpecification {
     [string] ToString() {
         return ($this.Name, $this.Guid, $this.Version, $this.MaximumVersion, $this.RequiredVersion -join ':')
     }
+
 }
 #endRegion Classes
 
@@ -509,39 +628,42 @@ function Install-Modulefast {
     }
 }
 
-filter Get-ModuleInfoAsync {
+function Get-ModuleInfoAsync {
     [CmdletBinding()]
     [OutputType([Task[String]])]
     param (
-        [Parameter(Mandatory)][ComparableModuleSpecification]$Name,
-        [Parameter(Mandatory)][string]$Uri,
-        [Parameter(Mandatory)][HttpClient]$HttpClient,
-        [CancellationToken]$CancellationToken
-    )
-    end {
-        $moduleSpec = $Name
-        $ModuleId = $ModuleSpec.Name
+        # The name of the module to search for
+        [Parameter(Mandatory, ParameterSetName = 'endpoint')][string]$Name,
+        # The URI of the nuget v3 repository base, e.g. https://pwsh.gallery/index.json
+        [Parameter(Mandatory, ParameterSetName = 'endpoint')]$Endpoint,
+        # The path we are calling for the registration
+        [Parameter(ParameterSetName = 'endpoint')][string]$Path = 'index.json',
 
+        #The direct URI to the registration endpoint
+        [Parameter(Mandatory, ParameterSetName = 'uri')][string]$Uri,
+
+        [Parameter(Mandatory)][HttpClient]$HttpClient,
+        [Parameter(Mandatory)][CancellationToken]$CancellationToken
+    )
+
+    if (-not $Uri) {
+        $moduleSpec = $Name
+        $ModuleId = $Name
+
+        #TODO: Call index.json and get the correct service. For now we are shortcutting this (bad behavior)
         #Strip any *.json path which might be at the end of the uri
-        $endpoint = $Uri -replace '/\w+\.json$'
 
         #HACK: We are making a *big* assumption here about the structure of the nuget repository to save an API call
         #TODO: Error handling if we are wrong by checking the main index.json manifest
 
-        if ($Name.MaximumVersion) {
-            throw [NotImplementedException]"$Name has a maximum version. This is not implemented yet."
-        }
-        $moduleInfoUriBase = "$endpoint/registration/$ModuleId"
-        if ($moduleSpec.RequiredVersion) {
-            $moduleInfoUri = "$moduleInfoUriBase/$($moduleSpec.RequiredVersion).json"
-        } else {
-            $moduleInfoUri = "$moduleInfoUriBase/index.json"
-        }
-
-        #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
-        Write-Debug "$ModuleId`: fetch info from $moduleInfoUri"
-        return $HttpClient.GetStringAsync($moduleInfoUri, $CancellationToken)
+        $endpointBase = $endpoint -replace '/\w+\.json$'
+        $moduleInfoUriBase = "$endpointBase/registration/$ModuleId"
+        $uri = "$moduleInfoUriBase/$Path"
     }
+
+    #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
+    Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
+    return $HttpClient.GetStringAsync($uri, $CancellationToken)
 }
 
 filter Parse-NugetDependency ([Parameter(Mandatory, ValueFromPipeline)]$Dependency) {
