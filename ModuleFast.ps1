@@ -163,7 +163,10 @@ function Get-ModuleFastPlan {
                     $PSItem -and !$PSItem.contains('-')
                 }
 
+                # FIXME: Replace with Overlap
                 [Version]$versionMatch = $moduleSpec.FindHighestMatch($inlinedVersions)
+
+
                 if ($versionMatch) {
                     Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in the inlined index. TODO: Resolve dependencies"
                     $selectedEntry = $entries | Where-Object version -EQ $versionMatch
@@ -364,6 +367,7 @@ function Get-ModuleFastPlan {
 
 
 #region Classes
+
 <#
 A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
 values are the same. This should also be consistent across processes and can be cached.
@@ -374,7 +378,7 @@ setting min and max the same.
 It is somewhat non-null that can be used to compare modules but it should really be immutable. I really should make a C# version for this.
 #>
 
-class ModuleFastSpec {
+class ModuleFastSpec : IComparable {
     static [SemanticVersion]$MinVersion = 0
     static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
     #Special string we use to translate between Version and SemanticVersion since SemanticVersion doesnt support Semver 2.0 properly and doesnt allow + only
@@ -402,34 +406,97 @@ class ModuleFastSpec {
     }
 
     #Constructors
-    ModuleFastSpec([string]$Name) {
-        $this.Initialize()
-        $this._Name = $Name
-    }
-    ModuleFastSpec([string]$Name, [SemanticVersion]$Required) {
-        $this.Initialize()
-        $this._Name = $Name
-        if ($null -ne $Required) {
-            $this._Min = $Required
-            $this._Max = $Required
+
+    #HACK: A helper because we can't do constructor chaining in PowerShell
+    #https://stackoverflow.com/questions/44413206/constructor-chaining-in-powershell-call-other-constructors-in-the-same-class
+    #HACK: Guid and SemanticVersion are non-nullable and just causes problems trying to enforce it here, we make sure it doesn't get set to a null value later on
+    hidden Initialize([string]$Name, $Min, $Max, $Guid, [ModuleSpecification]$moduleSpec) {
+        Add-Getters
+
+        #Explode out moduleSpec information if present and then follow the same validation logic
+        if ($moduleSpec) {
+            $Name = $ModuleSpec.Name
+            $Guid = $ModuleSpec.Guid
+            if ($ModuleSpec.RequiredVersion) {
+                $Min = $ModuleSpec.RequiredVersion
+                $Max = $ModuleSpec.RequiredVersion
+            } else {
+                if ($moduleSpec.Version) { $Min = $ModuleSpec.Version }
+                if ($moduleSpec.MaximumVersion) { $Max = $ModuleSpec.MaximumVersion }
+            }
         }
+
+        #HACK: The nulls here are just to satisfy the ternary operator, they go off into the ether and arent returned or used
+        $Name ? ($this._Name = $Name) : $null
+        $Min ? ($this._Min = $Min) : $null
+        $Max ? ($this._Max = $Max) : $null
+        $Guid ? ($this._Guid = $Guid) : $null
+        if ($this.Guid -ne [Guid]::Empty -and -not $this.Required) {
+            throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
+        }
+    }
+
+    # HACK: We dont want a string constructor because it messes with Equals (we dont want strings implicitly cast to ModuleFastSpec).
+    # ModuleName is a workaround for this and still make it easy to define a spec that matches all versions of a module.
+    ModuleFastSpec([string]$Name) {
+        $this.Initialize($Name, $null, $null, $null, $null)
+    }
+    ModuleFastSpec([string]$Name, [string]$Required) {
+        [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+        $this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
+    }
+    ModuleFastSpec([string]$Name, [String]$Required, [Guid]$Guid) {
+        [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+        $this.Initialize($Name, $requiredVersion, $requiredVersion, $Guid, $null)
+    }
+    ModuleFastSpec([string]$Name, [string]$Min, [string]$Max) {
+        [SemanticVersion]$minVer = $min ? [ModuleFastSpec]::ParseVersionString($min) : $null
+        [SemanticVersion]$maxVer = $max ? [ModuleFastSpec]::ParseVersionString($max) : $null
+        $this.Initialize($Name, $minVer, $maxVer, $null, $null)
+    }
+
+    # These can be used for performance to avoid parsing to string and back. Probably makes little difference
+    ModuleFastSpec([string]$Name, [SemanticVersion]$Required) {
+        $this.Initialize($Name, $Required, $Required, $null, $null)
     }
     ModuleFastSpec([string]$Name, [SemanticVersion]$Min, [SemanticVersion]$Max) {
-        $this.Initialize()
-        $this._Name = $Name
-        if ($null -ne $Min) { $this._Min = $Min }
-        if ($null -ne $Max) { $this._Max = $Max }
+        $this.Initialize($Name, $Min, $Max, $null, $null)
     }
+    #TODO: Version versions maybe? Probably should just use the parser and let those go to string
+
     ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
-        $this.Initialize()
-        $this._Name = $ModuleSpec.Name
-        if ($ModuleSpec.RequiredVersion) {
-            $this._Min = $ModuleSpec.RequiredVersion
-            $this._Max = $ModuleSpec.RequiredVersion
-        } else {
-            if ($moduleSpec.Version) { $this._Min = $ModuleSpec.Version }
-            if ($moduleSpec.MaximumVersion) { $this._Max = $ModuleSpec.MaximumVersion }
-        }
+        $this.Initialize($null, $null, $null, $null, $ModuleSpec)
+    }
+
+    #Hashtable constructor works the same as for moduleSpecification for ease of use/understanding
+    ModuleFastSpec([hashtable]$hashtable) {
+        #Will implicitly convert the hashtable to ModuleSpecification
+        $this.Initialize($null, $null, $null, $null, $hashtable)
+    }
+
+    ### Version Helper Methods
+    #Determines if a version is within range of the spec.
+    [bool] Matches ([SemanticVersion]$Version) {
+        if ($null -eq $Version) { return $false }
+        if ($Version -ge $this.Min -and $Version -le $this.Max) { return $true }
+        return $false
+    }
+    [bool] Matches ([Version]$Version) {
+        return $this.Matches([ModuleFastSpec]::ParseVersion($Version))
+    }
+    [bool] Matches ([String]$Version) {
+        return $this.Matches([ModuleFastSpec]::ParseVersionString($Version))
+    }
+
+    #Determines if this spec is at least partially inside of the supplied spec
+    [bool] Overlaps ([ModuleFastSpec]$Spec) {
+        if ($null -eq $Spec) { return $false }
+        if ($Spec.Name -ne $this.Name) { throw "Supplied Spec Name $($Spec.Name) does not match this spec name $($this.Name)" }
+        if ($Spec.Guid -ne $this.Guid) { throw "Supplied Spec Guid $($Spec.Name) does not match this spec guid $($this.Name)" }
+
+        # Returns true if there is any overlap between $this and $spec
+        if ($this.Min -lt $Spec.Max -and $this.Max -gt $Spec.Min) { return $true }
+        return $false
     }
 
     # Parses either a assembly version or semver to a semver string
@@ -443,6 +510,8 @@ class ModuleFastSpec {
 
     # A version number with 4 octets wont cast to semanticversion properly, this is a helper method for that.
     # We treat "revision" as "build" and "build" as patch for purposes of translation
+    # Needed because SemVer can't parse builds correctly
+    #https://github.com/PowerShell/PowerShell/issues/14605
     static [SemanticVersion]ParseVersion([Version]$Version) {
         if ($null -eq $Version) { return $null }
 
@@ -475,26 +544,107 @@ class ModuleFastSpec {
             $Version.Major,
             ($Version.Minor ?? 0),
             ($Version.Patch ?? 0),
-            (($Version.BuildLabel -gt 0) ? ".$($Version.BuildLabel)" : $null)
+            (($Version.PreReleaseLabel -eq [ModuleFastSpec]::VersionBuildIdentifier -and $Version.BuildLabel -gt 0) ? ".$($Version.BuildLabel)" : $null)
         )
     }
-
-    # A helper to do some common fancy powershell stuff like enable getters
-    hidden [void]Initialize() {
-        addGetters
+    [Version] ToVersion() {
+        if (-not $this.Required) { throw [NotSupportedException]'You can only convert Required specs to a version.' }
+        #Warning: Return type is not enforced by the method, that's why we did it explicitly here.
+        return [Version][ModuleFastSpec]::ParseSemanticVersion($this.Required)
     }
+
 
     ###Implicit Methods
+
+    #This string will be unique for each spec type, and can (probably)? Be safely used as a hashcode
+    #TODO: Implement parsing of this string to the parser to allow it to be "reserialized" to a module spec
     [string]ToString() {
         $name = $this._Name + ($this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : '')
-        if ($this.required) {
-            return "$name@$($this.Required)"
-        } else {
-            return "$name@$($this._Min)_$($this._Max)"
+        $versionString = switch ($true) {
+            ($this.Min -eq [ModuleFastSpec]::MinVersion -and $this.Max -eq [ModuleFastSpec]::MaxVersion) {
+                #This is the default, so we don't need to print it
+                break
+            }
+            ($this.required) { "@$($this.Required)"; break }
+            ($this.Min -eq [ModuleFastSpec]::MinVersion) { "<$($this.Max)"; break }
+            ($this.Max -eq [ModuleFastSpec]::MaxVersion) { ">$($this.Min)"; break }
+            default { ":$($this.Min)-$($this.Max)" }
         }
+        return $name + $versionString
     }
 
-    # We can only have one of these apparently due to a bug, so we choose ModuleSpecification
+    #BUG: We cannot implement IEquatable directly because we need to self-reference ModuleFastSpec before it exists.
+    #We can however just add Equals() method
+
+    #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals?view=net-6.0
+    [boolean] Equals ([Object]$obj) {
+        if ($null -eq $obj) { return $false }
+        switch ($obj.GetType()) {
+            #Comparing ModuleSpecs means that we want to ensure they are structurally the same
+            ([ModuleFastSpec]) {
+                return $this.Name -eq $obj.Name -and
+                $this.Guid -eq $obj.Guid -and
+                $obj.Min -ge $this.Min -and
+                $obj.Max -le $this.Max
+            }
+            ([ModuleSpecification]) { return $this.Equals([ModuleFastSpec]$obj) }
+
+            #When comparing a version, we want to return equal if the version is within the range of the spec
+            ([SemanticVersion]) { return $this.ContainsSemVer($obj) }
+            ([string]) { return $this.Equals([ModuleFastSpec]::ParseVersionString($obj)) }
+            ([Version]) { return $this.Equals([ModuleFastSpec]::ParseVersion($obj)) }
+            default {
+                #Try a cast. This should work for ModuleSpecification
+                try {
+                    return $this.CompareTo([ModuleFastSpec]$obj)
+                } catch [RuntimeException] {
+                    #This is a cast error, we want to limit this so that any errors from CompareTo bubble up
+                    throw "Cannot compare ModuleFastSpec to $($obj.GetType())"
+                }
+            }
+        }
+        throw [InvalidOperationException]'Unexpected Equals was found. This should never happen and is a bug in ModuleFastSpec'
+    }
+
+    #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.icomparable-1.compareto
+    [int] CompareTo([Object]$obj) {
+        if ($null -eq $obj) { throw [NotSupportedException]'null not supported' }
+        if ($this.Equals($obj)) { return 0 }
+
+        #This is somewhat analagous to C# Pattern Matching: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/functional/pattern-matching#compare-discrete-values
+        switch ($obj.GetType()) {
+            #We determine greater than or less than if the version is within the range of the spec or not
+            ([SemanticVersion]) {
+                if ($obj -lt $this.Min) { return 1 }
+                if ($obj -gt $this.Max) { return -1 }
+            }
+            ([ModuleFastSpec]) {
+                if (-not $obj.Required) { throw [NotSupportedException]'Cannot compare two range specs as they can overlap. Supply a required spec to this range' }
+                return $this.CompareTo($obj.Required) #Should go to SemanticVersion
+            }
+            ([Version]) {
+                return $this.CompareTo([ModuleFastSpec]::ParseVersion($obj))
+            }
+            ([String]) {
+                return $this.CompareTo([ModuleFastSpec]::ParseVersionString($obj))
+            }
+            default {
+                #Try a cast. This should work for ModuleSpecification
+                try {
+                    return $this.CompareTo([ModuleFastSpec]$obj)
+                } catch [RuntimeException] {
+                    #This is a cast error, we want to limit this so that any errors from CompareTo bubble up
+                    throw "Cannot compare ModuleFastSpec to $($obj.GetType())"
+                }
+            }
+        }
+        throw [InvalidOperationException]'Unexpected Compare was found. This should never happen and is a bug in ModuleFastSpec'
+    }
+
+    [int] GetHashCode() {
+        return $this.ToString().GetHashCode()
+    }
+
     static [ModuleSpecification] op_Implicit([ModuleFastSpec]$moduleFastSpec) {
         $moduleSpecification = @{
             ModuleName = $moduleFastSpec.Name
@@ -519,7 +669,7 @@ class ModuleFastSpec {
 }
 
 #This is a module helper to create "getters" in classes
-function addGetters {
+function Add-Getters {
     Get-Member -InputObject $this -MemberType Method -Force |
         Where-Object name -CLike 'Get_*' |
         ForEach-Object name |
@@ -529,105 +679,10 @@ function addGetters {
             Add-Member -InputObject $this -Name $property -MemberType ScriptProperty -Value $getter
         }
 }
-
-class ComparableModuleSpecification {
-    ComparableModuleSpecification(): base() {}
-    ComparableModuleSpecification([string]$moduleName): base($moduleName) {}
-    ComparableModuleSpecification([hashtable]$moduleSpecification): base($moduleSpecification) {}
-    hidden static [ComparableModuleSpecification] op_Implicit([ModuleSpecification]$spec) {
-        return [ComparableModuleSpecification]@{
-            Name            = $spec.Name
-            Guid            = $spec.Guid
-            Version         = $spec.Version
-            RequiredVersion = $spec.RequiredVersion
-            MaximumVersion  = $spec.MaximumVersion
-        }
-    }
-
-    [ModuleSpecification] ToModuleSpecification() {
-        return [ModuleSpecification]@{
-            Name            = $this.Name
-            Guid            = $this.Guid
-            Version         = $this.Version
-            RequiredVersion = $this.RequiredVersion
-            MaximumVersion  = $this.MaximumVersion
-        }
-    }
-
-    # Return only module specifications that match this specification. Good for determining which ranges will satisfy this module
-    [ComparableModuleSpecification[]] FindMatch([ComparableModuleSpecification[]]$candidates) {
-        throw [NotImplementedException]'TODO: Fix this logic to handle all cases'
-        $matchSpecs = foreach ($candidate in $candidates) {
-            if ($this.Name -and ($this.Name -ne $candidate.Name)) {
-                Write-Error ('The names of the module specifications you are trying to compare do not match ({0} vs {1})' -f $this.Name, $candidate.Name)
-                continue
-            }
-            if ($this.Guid -and ($this.Guid -ne $candidate.Guid)) {
-                Write-Error ('The GUIDs of the module specifications you are trying to compare do not match ({0} vs {1})' -f $this.Name, $candidate.Name)
-                continue
-            }
-
-            if ($this.RequiredVersion) {
-                if ($candidate.RequiredVersion) {
-                    if ($this.RequiredVersion -eq $candidate.RequiredVersion) {
-                        $candidate
-                        continue
-                    } else {
-                        continue
-                    }
-                } else {
-                    if ($candidate.MaximumVersion -and $this.RequiredVersion -gt $candidate.MaximumVersion) {
-                        continue
-                    }
-                    if ($candidate.Version -and $this.RequiredVersion -lt $candidate.Version) {
-                        continue
-                    }
-                }
-            } else {
-                #If not required then at least version or maximumversion must be present
-            }
-
-            #If we get here it means we missed something
-            throw [InvalidOperationException]"Unhandled compare case for $PSItem with candidate $candidate. This is a bug"
-        }
-
-        return $matchSpecs
-    }
-
-    [Version[]] FindMatch([Version[]]$versions) {
-        $candidates = foreach ($version in $versions) {
-            [ComparableModuleSpecification]@{
-                ModuleName      = $this.Name
-                RequiredVersion = $version
-            }
-        }
-        return $this.FindMatch($candidates).RequiredVersion
-    }
-
-    # Return the highest version that satisfies this module specification
-    [ComparableModuleSpecification] FindHighestMatch([ComparableModuleSpecification[]]$candidates) {
-        return $this.findMatch($candidates) | Sort-Object Version -Descending | Select-Object -First 1
-    }
-
-    [Version] FindHighestMatch([Version[]]$versions) {
-        return $this.findMatch([Version[]]$versions) | Sort-Object -Descending | Select-Object -First 1
-    }
-
-    # Concatenate the properties into a string to generate a hashcode
-    [int] GetHashCode() {
-        return ($this.ToString()).GetHashCode()
-    }
-    [bool] Equals($obj) {
-        return $this.GetHashCode().Equals($obj.GetHashCode())
-    }
-    [string] ToString() {
-        return ($this.Name, $this.Guid, $this.Version, $this.MaximumVersion, $this.RequiredVersion -join ':')
-    }
-
-}
 #endRegion Classes
 
 #region Helpers
+
 function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFileName()) {
     $packageConfig = [xml.xmlwriter]::Create([string]$Path)
     $packageConfig.WriteStartDocument()
@@ -965,7 +1020,7 @@ function Find-LocalModule {
         if ($moduleSpec.Required) {
             #We can speed up the search for explicit requiredVersion matches
             #HACK: We assume a release version can satisfy a prerelease version constraint here.
-            $manifestPath = Join-Path $modulePath $ModuleSpec.Name $([Version]$ModuleSpec.Required) "$($ModuleSpec.Name).psd1"
+            $manifestPath = Join-Path $modulePath $ModuleSpec.Name $($ModuleSpec.Required) "$($ModuleSpec.Name).psd1"
             if ([File]::Exists($manifestPath)) { return $manifestPath }
         } else {
             #Get all the version folders for the moduleName
@@ -1009,39 +1064,18 @@ function Get-NormalizedVersions ([Version]$Version) {
 }
 
 <#
-Given an array of versions, find the highest one that satisfies the module spec. Returns $false if no match is found.
+Given an array of versions, find the ones that satisfy the module spec. Returns $false if no match is found.
 #>
-function Find-HighestSatisfiesVersion {
+function Find-VersionMatch {
+    [OutputType([Version[]])]
     param(
-        [Parameter(Mandatory)][ComparableModuleSpecification]$ModuleSpec,
+        [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
         #Versions that are potential candidates to satisfy the modulespec
-        [Parameter(Mandatory)][HashSet[Version]]$Versions
+        [Parameter(Mandatory)][HashSet[Version]]$Versions,
+        [Switch]$Highest
     )
-    # TODO: Semver-compatible version of this function
-
-    # RequiredVersion is an easy explicit compare
-    if ($ModuleSpec.RequiredVersion) {
-        if ($Versions.Contains($ModuleSpec.RequiredVersion)) {
-            return $ModuleSpec.RequiredVersion
-        } else {
-            return $false
-        }
-    }
-
-    $candidateVersions = foreach ($version in $versions) {
-        if ($ModuleSpec.MaximumVersion -and $version -gt $ModuleSpec.MaximumVersion) { continue }
-        if ($ModuleSpec.Version -and $version -lt $ModuleSpec.Version) { continue }
-        $version
-    }
-
-    $highestFilteredVersion = $candidateVersions
-    | Sort-Object -Descending
-    | Select-Object -First 1
-
-    if ($highestFilteredVersion) {
-        return $highestFilteredVersion
-    } else {
-        return $false
+    $Versions | Where-Object {
+        $ModuleSpec.ContainsSemVer([ModuleFastSpec]::ParseVersion($Version))
     }
 }
 
