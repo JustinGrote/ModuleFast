@@ -292,7 +292,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     $actual = Get-ModuleFastPlan $spec
     $actual | Should -HaveCount 1
     $actual.Name | Should -Be $moduleName
-    $actual.RequiredVersion -as [Version] | Should -Not -BeNullOrEmpty
+    $actual.Required -as [Version] | Should -Not -BeNullOrEmpty
   } -TestCases (
     @{Test = 'Name'; Spec = $moduleName },
     @{Test = 'MinimumVersion'; Spec = @{ ModuleName = $moduleName; ModuleVersion = '0.0.0' } },
@@ -304,5 +304,11 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
   It 'Gets Module with lots of dependencies (Az)' {
     #TODO: Mocks
     Get-ModuleFastPlan 'Az' | Should -HaveCount 78
+  }
+  It 'Gets Module with 4 section version numbers (VMware.PowerCLI)' {
+    Get-ModuleFastPlan 'VMware.PowerCLI' | Should -HaveCount 75
+  }
+  It 'Gets multiple modules' {
+    Get-ModuleFastPlan 'Az', 'VMware.PowerCLI' | Should -HaveCount 153
   }
 }
