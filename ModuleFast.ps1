@@ -155,8 +155,6 @@ function Get-ModuleFastPlan {
                 }
 
                 #If what we are looking for exists in the response, we can stop looking
-                #HACK: We are making a big assumption that the v3 API will always return the latest version(s) in the index
-                #TODO: Check every version range that our selected item might not have a higher candidate in a non-inlined index
                 #TODO: Type the responses and check on the type, not the existence of a property.
 
                 #HACK: Add the download URI to the catalog entry, this makes life easier.
