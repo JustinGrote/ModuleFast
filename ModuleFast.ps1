@@ -158,7 +158,17 @@ function Get-ModuleFastPlan {
                 #HACK: We are making a big assumption that the v3 API will always return the latest version(s) in the index
                 #TODO: Check every version range that our selected item might not have a higher candidate in a non-inlined index
                 #TODO: Type the responses and check on the type, not the existence of a property.
-                $entries = $response.items.items.catalogEntry
+
+                #HACK: Add the download URI to the catalog entry, this makes life easier.
+                $pageLeaves = $response.items.items
+                $pageLeaves | ForEach-Object {
+                    if ($PSItem.packageContent) {
+                        $PSItem.catalogEntry
+                        | Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
+                    }
+                }
+
+                $entries = $pageLeaves.catalogEntry
                 [version[]]$inlinedVersions = $entries.version
                 | Where-Object {
                     $PSItem -and !$PSItem.contains('-')
@@ -245,11 +255,11 @@ function Get-ModuleFastPlan {
                     throw 'Something other than exactly 1 selectedModule was specified. This should never happen and is a bug'
                 }
 
-                $moduleInfo = [ModuleFastSpec]@{
-                    ModuleName      = $selectedEntry.id
-                    RequiredVersion = $selectedEntry.version
-                    #TODO: Fix in Server API GUID            = $moduleInfo.Guid
-                }
+                [ModuleFastSpec]$moduleInfo = [ModuleFastSpec]::new(
+                    $selectedEntry.id,
+                    $selectedEntry.version,
+                    [uri]$selectedEntry.packageContent
+                )
 
                 #Check if we have already processed this item and move on if we have
                 if (-not $modulesToInstall.Add($moduleInfo)) {
@@ -357,6 +367,184 @@ function Get-ModuleFastPlan {
         return $modulesToInstall
     }
 }
+
+# Use invoke-webrequest outfile to save every modulespec to the modules directory
+
+
+# Parallel
+
+function Install-Modulefast {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        $ModulesToInstall,
+        $Path,
+        $ModuleCache = (New-Item -ItemType Directory -Force -Path (Join-Path ([io.path]::GetTempPath()) 'ModuleFastCache')),
+        $NuGetCache = [io.path]::Combine([string[]]("$HOME", '.nuget', 'psgallery')),
+        [Switch]$Force,
+        #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
+        [Switch]$NoPSModulePathUpdate,
+        #Setting this won't add the default destination to your profile.
+        [Switch]$NoProfileUpdate
+    )
+
+    # Setup the Destination repository
+    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath()) 'powershell/modules')
+    if (-not $Destination) {
+        $Destination = $defaultRepoPath
+    }
+    # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
+    if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
+        if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
+            New-Item -ItemType Directory -Path $Destination -Force
+        }
+    }
+    # Should error if not present
+    $Destination = Resolve-Path $Destination
+
+    if ($Destination -ne $defaultRepoPath) {
+        if (-not $NoProfileUpdate) {
+            Write-Warning 'Parameter -Destination is set to a custom path. We assume you know what you are doing, so it will not automatically be added to your Profile but will be added to PSModulePath. Set -NoProfileUpdate to suppress this message in the future.'
+        }
+        $NoProfileUpdate = $true
+    }
+    if (-not $NoPSModulePathUpdate) {
+        $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include $Destination"
+        if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage)) { return }
+
+        Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
+
+    }
+
+    #Do a really crappy guess for the current user modules folder.
+    #TODO: "Scope CurrentUser" type logic
+    if (-not $Path) {
+        if (-not $env:PSModulePath) { throw 'PSModulePath is not defined, therefore the -Path parameter is mandatory' }
+        $envSeparator = ';'
+        if ($isLinux) { $envSeparator = ':' }
+        $Path = ($env:PSModulePath -split $envSeparator)[0]
+    }
+
+    if (-not $httpclient) { $SCRIPT:httpClient = [Net.Http.HttpClient]::new() }
+    Write-Progress -Id 1 -Activity 'Install-Modulefast' -Status "Creating Download Tasks for $($ModulesToInstall.count) modules"
+    $DownloadTasks = foreach ($ModuleItem in $ModulesToInstall) {
+        $ModulePackageName = @($ModuleItem.Id, $ModuleItem.Version, 'nupkg') -join '.'
+        $ModuleCachePath = [io.path]::Combine(
+            [string[]](
+                $NuGetCache,
+                $ModuleItem.Id,
+                $ModuleItem.Version,
+                $ModulePackageName
+            )
+        )
+        #TODO: Remove Me
+        $ModuleCachePath = "$ModuleCache/$ModulePackageName"
+        #$uri = $baseuri + $ModuleName + '/' + $ModuleVersion
+        [void][io.directory]::CreateDirectory((Split-Path $ModuleCachePath))
+        $ModulePackageTempFile = [io.file]::Create($ModuleCachePath)
+        $DownloadTask = $httpclient.GetStreamAsync($ModuleItem.Source)
+
+        #Return a hashtable with the task and file handle which we will need later
+        @{
+            DownloadTask = $DownloadTask
+            FileHandle   = $ModulePackageTempFile
+        }
+    }
+
+    #NOTE: This seems to go much faster when it's not in the same foreach as above, no idea why, seems to be blocking on the call
+    $downloadTasks = $DownloadTasks.Foreach{
+        $PSItem.CopyTask = $PSItem.DownloadTask.result.CopyToAsync($PSItem.FileHandle)
+        return $PSItem
+    }
+
+    #TODO: Add timeout via Stopwatch
+    [array]$CopyTasks = $DownloadTasks.CopyTask
+    while ($false -in $CopyTasks.iscompleted) {
+        [int]$remainingTasks = ($CopyTasks | Where-Object iscompleted -EQ $false).count
+        $progressParams = @{
+            Id               = 1
+            Activity         = 'Install-Modulefast'
+            Status           = "Downloading $($CopyTasks.count) Modules"
+            CurrentOperation = "$remainingTasks Modules Remaining"
+            PercentComplete  = [int](($CopyTasks.count - $remainingtasks) / $CopyTasks.count * 100)
+        }
+        Write-Progress @ProgressParams
+        Start-Sleep 0.2
+    }
+
+    $failedDownloads = $downloadTasks.downloadtask.where{ $PSItem.isfaulted }
+    if ($failedDownloads) {
+        #TODO: More comprehensive error message
+        throw "$($failedDownloads.count) files failed to download. Aborting"
+    }
+
+    $failedCopyTasks = $downloadTasks.copytask.where{ $PSItem.isfaulted }
+    if ($failedCopyTasks) {
+        #TODO: More comprehensive error message
+        throw "$($failedCopyTasks.count) files failed to copy. Aborting"
+    }
+
+    #Release the files once done downloading. If you don't do this powershell may keep a file locked.
+    $DownloadTasks.FileHandle.close()
+
+    #Cleanup
+    #TODO: Cleanup should be in a trap or try/catch
+    $DownloadTasks.DownloadTask.dispose()
+    $DownloadTasks.CopyTask.dispose()
+    $DownloadTasks.FileHandle.dispose()
+
+    #Unpack the files
+    Write-Progress -Id 1 -Activity 'Install-Modulefast' -Status "Extracting $($modulestoinstall.id.count) Modules"
+    $packageConfigPath = Join-Path $ModuleCache 'packages.config'
+    if (Test-Path $packageConfigPath) { Remove-Item $packageConfigPath }
+    $packageConfig = New-NuGetPackageConfig -modulesToInstall $ModulesToInstall -path $packageConfigPath
+
+    $timer = [diagnostics.stopwatch]::startnew()
+    $moduleCount = $modulestoinstall.id.count
+    $ipackage = 0
+    #Initialize the files in the repository, if relevant
+    & nuget.exe init $ModuleCache $NugetCache | Where-Object { $PSItem -match 'already exists|installing' } | ForEach-Object {
+        if ($ipackage -lt $modulecount) { $ipackage++ }
+        #Write-Progress has a performance issue if run too frequently
+        if ($timer.elapsedmilliseconds -gt 200) {
+            $progressParams = @{
+                id               = 1
+                Activity         = 'Install-Modulefast'
+                Status           = "Extracting $modulecount Modules"
+                CurrentOperation = "$ipackage of $modulecount Remaining"
+                PercentComplete  = [int]($ipackage / $modulecount * 100)
+            }
+            Write-Progress @progressParams
+            $timer.restart()
+        }
+    }
+    if ($LASTEXITCODE) { throw 'There was a problem with nuget.exe' }
+
+    #Create symbolic links from the nuget repository to "install" the packages
+    foreach ($moduleItem in $modulesToInstall) {
+        $moduleRelativePath = [io.path]::Combine($ModuleItem.id, $moduleitem.version)
+        #nuget saves as lowercase, matching to avoid Linux case issues
+        $moduleNugetPath = (Join-Path $NugetCache $moduleRelativePath).tolower()
+        $moduleTargetPath = Join-Path $Path $moduleRelativePath
+
+        if (-not (Test-Path $moduleNugetPath)) { Write-Error "$moduleNugetPath doesn't exist"; continue }
+        if (-not (Test-Path $moduleTargetPath) -and -not $force) {
+            $ModuleFolder = (Split-Path $moduleTargetPath)
+            #Create the parent target folder (as well as any hierarchy) if it doesn't exist
+            [void][io.directory]::createdirectory($ModuleFolder)
+
+            #Create a symlink to the module in the package repository
+            if ($PSCmdlet.ShouldProcess($moduleTargetPath, "Install Powershell Module $($ModuleItem.id) $($moduleitem.version)")) {
+                $null = New-Item -ItemType SymbolicLink -Path $ModuleFolder -Name $moduleitem.version -Value $moduleNugetPath
+            }
+        } else {
+            Write-Verbose "$moduleTargetPath already exists"
+        }
+        #Create the parent target folder if it doesn't exist
+        #[io.directory]::createdirectory($moduleTargetPath)
+    }
+}
+
+
 # #endregion Main
 
 #region PlanHelpers
@@ -378,15 +566,17 @@ It is somewhat non-null that can be used to compare modules but it should really
 #>
 
 class ModuleFastSpec : IComparable {
+
     static [SemanticVersion]$MinVersion = 0
     static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
     #Special string we use to translate between Version and SemanticVersion since SemanticVersion doesnt support Semver 2.0 properly and doesnt allow + only
     #Someone actually using this string may cause a conflict, it's not foolproof but it's better than nothing
     static [string]$VersionBuildIdentifier = 'MFbuild'
-
     hidden static [string]$buildVersionRegex = '^\d+\.\d+\.\d+\.\d+$'
 
     #These properties are effectively read only thanks to some wizardry
+    hidden [uri]$_DownloadLink
+    hidden [uri]Get_DownloadLink() { return $this._DownloadLink }
     hidden [string]$_Name
     hidden [string]Get_Name() { return $this._Name }
     hidden [guid]$_Guid
@@ -453,19 +643,26 @@ class ModuleFastSpec : IComparable {
         [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
         $this.Initialize($Name, $requiredVersion, $requiredVersion, $Guid, $null)
     }
+    ModuleFastSpec([string]$Name, [String]$Required, [Uri]$DownloadLink) {
+        [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+        $this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
+        $this._DownloadLink = [uri]$DownloadLink
+    }
+
     ModuleFastSpec([string]$Name, [string]$Min, [string]$Max) {
         [SemanticVersion]$minVer = $min ? [ModuleFastSpec]::ParseVersionString($min) : $null
         [SemanticVersion]$maxVer = $max ? [ModuleFastSpec]::ParseVersionString($max) : $null
         $this.Initialize($Name, $minVer, $maxVer, $null, $null)
     }
 
+
     # These can be used for performance to avoid parsing to string and back. Probably makes little difference
     ModuleFastSpec([string]$Name, [SemanticVersion]$Required) {
         $this.Initialize($Name, $Required, $Required, $null, $null)
     }
-    ModuleFastSpec([string]$Name, [SemanticVersion]$Min, [SemanticVersion]$Max) {
-        $this.Initialize($Name, $Min, $Max, $null, $null)
-    }
+
+
+
     #TODO: Version versions maybe? Probably should just use the parser and let those go to string
 
     ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
@@ -706,178 +903,6 @@ function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFi
     return $path
 }
 
-function Install-Modulefast {
-    [CmdletBinding()]
-    param(
-        $ModulesToInstall,
-        $Path,
-        $ModuleCache = (New-Item -ItemType Directory -Force -Path (Join-Path ([io.path]::GetTempPath()) 'ModuleFastCache')),
-        $NuGetCache = [io.path]::Combine([string[]]("$HOME", '.nuget', 'psgallery')),
-        [Switch]$Force,
-        #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
-        [Switch]$NoPSModulePathUpdate,
-        #Setting this won't add the default destination to your profile.
-        [Switch]$NoProfileUpdate
-    )
-
-    # Setup the Destination repository
-    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath()) 'powershell/modules')
-    if (-not $Destination) {
-        $Destination = $defaultRepoPath
-    }
-    # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
-    if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
-        if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
-            New-Item -ItemType Directory -Path $Destination -Force
-        }
-    }
-    # Should error if not present
-    $Destination = Resolve-Path $Destination
-
-    if ($Destination -ne $defaultRepoPath) {
-        if (-not $NoProfileUpdate) {
-            Write-Warning 'Parameter -Destination is set to a custom path. We assume you know what you are doing, so it will not automatically be added to your Profile but will be added to PSModulePath. Set -NoProfileUpdate to suppress this message in the future.'
-        }
-        $NoProfileUpdate = $true
-    }
-    if (-not $NoPSModulePathUpdate) {
-        $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include $Destination"
-        if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage)) { return }
-
-        Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
-
-    }
-
-    #Do a really crappy guess for the current user modules folder.
-    #TODO: "Scope CurrentUser" type logic
-    if (-not $Path) {
-        if (-not $env:PSModulePath) { throw 'PSModulePath is not defined, therefore the -Path parameter is mandatory' }
-        $envSeparator = ';'
-        if ($isLinux) { $envSeparator = ':' }
-        $Path = ($env:PSModulePath -split $envSeparator)[0]
-    }
-
-    if (-not $httpclient) { $SCRIPT:httpClient = [Net.Http.HttpClient]::new() }
-    $baseURI = 'https://www.powershellgallery.com/api/v2/package/'
-    Write-Progress -Id 1 -Activity 'Install-Modulefast' -Status "Creating Download Tasks for $($ModulesToInstall.count) modules"
-    $DownloadTasks = foreach ($ModuleItem in $ModulesToInstall) {
-        $ModulePackageName = @($ModuleItem.Id, $ModuleItem.Version, 'nupkg') -join '.'
-        $ModuleCachePath = [io.path]::Combine(
-            [string[]](
-                $NuGetCache,
-                $ModuleItem.Id,
-                $ModuleItem.Version,
-                $ModulePackageName
-            )
-        )
-        #TODO: Remove Me
-        $ModuleCachePath = "$ModuleCache/$ModulePackageName"
-        #$uri = $baseuri + $ModuleName + '/' + $ModuleVersion
-        [void][io.directory]::CreateDirectory((Split-Path $ModuleCachePath))
-        $ModulePackageTempFile = [io.file]::Create($ModuleCachePath)
-        $DownloadTask = $httpclient.GetStreamAsync($ModuleItem.Source)
-
-        #Return a hashtable with the task and file handle which we will need later
-        @{
-            DownloadTask = $DownloadTask
-            FileHandle   = $ModulePackageTempFile
-        }
-    }
-
-    #NOTE: This seems to go much faster when it's not in the same foreach as above, no idea why, seems to be blocking on the call
-    $downloadTasks = $DownloadTasks.Foreach{
-        $PSItem.CopyTask = $PSItem.DownloadTask.result.CopyToAsync($PSItem.FileHandle)
-        return $PSItem
-    }
-
-    #TODO: Add timeout via Stopwatch
-    [array]$CopyTasks = $DownloadTasks.CopyTask
-    while ($false -in $CopyTasks.iscompleted) {
-        [int]$remainingTasks = ($CopyTasks | Where-Object iscompleted -EQ $false).count
-        $progressParams = @{
-            Id               = 1
-            Activity         = 'Install-Modulefast'
-            Status           = "Downloading $($CopyTasks.count) Modules"
-            CurrentOperation = "$remainingTasks Modules Remaining"
-            PercentComplete  = [int](($CopyTasks.count - $remainingtasks) / $CopyTasks.count * 100)
-        }
-        Write-Progress @ProgressParams
-        Start-Sleep 0.2
-    }
-
-    $failedDownloads = $downloadTasks.downloadtask.where{ $PSItem.isfaulted }
-    if ($failedDownloads) {
-        #TODO: More comprehensive error message
-        throw "$($failedDownloads.count) files failed to download. Aborting"
-    }
-
-    $failedCopyTasks = $downloadTasks.copytask.where{ $PSItem.isfaulted }
-    if ($failedCopyTasks) {
-        #TODO: More comprehensive error message
-        throw "$($failedCopyTasks.count) files failed to copy. Aborting"
-    }
-
-    #Release the files once done downloading. If you don't do this powershell may keep a file locked.
-    $DownloadTasks.FileHandle.close()
-
-    #Cleanup
-    #TODO: Cleanup should be in a trap or try/catch
-    $DownloadTasks.DownloadTask.dispose()
-    $DownloadTasks.CopyTask.dispose()
-    $DownloadTasks.FileHandle.dispose()
-
-    #Unpack the files
-    Write-Progress -Id 1 -Activity 'Install-Modulefast' -Status "Extracting $($modulestoinstall.id.count) Modules"
-    $packageConfigPath = Join-Path $ModuleCache 'packages.config'
-    if (Test-Path $packageConfigPath) { Remove-Item $packageConfigPath }
-    $packageConfig = New-NuGetPackageConfig -modulesToInstall $ModulesToInstall -path $packageConfigPath
-
-    $timer = [diagnostics.stopwatch]::startnew()
-    $moduleCount = $modulestoinstall.id.count
-    $ipackage = 0
-    #Initialize the files in the repository, if relevant
-    & nuget.exe init $ModuleCache $NugetCache | Where-Object { $PSItem -match 'already exists|installing' } | ForEach-Object {
-        if ($ipackage -lt $modulecount) { $ipackage++ }
-        #Write-Progress has a performance issue if run too frequently
-        if ($timer.elapsedmilliseconds -gt 200) {
-            $progressParams = @{
-                id               = 1
-                Activity         = 'Install-Modulefast'
-                Status           = "Extracting $modulecount Modules"
-                CurrentOperation = "$ipackage of $modulecount Remaining"
-                PercentComplete  = [int]($ipackage / $modulecount * 100)
-            }
-            Write-Progress @progressParams
-            $timer.restart()
-        }
-    }
-    if ($LASTEXITCODE) { throw 'There was a problem with nuget.exe' }
-
-    #Create symbolic links from the nuget repository to "install" the packages
-    foreach ($moduleItem in $modulesToInstall) {
-        $moduleRelativePath = [io.path]::Combine($ModuleItem.id, $moduleitem.version)
-        #nuget saves as lowercase, matching to avoid Linux case issues
-        $moduleNugetPath = (Join-Path $NugetCache $moduleRelativePath).tolower()
-        $moduleTargetPath = Join-Path $Path $moduleRelativePath
-
-        if (-not (Test-Path $moduleNugetPath)) { Write-Error "$moduleNugetPath doesn't exist"; continue }
-        if (-not (Test-Path $moduleTargetPath) -and -not $force) {
-            $ModuleFolder = (Split-Path $moduleTargetPath)
-            #Create the parent target folder (as well as any hierarchy) if it doesn't exist
-            [void][io.directory]::createdirectory($ModuleFolder)
-
-            #Create a symlink to the module in the package repository
-            if ($PSCmdlet.ShouldProcess($moduleTargetPath, "Install Powershell Module $($ModuleItem.id) $($moduleitem.version)")) {
-                $null = New-Item -ItemType SymbolicLink -Path $ModuleFolder -Name $moduleitem.version -Value $moduleNugetPath
-            }
-        } else {
-            Write-Verbose "$moduleTargetPath already exists"
-        }
-        #Create the parent target folder if it doesn't exist
-        #[io.directory]::createdirectory($moduleTargetPath)
-    }
-}
-
 function Get-ModuleInfoAsync {
     [CmdletBinding()]
     [OutputType([Task[String]])]
@@ -897,7 +922,6 @@ function Get-ModuleInfoAsync {
     )
 
     if (-not $Uri) {
-        $moduleSpec = $Name
         $ModuleId = $Name
 
         #TODO: Call index.json and get the correct service. For now we are shortcutting this (bad behavior)
