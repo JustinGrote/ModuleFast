@@ -381,8 +381,7 @@ function Install-ModuleFast {
     param(
         $ModulesToInstall,
         $Destination,
-        $ModuleCache = (New-Item -ItemType Directory -Force -Path (Join-Path ([io.path]::GetTempPath()) 'ModuleFastCache')),
-        $NuGetCache = $(Join-Path $env:TEMP 'ModuleFastCache'),
+        $ModuleCache = $(New-Item -ItemType Directory -Force -Path Temp:\ModuleFastCache),
         [Switch]$Force,
         #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
         [Switch]$NoPSModulePathUpdate,
@@ -427,7 +426,7 @@ function Install-ModuleFast {
         ModuleToInstall   = $plan
         Destination       = $Destination
         CancellationToken = $cancelSource.Token
-        NuGetCache        = $NuGetCache
+        ModuleCache       = $ModuleCache
         HttpClient        = $httpClient
     }
     Install-ModuleFastHelper @installHelperParams
@@ -440,7 +439,7 @@ function Install-ModuleFastHelper {
     param(
         [ModuleFastSpec[]]$ModuleToInstall,
         [string]$Destination,
-        [string]$NuGetCache,
+        [string]$ModuleCache,
         [CancellationToken]$CancellationToken,
         [HttpClient]$HttpClient
     )
@@ -455,7 +454,7 @@ function Install-ModuleFastHelper {
         #TODO: Check file health and integrity. If it's good, skip the download and move on to install process.
         $context = @{
             Module       = $module
-            DownloadPath = Join-Path $NuGetCache "$($module.Name).$($module.Version).nupkg"
+            DownloadPath = Join-Path $ModuleCache "$($module.Name).$($module.Version).nupkg"
         }
         $fetchTask = $httpClient.GetStreamAsync($module.DownloadLink, $CancellationToken)
         $taskMap.Add($fetchTask, $context)
@@ -561,7 +560,7 @@ function Install-ModuleFastOperation {
     #         $ModulePackageName = @($ModuleItem.Id, $ModuleItem.Version, 'nupkg') -join '.'
     #         $ModuleCachePath = [io.path]::Combine(
     #             [string[]](
-    #                 $NuGetCache,
+    #                 $ModuleCache,
     #                 $ModuleItem.Id,
     #                 $ModuleItem.Version,
     #                 $ModulePackageName
@@ -633,7 +632,7 @@ function Install-ModuleFastOperation {
     #     $moduleCount = $modulestoinstall.id.count
     #     $ipackage = 0
     #     #Initialize the files in the repository, if relevant
-    #     & nuget.exe init $ModuleCache $NugetCache | Where-Object { $PSItem -match 'already exists|installing' } | ForEach-Object {
+    #     & nuget.exe init $ModuleCache $ModuleCache | Where-Object { $PSItem -match 'already exists|installing' } | ForEach-Object {
     #         if ($ipackage -lt $modulecount) { $ipackage++ }
     #         #Write-Progress has a performance issue if run too frequently
     #         if ($timer.elapsedmilliseconds -gt 200) {
@@ -654,7 +653,7 @@ function Install-ModuleFastOperation {
     #     foreach ($moduleItem in $modulesToInstall) {
     #         $moduleRelativePath = [io.path]::Combine($ModuleItem.id, $moduleitem.version)
     #         #nuget saves as lowercase, matching to avoid Linux case issues
-    #         $moduleNugetPath = (Join-Path $NugetCache $moduleRelativePath).tolower()
+    #         $moduleNugetPath = (Join-Path $ModuleCache $moduleRelativePath).tolower()
     #         $moduleTargetPath = Join-Path $Path $moduleRelativePath
 
     #         if (-not (Test-Path $moduleNugetPath)) { Write-Error "$moduleNugetPath doesn't exist"; continue }
