@@ -312,3 +312,12 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     Get-ModuleFastPlan 'Az', 'VMware.PowerCLI' | Should -HaveCount 153
   }
 }
+
+Describe 'Install-ModuleFast' -Tag 'E2E' {
+  It 'Installs Module' {
+    Install-ModuleFast 'Az.Accounts'
+  }
+  It 'Installs Module with lots of dependencies (Az)' {
+    Install-ModuleFast 'Az'
+  }
+}
