@@ -390,7 +390,7 @@ function Install-ModuleFast {
     )
 
     # Setup the Destination repository
-    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/modules')
+    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
     if (-not $Destination) {
         $Destination = $defaultRepoPath
     }
