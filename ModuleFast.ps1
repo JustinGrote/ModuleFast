@@ -415,8 +415,11 @@ function Install-ModuleFast {
     }
 
     $httpClient = New-ModuleFastClient
-
+    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Preparing Plan' -PercentComplete 1
     $plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient
+
+    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($plan.count) Modules" -PercentComplete 50
+
     $cancelSource = [CancellationTokenSource]::new()
 
     $installHelperParams = @{
@@ -427,6 +430,7 @@ function Install-ModuleFast {
         HttpClient        = $httpClient
     }
     Install-ModuleFastHelper @installHelperParams
+    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
 }
 
 #endregion Main
@@ -478,6 +482,9 @@ function Install-ModuleFastHelper {
 
     #Installation jobs are captured here, we will check them once all downloads have completed
     [List[Job2]]$installJobs = @()
+
+    $downloaded = 0
+    $downloadedProgressId = Get-Random
     #TODO: Filestreams should be disposed in a try/catch in case of cancellation. In PS 7.3+, should be a clean() block
     while ($downloadTasks.count -gt 0) {
         #TODO: Check on in jobs and if there's a failure, cancel the rest of the jobs
@@ -509,15 +516,22 @@ function Install-ModuleFastHelper {
         Write-Debug "Starting Module Install Job for $($context.Module)"
         $installJob = Start-ThreadJob @installJobParams
         $installJobs.Add($installJob)
+        $downloaded++
+        Write-Progress -Id $downloadedProgressId -ParentId 1 -Activity 'Download' -Status "$downloaded/$($ModuleToInstall.count) Modules" -PercentComplete ($downloaded / $ModuleToInstall.count * 100)
+
     }
 
     #TODO: Correlate the installjobs to a dictionary so we can return the original modulespec maybe?
     #Or is that even needed?
+    $installed = 0
+    $installProgressId = (Get-Random)
     while ($installJobs.count -gt 0) {
         $ErrorActionPreference = 'Stop'
         $completedJob = $installJobs | Wait-Job -Any
         $completedJob | Receive-Job -Wait -AutoRemoveJob
         if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
+        $installed++
+        Write-Progress -Id $installProgressId -ParentId 1 -Activity 'Install' -Status "$installed/$($ModuleToInstall.count) Modules" -PercentComplete ($installed / $ModuleToInstall.count * 100)
     }
 }
 
@@ -536,9 +550,11 @@ function Install-ModuleFastOperation {
     )
     $ErrorActionPreference = 'Stop'
     $ModuleDestination = Join-Path $Destination $Name $Version
-    Write-Host "Installing $Name $Version from $DownloadPath to $ModuleDestination"
+    Write-Verbose "Installing $Name $Version from $DownloadPath to $ModuleDestination"
+    $progressPreference = 'SilentlyContinue'
     Expand-Archive -Path $DownloadPath -DestinationPath $ModuleDestination -Force
-    Write-Host "Installed $Name $Version from $DownloadPath to $ModuleDestination"
+    $progressPreference = 'Continue'
+    Write-Verbose "Installed $Name $Version from $DownloadPath to $ModuleDestination"
 }
 
 #region Classes
@@ -1165,8 +1181,11 @@ function Limit-ModuleFastSpecs {
     -not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
 }
 
-
-
+try {
+    Update-TypeData -TypeName 'ModuleFastSpec' -DefaultDisplayPropertySet 'Name', 'Required', 'Min', 'Max' -ErrorAction Stop
+} catch [RuntimeException] {
+    if ($PSItem -notmatch 'is already present') { throw }
+}
 #endregion Helpers
 
 # Export-ModuleMember Get-ModuleFast
