@@ -373,11 +373,6 @@ function Get-ModuleFastPlan {
     }
 }
 
-# Use invoke-webrequest outfile to save every modulespec to the modules directory
-
-
-# Parallel
-
 function Install-ModuleFast {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -434,7 +429,7 @@ function Install-ModuleFast {
     Install-ModuleFastHelper @installHelperParams
 }
 
-# #endregion Main
+#endregion Main
 
 function Install-ModuleFastHelper {
     [CmdletBinding()]
@@ -506,7 +501,7 @@ function Install-ModuleFastHelper {
             #Named parameters require a hack so we will just do these in order
             ArgumentList = @(
                 $context.Module.Name,
-                $context.Module.Version, #TODO: Somehow use version from package, as this may not be normalized
+                $context.Module.Version,
                 $context.DownloadPath,
                 $Destination
             )
@@ -588,9 +583,9 @@ class ModuleFastSpec : IComparable {
     }
 
     #ModuleSpecification Compatible Aliases
-    hidden [SemanticVersion]Get_RequiredVersion() { return $this.Required }
-    hidden [SemanticVersion]Get_Version() { return $this.Min }
-    hidden [SemanticVersion]Get_MaximumVersion() { return $this.Max }
+    hidden [SemanticVersion]Get_RequiredVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Required) }
+    hidden [SemanticVersion]Get_Version() { return [ModuleFastSpec]::ParseSemanticVersion($this.Min) }
+    hidden [SemanticVersion]Get_MaximumVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Max) }
 
     #Constructors
 
@@ -1072,8 +1067,8 @@ function Find-LocalModule {
     foreach ($modulePath in $modulePaths) {
         if ($moduleSpec.Required) {
             #We can speed up the search for explicit requiredVersion matches
-            #HACK: We assume a release version can satisfy a prerelease version constraint here.
-            $manifestPath = Join-Path $modulePath $ModuleSpec.Name $($ModuleSpec.Required) "$($ModuleSpec.Name).psd1"
+            $moduleVersion = $ModuleSpec.Version #We want to search using a nuget translated path
+            $manifestPath = Join-Path $modulePath $ModuleSpec.Name $moduleVersion "$($ModuleSpec.Name).psd1"
             if ([File]::Exists($manifestPath)) { return $manifestPath }
         } else {
             #Get all the version folders for the moduleName
