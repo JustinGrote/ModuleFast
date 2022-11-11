@@ -413,8 +413,8 @@ function Install-ModuleFast {
         $NoProfileUpdate = $true
     }
     if (-not $NoPSModulePathUpdate) {
-        $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include $Destination"
-        if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage)) { return }
+        $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include "
+        if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage, $pathUpdateMessage, $pathUpdateMessage)) { return }
 
         Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
     }
@@ -975,23 +975,6 @@ function Add-Getters {
 
 #region Helpers
 
-function New-NuGetPackageConfig ($modulesToInstall, $Path = [io.path]::GetTempFileName()) {
-    $packageConfig = [xml.xmlwriter]::Create([string]$Path)
-    $packageConfig.WriteStartDocument()
-    $packageConfig.WriteStartElement('packages')
-    foreach ($ModuleItem in $ModulesToInstall) {
-        $packageConfig.WriteStartElement('package')
-        $packageConfig.WriteAttributeString('id', $null, $ModuleItem.id)
-        $packageConfig.WriteAttributeString('version', $null, $ModuleItem.Version)
-        $packageConfig.WriteEndElement()
-    }
-    $packageConfig.WriteEndElement()
-    $packageConfig.WriteEndDocument()
-    $packageConfig.Flush()
-    $packageConfig.Close()
-    return $path
-}
-
 function Get-ModuleInfoAsync {
     [CmdletBinding()]
     [OutputType([Task[String]])]
@@ -1181,6 +1164,9 @@ function Limit-ModuleFastSpecs {
     }
     -not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
 }
+
+
+
 #endregion Helpers
 
 # Export-ModuleMember Get-ModuleFast
