@@ -111,7 +111,7 @@ function Get-ModuleFastPlan {
         try {
             foreach ($moduleSpec in $ModulesToResolve) {
                 $localMatch = Find-LocalModule $moduleSpec
-                if ($localMatch) {
+                if ($localMatch -and -not $Update) {
                     Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
                     #TODO: Capture this somewhere that we can use it to report in the deploy plan
                     continue
@@ -338,7 +338,7 @@ function Get-ModuleFastPlan {
                     # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
                     foreach ($dependencySpec in $dependenciesToResolve) {
                         $localMatch = Find-LocalModule $dependencySpec
-                        if ($localMatch) {
+                        if ($localMatch -and -not $Update) {
                             Write-Verbose "Found local module $localMatch that satisfies dependency $dependencySpec. Skipping..."
                             #TODO: Capture this somewhere that we can use it to report in the deploy plan
                             continue
@@ -1079,7 +1079,11 @@ function Find-LocalModule {
     # BUG: Prerelease Module paths are still not recognized by internal PS commands and can break things
 
     # Search all psmodulepaths for the module
-    $modulePaths = $env:PSModulePath -split [Path]::PathSeparator
+    $modulePaths = $env:PSModulePath -split ([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
+    if (-Not $modulePaths) {
+        Write-Warning 'No PSModulePaths found in $env:PSModulePath. If you are doing isolated testing you can disregard this.'
+        return
+    }
 
     # NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
     foreach ($modulePath in $modulePaths) {

@@ -356,10 +356,21 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 }
 
 Describe 'Install-ModuleFast' -Tag 'E2E' {
+  BeforeEach {
+    #Remove all PSModulePath to not affect existing environment
+    $SCRIPT:__existingPSModulePath = $env:PSModulePath
+  }
   It 'Installs Module' {
-    Install-ModuleFast 'Az.Accounts'
+    $env:PSModulePath = ''
+    #HACK: The testdrive mount is not available in the threadjob runspaces so we need to translate it
+    $testDrivePath = (Get-Item testdrive:).fullname
+    Install-ModuleFast 'Az.Accounts' -Destination $testDrivePath
+    Get-Item TestDrive:\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
   It 'Installs Module with lots of dependencies (Az)' {
-    Install-ModuleFast 'Az'
+    Install-ModuleFast 'Az' -Destination (Get-Item testdrive:).fullname
+  }
+  AfterAll {
+    $env:PSModulePath = $SCRIPT:__existingPSModulePath
   }
 }
