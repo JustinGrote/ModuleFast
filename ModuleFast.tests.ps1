@@ -347,8 +347,9 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     #TODO: Mocks
     Get-ModuleFastPlan 'Az' | Should -HaveCount 78
   }
-  It 'Gets Module with 4 section version numbers (VMware.PowerCLI)' {
-    Get-ModuleFastPlan 'VMware.PowerCLI' | Should -HaveCount 75
+  It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
+    Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
+
   }
   It 'Gets multiple modules' {
     Get-ModuleFastPlan 'Az', 'VMware.PowerCLI' | Should -HaveCount 153
@@ -369,6 +370,16 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Installs Module with lots of dependencies (Az)' {
     Install-ModuleFast 'Az' -Destination (Get-Item testdrive:).fullname
+  }
+  It 'Installs Module with 4 section version numbers (VMware.PowerCLI)' {
+    $testDrivePath = (Get-Item testdrive:).fullname
+    Install-ModuleFast 'VMware.VimAutomation.Common' -Destination $testDrivePath
+    Get-Item TestDrive:\*\*\*.psd1 | ForEach-Object {
+      $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
+      Import-PowerShellDataFile -Path $_.FullName | ForEach-Object ModuleVersion | Should -Be $moduleFolderVersion
+    }
+    $env:PSModulePath = $testDrivePath
+    Get-Module VMWare* -ListAvailable | Should -HaveCount 2
   }
   AfterAll {
     $env:PSModulePath = $SCRIPT:__existingPSModulePath

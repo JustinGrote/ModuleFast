@@ -478,7 +478,7 @@ function Install-ModuleFastHelper {
 
     #Installation jobs are captured here, we will check them once all downloads have completed
     [List[Job2]]$installJobs = @()
-
+    #TODO: Filestreams should be disposed in a try/catch in case of cancellation. In PS 7.3+, should be a clean() block
     while ($downloadTasks.count -gt 0) {
         #TODO: Check on in jobs and if there's a failure, cancel the rest of the jobs
         $noTasksYetCompleted = -1
@@ -535,10 +535,10 @@ function Install-ModuleFastOperation {
         [string]$Destination
     )
     $ErrorActionPreference = 'Stop'
-    Write-Host "Installing $Name $Version from $DownloadPath to $Destination"
-    $Destination = Join-Path $Destination $Name $Version
-    Expand-Archive -Path $DownloadPath -DestinationPath $Destination -Force
-    Write-Host "Installed $Name $Version from $DownloadPath to $Destination"
+    $ModuleDestination = Join-Path $Destination $Name $Version
+    Write-Host "Installing $Name $Version from $DownloadPath to $ModuleDestination"
+    Expand-Archive -Path $DownloadPath -DestinationPath $ModuleDestination -Force
+    Write-Host "Installed $Name $Version from $DownloadPath to $ModuleDestination"
 }
 
 #region Classes
@@ -582,10 +582,10 @@ class ModuleFastSpec : IComparable {
         }
     }
 
-    #ModuleSpecification Compatible Aliases
-    hidden [SemanticVersion]Get_RequiredVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Required) }
-    hidden [SemanticVersion]Get_Version() { return [ModuleFastSpec]::ParseSemanticVersion($this.Min) }
-    hidden [SemanticVersion]Get_MaximumVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Max) }
+    #ModuleSpecification Compatible Getters
+    hidden [Version]Get_RequiredVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Required) }
+    hidden [Version]Get_Version() { return [ModuleFastSpec]::ParseSemanticVersion($this.Min) }
+    hidden [Version]Get_MaximumVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Max) }
 
     #Constructors
 
@@ -665,20 +665,20 @@ class ModuleFastSpec : IComparable {
 
     ### Version Helper Methods
     #Determines if a version is within range of the spec.
-    [bool] Matches ([SemanticVersion]$Version) {
+    [bool] Matches([SemanticVersion]$Version) {
         if ($null -eq $Version) { return $false }
         if ($Version -ge $this.Min -and $Version -le $this.Max) { return $true }
         return $false
     }
-    [bool] Matches ([Version]$Version) {
+    [bool] Matches([Version]$Version) {
         return $this.Matches([ModuleFastSpec]::ParseVersion($Version))
     }
-    [bool] Matches ([String]$Version) {
+    [bool] Matches([String]$Version) {
         return $this.Matches([ModuleFastSpec]::ParseVersionString($Version))
     }
 
     #Determines if this spec is at least partially inside of the supplied spec
-    [bool] Overlaps ([ModuleFastSpec]$Spec) {
+    [bool] Overlaps([ModuleFastSpec]$Spec) {
         if ($null -eq $Spec) { return $false }
         if ($Spec.Name -ne $this.Name) { throw "Supplied Spec Name $($Spec.Name) does not match this spec name $($this.Name)" }
         if ($Spec.Guid -ne $this.Guid) { throw "Supplied Spec Guid $($Spec.Name) does not match this spec guid $($this.Name)" }
@@ -691,17 +691,17 @@ class ModuleFastSpec : IComparable {
     # Parses either a assembly version or semver to a semver string
     static [SemanticVersion] ParseVersionString([string]$Version) {
         if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
-        $result = $Version -match [ModuleFastSpec]::SYSTEM_VERSION_REGEX `
-            ? [SemanticVersion]::ParseVersion([Version]$Version)
-        : [SemanticVersion]$Version
-        return $result
+        if ($Version -as [Version]) {
+            return [ModuleFastSpec]::ParseVersion($Version)
+        }
+        return $Version
     }
 
     # A version number with 4 octets wont cast to semanticversion properly, this is a helper method for that.
     # We treat "revision" as "build" and "build" as patch for purposes of translation
     # Needed because SemVer can't parse builds correctly
     #https://github.com/PowerShell/PowerShell/issues/14605
-    static [SemanticVersion]ParseVersion([Version]$Version) {
+    static [SemanticVersion] ParseVersion([Version]$Version) {
         if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
 
         [list[string]]$buildLabels = @()
@@ -731,8 +731,13 @@ class ModuleFastSpec : IComparable {
     }
 
     # A way to go back from SemanticVersion, the anticedent to ParseVersion
-    static [Version]ParseSemanticVersion([SemanticVersion]$Version) {
+    static [Version] ParseSemanticVersion([SemanticVersion]$Version) {
         if ($null -eq $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
+
+        #If this only has a build "version" but no Prerelease tag, we can translate that to the revision
+        if (-not $Version.PreReleaseLabel -and $Version.BuildLabel -and $Version.BuildLabel -as [int]) {
+            return [Version]::new($Version.Major, $Version.Minor, $Version.Patch, $Version.BuildLabel)
+        }
 
         [string[]]$buildFlags = $Version.BuildLabel -split '\.'
         if ($BuildFlags -notcontains [ModuleFastSpec]::SYSTEM_VERSION_LABEL) {
@@ -761,7 +766,7 @@ class ModuleFastSpec : IComparable {
 
     #This string will be unique for each spec type, and can (probably)? Be safely used as a hashcode
     #TODO: Implement parsing of this string to the parser to allow it to be "reserialized" to a module spec
-    [string]ToString() {
+    [string] ToString() {
         $name = $this._Name + ($this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : '')
         $versionString = switch ($true) {
             ($this.Min -eq [ModuleFastSpec]::MinVersion -and $this.Max -eq [ModuleFastSpec]::MaxVersion) {
@@ -780,7 +785,7 @@ class ModuleFastSpec : IComparable {
     #We can however just add Equals() method
 
     #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals?view=net-6.0
-    [boolean] Equals ([Object]$obj) {
+    [boolean] Equals([Object]$obj) {
         if ($null -eq $obj) { return $false }
         switch ($obj.GetType()) {
             #Comparing ModuleSpecs means that we want to ensure they are structurally the same
