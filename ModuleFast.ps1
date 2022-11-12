@@ -4,6 +4,7 @@ using namespace System.Collections.Concurrent
 using namespace System.Collections.Generic
 using namespace System.Collections.Specialized
 using namespace System.IO
+using namespace System.IO.Compression
 using namespace System.IO.Pipelines
 using namespace System.Management.Automation
 using namespace System.Net
@@ -19,8 +20,6 @@ High Performance Powershell Module Installation
 THIS IS NOT FOR PRODUCTION, it should be considered "Fragile" and has very little error handling and type safety
 It also doesn't generate the PowershellGet XML files currently, so PowershellGet will see them as "External" modules
 #>
-
-
 function Install-ModuleFast {
   [CmdletBinding(SupportsShouldProcess)]
   param(
@@ -459,9 +458,6 @@ function Install-ModuleFastHelper {
   [Dictionary[Task, hashtable]]$taskMap = @{}
 
   [List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
-    #TODO: GetStreamAsync then waitone on those and connect them to a file stream, then threadjob the install
-    #since zip is sync blocking
-    #TODO: Check file health and integrity. If it's good, skip the download and move on to install process.
     $context = @{
       Module       = $module
       DownloadPath = Join-Path $ModuleCache "$($module.Name).$($module.Version).nupkg"
@@ -470,7 +466,7 @@ function Install-ModuleFastHelper {
     $taskMap.Add($fetchTask, $context)
     $fetchTask
   }
-
+  [List[Job2]]$installJobs = @()
   [List[Task]]$downloadTasks = while ($streamTasks.count -gt 0) {
     $noTasksYetCompleted = -1
     [int]$thisTaskIndex = [Task]::WaitAny($streamTasks, 500)
@@ -480,58 +476,21 @@ function Install-ModuleFastHelper {
     $context = $taskMap[$thisTask]
     $context.fetchStream = $stream
     $streamTasks.RemoveAt($thisTaskIndex)
-    $downloadPath = $context.DownloadPath
-    [void][directory]::CreateDirectory((Split-Path $downloadPath))
-    $destFileStream = [file]::Create($DownloadPath, 4096, [FileOptions]::SequentialScan)
-    $context.fileStream = $destFileStream
-    $downloadedTask = $stream.CopyToAsync($destFileStream, $CancellationToken)
-    $taskMap.Add($downloadedTask, $context)
-    $downloadedTask
-  }
 
-  #Installation jobs are captured here, we will check them once all downloads have completed
-  [List[Job2]]$installJobs = @()
+    #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
 
-  $downloaded = 0
-  $downloadedProgressId = Get-Random
-  #TODO: Filestreams should be disposed in a try/catch in case of cancellation. In PS 7.3+, should be a clean() block
-  while ($downloadTasks.count -gt 0) {
-    #TODO: Check on in jobs and if there's a failure, cancel the rest of the jobs
-    $noTasksYetCompleted = -1
-    [int]$thisTaskIndex = [Task]::WaitAny($downloadTasks, 500)
-    if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
-    $thisTask = $downloadTasks[$thisTaskIndex]
-    $context = $taskMap[$thisTask]
-    # We can close these streams now that it is downloaded.
-    # This releases the lock on the file
-    #TODO: Maybe can connect the stream to a zip decompressionstream. Should be in cache so performance would be negligible
-    $context.fileStream.Dispose()
-    $context.fetchStream.Dispose()
-    #The file copy task is a void task that doesnt return anything, so we dont need to do GetResult()
-    $downloadTasks.RemoveAt($thisTaskIndex)
-
-    #Start a new threadjob to handle the installation, because the zipfile API is not async. Also extraction is
-    #CPU intensive so multiple threads will be helpful here and worth the startup cost of a runspace
-    $installJobParams = @{
-      ScriptBlock  = (Get-Item Function:\Install-ModuleFastOperation).Scriptblock
-      #Named parameters require a hack so we will just do these in order
-      ArgumentList = @(
-        $context.Module.Name,
-        $context.Module.Version,
-        $context.DownloadPath,
-        $Destination
-      )
+    $installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
+    Write-Verbose "Starting Extract Job $($context.Module) to $installPath"
+    # This is a sync process and we want to do it in parallel, hence the threadjob
+    $installJob = Start-ThreadJob -ThrottleLimit 8 {
+      $zip = [IO.Compression.ZipArchive]::new($USING:stream, 'Read')
+      [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $USING:installPath)
+      ($zip).Dispose()
+      ($USING:stream).Dispose()
     }
-    Write-Debug "Starting Module Install Job for $($context.Module)"
-    $installJob = Start-ThreadJob @installJobParams
     $installJobs.Add($installJob)
-    $downloaded++
-    Write-Progress -Id $downloadedProgressId -ParentId 1 -Activity 'Download' -Status "$downloaded/$($ModuleToInstall.count) Modules" -PercentComplete ($downloaded / $ModuleToInstall.count * 100)
-
   }
 
-  #TODO: Correlate the installjobs to a dictionary so we can return the original modulespec maybe?
-  #Or is that even needed?
   $installed = 0
   $installProgressId = (Get-Random)
   while ($installJobs.count -gt 0) {
@@ -542,6 +501,51 @@ function Install-ModuleFastHelper {
     $installed++
     Write-Progress -Id $installProgressId -ParentId 1 -Activity 'Install' -Status "$installed/$($ModuleToInstall.count) Modules" -PercentComplete ($installed / $ModuleToInstall.count * 100)
   }
+
+  # #Installation jobs are captured here, we will check them once all downloads have completed
+
+
+  # $downloaded = 0
+  # $downloadedProgressId = Get-Random
+  # #TODO: Filestreams should be disposed in a try/catch in case of cancellation. In PS 7.3+, should be a clean() block
+  # while ($downloadTasks.count -gt 0) {
+  #   #TODO: Check on in jobs and if there's a failure, cancel the rest of the jobs
+  #   $noTasksYetCompleted = -1
+  #   [int]$thisTaskIndex = [Task]::WaitAny($downloadTasks, 500)
+  #   if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
+  #   $thisTask = $downloadTasks[$thisTaskIndex]
+  #   $context = $taskMap[$thisTask]
+  #   # We can close these streams now that it is downloaded.
+  #   # This releases the lock on the file
+  #   #TODO: Maybe can connect the stream to a zip decompressionstream. Should be in cache so performance would be negligible
+  #   $context.fileStream.Dispose()
+  #   $context.fetchStream.Dispose()
+  #   #The file copy task is a void task that doesnt return anything, so we dont need to do GetResult()
+  #   $downloadTasks.RemoveAt($thisTaskIndex)
+
+  #   #Start a new threadjob to handle the installation, because the zipfile API is not async. Also extraction is
+  #   #CPU intensive so multiple threads will be helpful here and worth the startup cost of a runspace
+  #   $installJobParams = @{
+  #     ScriptBlock  = (Get-Item Function:\Install-ModuleFastOperation).Scriptblock
+  #     #Named parameters require a hack so we will just do these in order
+  #     ArgumentList = @(
+  #       $context.Module.Name,
+  #       $context.Module.Version,
+  #       $context.DownloadPath,
+  #       $Destination
+  #     )
+  #   }
+  #   Write-Debug "Starting Module Install Job for $($context.Module)"
+  #   $installJob = Start-ThreadJob @installJobParams
+  #   $installJobs.Add($installJob)
+  #   $downloaded++
+  #   Write-Progress -Id $downloadedProgressId -ParentId 1 -Activity 'Download' -Status "$downloaded/$($ModuleToInstall.count) Modules" -PercentComplete ($downloaded / $ModuleToInstall.count * 100)
+
+  # }
+
+  # #TODO: Correlate the installjobs to a dictionary so we can return the original modulespec maybe?
+  # #Or is that even needed?
+
 }
 
 # This will be run inside a threadjob. We separate this so that we can test it independently
@@ -1103,7 +1107,7 @@ function Find-LocalModule {
   # BUG: Prerelease Module paths are still not recognized by internal PS commands and can break things
 
   # Search all psmodulepaths for the module
-  $modulePaths = $env:PSModulePath -split ([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
+  $modulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
   if (-Not $modulePaths) {
     Write-Warning 'No PSModulePaths found in $env:PSModulePath. If you are doing isolated testing you can disregard this.'
     return
@@ -1221,6 +1225,7 @@ function ConvertTo-AuthenticationHeaderValue ([PSCredential]$Credential) {
   )
   return [Net.Http.Headers.AuthenticationHeaderValue]::New('Basic', $basicCredential)
 }
+
 #endregion Helpers
 
 # Export-ModuleMember Get-ModuleFast

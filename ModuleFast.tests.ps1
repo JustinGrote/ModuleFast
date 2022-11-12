@@ -362,18 +362,17 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     $SCRIPT:__existingPSModulePath = $env:PSModulePath
   }
   It 'Installs Module' {
-    $env:PSModulePath = ''
     #HACK: The testdrive mount is not available in the threadjob runspaces so we need to translate it
     $testDrivePath = (Get-Item testdrive:).fullname
-    Install-ModuleFast 'Az.Accounts' -Destination $testDrivePath
+    Install-ModuleFast 'Az.Accounts' -Destination $testDrivePath -NoProfileUpdate -NoPSModulePathUpdate
     Get-Item TestDrive:\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
   It 'Installs Module with lots of dependencies (Az)' {
-    Install-ModuleFast 'Az' -Destination (Get-Item testdrive:).fullname
+    Install-ModuleFast 'Az' -Destination (Get-Item testdrive:).fullname -NoProfileUpdate -NoPSModulePathUpdate
   }
   It 'Installs Module with 4 section version numbers (VMware.PowerCLI)' {
     $testDrivePath = (Get-Item testdrive:).fullname
-    Install-ModuleFast 'VMware.VimAutomation.Common' -Destination $testDrivePath
+    Install-ModuleFast 'VMware.VimAutomation.Common' -Destination $testDrivePath -NoProfileUpdate -NoPSModulePathUpdate
     Get-Item TestDrive:\*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
       Import-PowerShellDataFile -Path $_.FullName | ForEach-Object ModuleVersion | Should -Be $moduleFolderVersion
