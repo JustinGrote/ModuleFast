@@ -462,6 +462,10 @@ function Install-ModuleFastHelper {
       Module       = $module
       DownloadPath = Join-Path $ModuleCache "$($module.Name).$($module.Version).nupkg"
     }
+    Write-Verbose "$module`: Downloading from $($module.DownloadLink)"
+    if (-not $module.DownloadLink) {
+      throw "$module`: No Download Link found. This is a bug"
+    }
     $fetchTask = $httpClient.GetStreamAsync($module.DownloadLink, $CancellationToken)
     $taskMap.Add($fetchTask, $context)
     $fetchTask
