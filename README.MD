@@ -1,7 +1,7 @@
 # ModuleFast
 
 This is a PowerShell module installer that is optimized for high performance and no external dependencies so it can be
-used as a bootstrap.
+used as a bootstrap to quickly install and update modules in a declarative fashion.
 
 ## Goals
 
@@ -17,14 +17,11 @@ PSGetv3 is compatibility, the focus with ModuleFast is speed at the expense of b
 ## How this script works
 
 1. Takes your module specifications and builds a declarative dependency tree, following a IaC plan/apply approach to installing modules.
-1. For PowerShell gallery, uses an optimized CloudFlare Worker to resolve dependencies as fast as possible.
 1. Uses a custom HTTPClient and async tasks to build the dependency tree quickly, querying with minimal data possible and
    using batch queries where possible to optimize for performance. This is all done in native PowerShell, no C# required
    (though C# would allow for certain operations to be even more parallelizable by chaining tasks).
-1. Uses HTTP/2 to run all queries in a single TCP conversation where possible (PSGallery supports it). If only HTTP/1.1
-is available, then the queries are run as fast as possible unless batching is enabled via a batching parameter to limit
-connections. Batches are still run serially so they are actually slower in most normal (fast) environments. Batches are
-better in high latency environments or environments with low port availability.
+1. Uses HTTP/2 to run all queries in a single TCP conversation where possible (PSGallery supports it)
+1. For PowerShell gallery, uses an optimized CloudFlare Worker to resolve dependencies as fast as possible.
 
 ## What this script is not
 
@@ -34,18 +31,13 @@ PowerShellGet, which has much broader support for multiple repos, authentication
 
 It makes a lot of very bad assumptions, most of which are safe for PowerShell Gallery at least
 
-1. Nuget v3 Only
-1. Powershell 7+ Only
+1. Nuget v3 Only. PowerShellGet is built for compatibility with PSGetv2, I have no such compatibility restrictions and can build "from scratch"
+1. Powershell 7+ Only. PowerShellGet has 5.1+ compatibility
 1. Modules with a particular GUID and version are immutable and never change. This is great for caching purposes, and is true for PSGallery,
 but may not be true for other galleries.
-1. PowerShellGet is built for compatibility with PSGetv2, I have no such compatibility restrictions and can build "from scratch"
 1. It currently has very little error handling and aggressive timeouts, and not recommended for slow or unreliable
    network connections. It will "fail fast" as much as possible.
-1. Dependency resolution only takes into account the modules in the direct target folder. For example, if modules are
-installed in local computer that would satisfy the dependency graph, they'll be installed into user module folder anyways
-and vice versa. (TODO!)
 1. Local PSModule folders that don't have the format folder/moduleName/moduleVersion/moduleName.psd1 are not considered
-1. Non-Local PSModule folders for dependency resolution are not supported
 1. The .psd1 file isn't actually read to verify the module is correct/not corrupt.
 
 ## Lessons learned
