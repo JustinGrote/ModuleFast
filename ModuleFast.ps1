@@ -182,6 +182,7 @@ function Get-ModuleFastPlan {
           #TODO: Capture this somewhere that we can use it to report in the deploy plan
           continue
         }
+
         $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $moduleSpec.Name
         $resolveTasks[$task] = $moduleSpec
         $currentTasks.Add($task)
@@ -1046,7 +1047,12 @@ function Get-ModuleInfoAsync {
 
     #This call should be cached by httpclient after first attempt to speed up future calls
     #TODO: Only select supported versions
-    $registrationBase = $HttpClient.GetStringAsync($Endpoint, $CancellationToken).GetAwaiter().GetResult()
+    #TODO: Cache this index more centrally to be used for other services
+    if (-not $SCRIPT:__registrationIndex) {
+      $SCRIPT:__registrationIndex = $HttpClient.GetStringAsync($Endpoint, $CancellationToken).GetAwaiter().GetResult()
+    }
+
+    $SCRIPT:__registrationIndex
     | ConvertFrom-Json
     | Select-Object -ExpandProperty Resources
     | Where-Object {
@@ -1060,6 +1066,7 @@ function Get-ModuleInfoAsync {
 
   #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
   Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
+
   return $HttpClient.GetStringAsync($uri, $CancellationToken)
 }
 
