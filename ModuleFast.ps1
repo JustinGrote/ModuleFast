@@ -49,19 +49,17 @@ function Install-ModuleFast {
       New-Item -ItemType Directory -Path $Destination -Force
     }
   }
-  # Should error if not present
-  $Destination = Resolve-Path $Destination
 
-  if ($Destination -ne $defaultRepoPath) {
+  # Should error if not present
+  [string]$Destination = Resolve-Path $Destination
+
+  if ($defaultRepoPath -ne $Destination) {
     if (-not $NoProfileUpdate) {
       Write-Warning 'Parameter -Destination is set to a custom path. We assume you know what you are doing, so it will not automatically be added to your Profile but will be added to PSModulePath. Set -NoProfileUpdate to suppress this message in the future.'
     }
     $NoProfileUpdate = $true
   }
   if (-not $NoPSModulePathUpdate) {
-    $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include $Destination"
-    if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage, '', '')) { return }
-
     Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
   }
 
@@ -1052,7 +1050,7 @@ function Get-ModuleInfoAsync {
       $SCRIPT:__registrationIndex = $HttpClient.GetStringAsync($Endpoint, $CancellationToken).GetAwaiter().GetResult()
     }
 
-    $SCRIPT:__registrationIndex
+    $registrationBase = $SCRIPT:__registrationIndex
     | ConvertFrom-Json
     | Select-Object -ExpandProperty Resources
     | Where-Object {
@@ -1061,7 +1059,7 @@ function Get-ModuleInfoAsync {
     | Sort-Object -Property '@type' -Descending
     | Select-Object -ExpandProperty '@id' -First 1
 
-    $uri = "$registrationBase/$ModuleId/$Path"
+    $uri = "$registrationBase/$($ModuleId.ToLower())/$Path"
   }
 
   #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
@@ -1074,7 +1072,12 @@ function Get-ModuleInfoAsync {
 .SYNOPSIS
 Adds an existing PowerShell Modules path to the current session as well as the profile
 #>
-function Add-DestinationToPSModulePath ([string]$Destination, [switch]$NoProfileUpdate) {
+function Add-DestinationToPSModulePath {
+  [CmdletBinding(SupportsShouldProcess)]
+  param(
+    [string]$Destination,
+    [switch]$NoProfileUpdate
+  )
   $ErrorActionPreference = 'Stop'
   $Destination = Resolve-Path $Destination #Will error if it doesn't exist
 
@@ -1082,25 +1085,24 @@ function Add-DestinationToPSModulePath ([string]$Destination, [switch]$NoProfile
   [string[]]$modulePaths = $env:PSModulePath -split [Path]::PathSeparator
 
   if ($Destination -notin $modulePaths) {
-    Write-Warning "$Destination is not in current PSModulePath list. Adding to both the current session and Current User All Hosts profile."
+    $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include $Destination"
+    if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage, '', '')) { return }
     $modulePaths += $Destination
     $env:PSModulePath = $modulePaths -join [Path]::PathSeparator
-  } else {
-    Write-Warning 'The module repository is not in your PSModulePath. Please add it to use the modules.'
   }
 
   if (-not $NoProfileUpdate) {
     $myProfile = $profile.CurrentUserAllHosts
     if (-not (Test-Path $myProfile)) {
       Write-Verbose 'User All Hosts profile not found, creating one.'
-      New-Item -ItemType File -Path $Destination -Force
+      New-Item -ItemType File -Path $myProfile -Force | Out-Null
     }
-    $ProfileLine = "`$env:PSModulePath += [System.IO.Path]::PathSeparator + $Destination #Added by ModuleFast. If you dont want this, add -NoProfileUpdate to your command."
+    $ProfileLine = "`$env:PSModulePath += [System.IO.Path]::PathSeparator + $Destination #Added by ModuleFast. DO NOT EDIT THIS LINE. If you dont want this, add -NoProfileUpdate to your command."
     if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
       Write-Verbose "Adding $Destination to profile $myProfile"
       Add-Content -Path $myProfile -Value $ProfileLine
     } else {
-      Write-Verbose "$Destination PSModulePath addition detected in profile, skipping..."
+      Write-Verbose "PSModulePath $Destination already in profile, skipping..."
     }
   }
 }
@@ -1235,6 +1237,11 @@ function ConvertTo-AuthenticationHeaderValue ([PSCredential]$Credential) {
     )
   )
   return [Net.Http.Headers.AuthenticationHeaderValue]::New('Basic', $basicCredential)
+}
+
+#Get the hash of a string
+function Get-StringHash ([string]$String, [string]$Algorithm = 'SHA256') {
+  (Get-FileHash -InputStream ([MemoryStream]::new([Encoding]::UTF8.GetBytes($String))) -Algorithm $algorithm).Hash
 }
 
 #endregion Helpers
