@@ -461,7 +461,7 @@ function Install-ModuleFastHelper {
       Module       = $module
       DownloadPath = Join-Path $ModuleCache "$($module.Name).$($module.Version).nupkg"
     }
-    Write-Verbose "$module`: Downloading from $($module.DownloadLink)"
+    Write-Verbose "$module`: Starting Download for $($module.DownloadLink)"
     if (-not $module.DownloadLink) {
       throw "$module`: No Download Link found. This is a bug"
     }
@@ -483,13 +483,14 @@ function Install-ModuleFastHelper {
     #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
 
     $installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
-    Write-Verbose "Starting Extract Job $($context.Module) to $installPath"
+    Write-Verbose "$($context.Module): Starting Extract Job to $installPath"
     # This is a sync process and we want to do it in parallel, hence the threadjob
     $installJob = Start-ThreadJob -ThrottleLimit 8 {
       $zip = [IO.Compression.ZipArchive]::new($USING:stream, 'Read')
       [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $USING:installPath)
       ($zip).Dispose()
       ($USING:stream).Dispose()
+      return ($USING:context).Module
     }
     $installJobs.Add($installJob)
   }
@@ -499,9 +500,10 @@ function Install-ModuleFastHelper {
   while ($installJobs.count -gt 0) {
     $ErrorActionPreference = 'Stop'
     $completedJob = $installJobs | Wait-Job -Any
-    $completedJob | Receive-Job -Wait -AutoRemoveJob
+    $installedModule = $completedJob | Receive-Job -Wait -AutoRemoveJob
     if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
     $installed++
+    Write-Verbose "$installedModule`: Successfuly installed to $installPath"
     Write-Progress -Id $installProgressId -ParentId 1 -Activity 'Install' -Status "$installed/$($ModuleToInstall.count) Modules" -PercentComplete ($installed / $ModuleToInstall.count * 100)
   }
 
