@@ -1130,30 +1130,44 @@ function Find-LocalModule {
 
   # NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
   foreach ($modulePath in $modulePaths) {
+    #Linux/Mac support requires a case insensitive search on a user supplied variable.
+    $moduleDir = [Directory]::GetDirectories($modulePath, $moduleSpec.Name, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+    if ($moduleDir.count -gt 1) { throw "$($moduleSpec.Name) folder is ambiguous, please delete one of these folders: $moduleDir" }
+    if (-not $moduleDir) {
+      Write-Debug "$modulePath does not have a $($moduleSpec.Name) folder. Skipping..."
+      continue
+    }
+
     if ($moduleSpec.Required) {
       #We can speed up the search for explicit requiredVersion matches
       $moduleVersion = $ModuleSpec.Version #We want to search using a nuget translated path
-      $manifestPath = Join-Path $modulePath $ModuleSpec.Name $moduleVersion "$($ModuleSpec.Name).psd1"
-      if ([File]::Exists($manifestPath)) { return $manifestPath }
+      $moduleFolder = Join-Path $modulePath $ModuleSpec.Name $moduleVersion
+
+      $manifestPath = Join-Path $moduleFolder "$($ModuleSpec.Name).psd1"
+
+      if (Test-Path $ModuleFolder) {
+        #Linux/Mac support requires a case insensitive search on a user supplied variable.
+        $manifestPath = [Directory]::GetFiles($moduleFolder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+
+        if ($manifestPath.count -gt 1) { throw "$moduleFolder manifest is ambiguous, please delete one of these: $manifestPath" }
+        if ($manifestPath.count -eq 1) { return $manifestPath }
+      }
     } else {
-      #Get all the version folders for the moduleName
-      $moduleNamePath = Join-Path $modulePath $ModuleSpec.Name
-      if (-not ([Directory]::Exists($moduleNamePath))) { continue }
-      $folders = [System.IO.Directory]::GetDirectories($moduleNamePath) | Split-Path -Leaf
+      $folders = [System.IO.Directory]::GetDirectories($moduleDir) | Split-Path -Leaf
       [Version[]]$candidateVersions = foreach ($folder in $folders) {
         [Version]$version = $null
         if ([Version]::TryParse($folder, [ref]$version)) { $version } else {
-          Write-Warning "Could not parse $folder in $moduleNamePath as a valid version. This is probably a bad module directory and should be removed."
+          Write-Warning "Could not parse $folder in $moduleDir as a valid version. This is probably a bad module directory and should be removed."
         }
       }
 
       if (-not $candidateVersions) {
-        Write-Verbose "$moduleSpec`: module folder exists at $moduleNamePath but no modules found that match the version spec."
+        Write-Verbose "$moduleSpec`: module folder exists at $moduleDir but no modules found that match the version spec."
         continue
       }
       $versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $ModuleSpec -Versions $candidateVersions -Highest
       if ($versionMatch) {
-        $manifestPath = Join-Path $moduleNamePath $([Version]$versionMatch) "$($ModuleSpec.Name).psd1"
+        $manifestPath = Join-Path $moduleDir $([Version]$versionMatch) "$($ModuleSpec.Name).psd1"
         if (-not [File]::Exists($manifestPath)) {
           # Our matching method doesn't make it easy to match on "next highest" version, so we have to do this.
           throw "A matching module folder was found for $ModuleSpec but the manifest is not present at $manifestPath. This indicates a corrupt module and should be removed before proceeding."
