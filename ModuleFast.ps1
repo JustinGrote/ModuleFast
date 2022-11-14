@@ -1130,6 +1130,8 @@ function Find-LocalModule {
 
   # NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
   foreach ($modulePath in $modulePaths) {
+    if (-not [Directory]::Exists($modulePath)) { continue }
+
     #Linux/Mac support requires a case insensitive search on a user supplied variable.
     $moduleDir = [Directory]::GetDirectories($modulePath, $moduleSpec.Name, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
     if ($moduleDir.count -gt 1) { throw "$($moduleSpec.Name) folder is ambiguous, please delete one of these folders: $moduleDir" }
