@@ -21,7 +21,7 @@ THIS IS NOT FOR PRODUCTION, it should be considered "Fragile" and has very littl
 It also doesn't generate the PowershellGet XML files currently, so PowershellGet will see them as "External" modules
 #>
 function Install-ModuleFast {
-  [CmdletBinding(SupportsShouldProcess)]
+  [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
   param(
     $ModulesToInstall,
     $Destination,
@@ -30,7 +30,6 @@ function Install-ModuleFast {
     [string]$Source = 'https://preview.pwsh.gallery/index.json',
     #The credential to use to authenticate. Only basic auth is supported
     [PSCredential]$Credential,
-    [Switch]$Force,
     #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
     [Switch]$NoPSModulePathUpdate,
     #Setting this won't add the default destination to your profile.
@@ -46,7 +45,7 @@ function Install-ModuleFast {
   # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
   if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
     if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
-      New-Item -ItemType Directory -Path $Destination -Force
+      New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     }
   }
 
@@ -63,9 +62,30 @@ function Install-ModuleFast {
     Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
   }
 
+  $currentWhatIfPreference = $WhatIfPreference
+  #We do some stuff here that doesn't affect the system but triggers whatif, so we disable it
+  $WhatIfPreference = $false
   $httpClient = New-ModuleFastClient -Credential $Credential
-  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Preparing Plan' -PercentComplete 1
+  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
   $plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source
+  $WhatIfPreference = $currentWhatIfPreference
+
+  if ($plan.Count -eq 0) {
+    Write-Verbose 'No modules found to install or all modules are already installed. Exiting.'
+    return
+  }
+
+  if (-not $PSCmdlet.ShouldProcess($Destination, "Install $($plan.Count) Modules")) {
+    Write-Host -fore DarkGreen '🚀 ModuleFast Install Plan BEGIN'
+    $plan
+    | Select-Object Name, @{N = 'Version'; E = { $_.Required } }
+    | Format-Table -AutoSize
+    | Out-String
+    | Write-Host -ForegroundColor DarkGray
+    Write-Host -fore DarkGreen '🚀 ModuleFast Install Plan END'
+    return
+  }
+
 
   Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($plan.count) Modules" -PercentComplete 50
 
@@ -136,7 +156,8 @@ function Get-ModuleFastPlan {
     #By default we use in-place modules if they satisfy the version requirements. This switch will force a search for all latest modules
     [Switch]$Update,
     [PSCredential]$Credential,
-    [HttpClient]$HttpClient = $(New-ModuleFastClient -Credential $Credential)
+    [HttpClient]$HttpClient = $(New-ModuleFastClient -Credential $Credential),
+    [int]$ParentProgress
   )
 
   BEGIN {
@@ -151,7 +172,6 @@ function Get-ModuleFastPlan {
       HttpClient        = $httpClient
       CancellationToken = $cancelToken.Token
     }
-    # Write-Progress -Id 1 -Activity 'Get-ModuleFast' -CurrentOperation 'Fetching module information from Powershell Gallery'
   }
   PROCESS {
     foreach ($spec in $Name) {
@@ -186,12 +206,17 @@ function Get-ModuleFastPlan {
         $currentTasks.Add($task)
       }
 
+      [int]$tasksCompleteCount = 1
+      [int]$resolveTaskCount = $currentTasks.Count -as [Int]
       while ($currentTasks.Count -gt 0) {
         #The timeout here allow ctrl-C to continue working in PowerShell
         #-1 is returned by WaitAny if we hit the timeout before any tasks completed
         $noTasksYetCompleted = -1
         [int]$thisTaskIndex = [Task]::WaitAny($currentTasks, 500)
         if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
+
+        #The Plan whitespace is intentional so that it lines up with install progress using the compact format
+        Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Plan: Resolving $tasksCompleteCount/$resolveTaskCount Module Dependencies" -PercentComplete ((($tasksCompleteCount / $resolveTaskCount) * 50) + 1)
 
         #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
         #For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
@@ -299,6 +324,7 @@ function Get-ModuleFastPlan {
           #This should be a relatively rare query that only happens when the latest package isn't being resolved.
           [Task[string][]]$tasks = foreach ($page in $pages) {
             Get-ModuleInfoAsync @httpContext -Uri $page.'@id'
+            #Used to track progress as tasks can get removed
             #This loop is here to support ctrl-c cancellation again
           }
           while ($false -in $tasks.IsCompleted) {
@@ -336,6 +362,7 @@ function Get-ModuleFastPlan {
           #TODO: Fix the flow so this isn't stated twice
           [void]$resolveTasks.Remove($completedTask)
           [void]$currentTasks.Remove($completedTask)
+          $tasksCompleteCount++
           continue
         }
 
@@ -415,12 +442,16 @@ function Get-ModuleFastPlan {
             Write-Debug "$currentModuleSpec`: Fetching dependency $dependencySpec"
             $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $dependencySpec.Name
             $resolveTasks[$task] = $dependencySpec
+            #Used to track progress as tasks can get removed
+            $resolveTaskCount++
+
             $currentTasks.Add($task)
           }
         }
         try {
           [void]$resolveTasks.Remove($completedTask)
           [void]$currentTasks.Remove($completedTask)
+          $tasksCompleteCount++
         } catch {
           throw
         }
@@ -504,53 +535,8 @@ function Install-ModuleFastHelper {
     if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
     $installed++
     Write-Verbose "$installedModule`: Successfuly installed to $installPath"
-    Write-Progress -Id $installProgressId -ParentId 1 -Activity 'Install' -Status "$installed/$($ModuleToInstall.count) Modules" -PercentComplete ($installed / $ModuleToInstall.count * 100)
+    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
   }
-
-  # #Installation jobs are captured here, we will check them once all downloads have completed
-
-
-  # $downloaded = 0
-  # $downloadedProgressId = Get-Random
-  # #TODO: Filestreams should be disposed in a try/catch in case of cancellation. In PS 7.3+, should be a clean() block
-  # while ($downloadTasks.count -gt 0) {
-  #   #TODO: Check on in jobs and if there's a failure, cancel the rest of the jobs
-  #   $noTasksYetCompleted = -1
-  #   [int]$thisTaskIndex = [Task]::WaitAny($downloadTasks, 500)
-  #   if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
-  #   $thisTask = $downloadTasks[$thisTaskIndex]
-  #   $context = $taskMap[$thisTask]
-  #   # We can close these streams now that it is downloaded.
-  #   # This releases the lock on the file
-  #   #TODO: Maybe can connect the stream to a zip decompressionstream. Should be in cache so performance would be negligible
-  #   $context.fileStream.Dispose()
-  #   $context.fetchStream.Dispose()
-  #   #The file copy task is a void task that doesnt return anything, so we dont need to do GetResult()
-  #   $downloadTasks.RemoveAt($thisTaskIndex)
-
-  #   #Start a new threadjob to handle the installation, because the zipfile API is not async. Also extraction is
-  #   #CPU intensive so multiple threads will be helpful here and worth the startup cost of a runspace
-  #   $installJobParams = @{
-  #     ScriptBlock  = (Get-Item Function:\Install-ModuleFastOperation).Scriptblock
-  #     #Named parameters require a hack so we will just do these in order
-  #     ArgumentList = @(
-  #       $context.Module.Name,
-  #       $context.Module.Version,
-  #       $context.DownloadPath,
-  #       $Destination
-  #     )
-  #   }
-  #   Write-Debug "Starting Module Install Job for $($context.Module)"
-  #   $installJob = Start-ThreadJob @installJobParams
-  #   $installJobs.Add($installJob)
-  #   $downloaded++
-  #   Write-Progress -Id $downloadedProgressId -ParentId 1 -Activity 'Download' -Status "$downloaded/$($ModuleToInstall.count) Modules" -PercentComplete ($downloaded / $ModuleToInstall.count * 100)
-
-  # }
-
-  # #TODO: Correlate the installjobs to a dictionary so we can return the original modulespec maybe?
-  # #Or is that even needed?
-
 }
 
 # This will be run inside a threadjob. We separate this so that we can test it independently
@@ -1075,7 +1061,7 @@ function Get-ModuleInfoAsync {
 Adds an existing PowerShell Modules path to the current session as well as the profile
 #>
 function Add-DestinationToPSModulePath {
-  [CmdletBinding(SupportsShouldProcess)]
+  [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
   param(
     [string]$Destination,
     [switch]$NoProfileUpdate
@@ -1087,21 +1073,25 @@ function Add-DestinationToPSModulePath {
   [string[]]$modulePaths = $env:PSModulePath -split [Path]::PathSeparator
 
   if ($Destination -notin $modulePaths) {
-    $pathUpdateMessage = "Update PSModulePath $($NoProfileUpdate ? '' : 'and CurrentUserAllHosts profile ')to include $Destination"
-    if (-not $PSCmdlet.ShouldProcess($pathUpdateMessage, '', '')) { return }
+    Write-Verbose "Updating PSModulePath to include $Destination"
     $modulePaths += $Destination
     $env:PSModulePath = $modulePaths -join [Path]::PathSeparator
   }
 
   if (-not $NoProfileUpdate) {
+    #TODO: Support other profiles?
     $myProfile = $profile.CurrentUserAllHosts
+
     if (-not (Test-Path $myProfile)) {
+      if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
       Write-Verbose 'User All Hosts profile not found, creating one.'
       New-Item -ItemType File -Path $myProfile -Force | Out-Null
     }
-    $ProfileLine = "`$env:PSModulePath += [System.IO.Path]::PathSeparator + $Destination #Added by ModuleFast. DO NOT EDIT THIS LINE. If you dont want this, add -NoProfileUpdate to your command."
+    $ProfileLine = "`$env:PSModulePath += '$([IO.Path]::PathSeparator + $Destination)' #Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast."
     if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
+      if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile.")) { return }
       Write-Verbose "Adding $Destination to profile $myProfile"
+      Add-Content -Path $myProfile -Value "`n`n"
       Add-Content -Path $myProfile -Value $ProfileLine
     } else {
       Write-Verbose "PSModulePath $Destination already in profile, skipping..."
