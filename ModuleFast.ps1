@@ -1120,7 +1120,10 @@ function Find-LocalModule {
 
   # NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
   foreach ($modulePath in $modulePaths) {
-    if (-not [Directory]::Exists($modulePath)) { continue }
+    if (-not [Directory]::Exists($modulePath)) {
+      Write-Debug "PSModulePath $modulePath is configured but does not exist, skipping..."
+      continue
+    }
 
     #Linux/Mac support requires a case insensitive search on a user supplied variable.
     $moduleDir = [Directory]::GetDirectories($modulePath, $moduleSpec.Name, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
@@ -1138,7 +1141,7 @@ function Find-LocalModule {
       $manifestPath = Join-Path $moduleFolder "$($ModuleSpec.Name).psd1"
 
       if (Test-Path $ModuleFolder) {
-        #Linux/Mac support requires a case insensitive search on a user supplied variable.
+        #Linux/Mac support requires a case insensitive search on a user supplied argument.
         $manifestPath = [Directory]::GetFiles($moduleFolder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
 
         if ($manifestPath.count -gt 1) { throw "$moduleFolder manifest is ambiguous, please delete one of these: $manifestPath" }
@@ -1148,7 +1151,19 @@ function Find-LocalModule {
       $folders = [System.IO.Directory]::GetDirectories($moduleDir) | Split-Path -Leaf
       [Version[]]$candidateVersions = foreach ($folder in $folders) {
         [Version]$version = $null
-        if ([Version]::TryParse($folder, [ref]$version)) { $version } else {
+        if ([Version]::TryParse($folder, [ref]$version)) {
+          $version
+        } else {
+          #Check for a "classic" non-versioned module folder and get the version from the manifest
+          $manifestPath = [Directory]::GetFiles((Join-Path $modulePath $moduleSpec.Name), "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+          if ($manifestPath.count -gt 1) { throw "$moduleFolder manifest is ambiguous, please delete one of these: $manifestPath" }
+
+          if ($manifestPath) {
+            $manifestData = Import-PowerShellDataFile $manifestPath
+            #Return the version in the manifest
+            $manifestData.ModuleVersion
+          }
+
           Write-Warning "Could not parse $folder in $moduleDir as a valid version. This is probably a bad module directory and should be removed."
         }
       }
