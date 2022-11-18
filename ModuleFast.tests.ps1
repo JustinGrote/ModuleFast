@@ -360,19 +360,26 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   BeforeEach {
     #Remove all PSModulePath to not affect existing environment
     $SCRIPT:__existingPSModulePath = $env:PSModulePath
+    $testDrivePath = (Get-Item testdrive:).fullname
+    $installTempPath = Join-Path $testDrivePath $(New-Guid)
+    New-Item -ItemType Directory -Path $installTempPath -ErrorAction stop
+    $imfParams = @{
+      Destination          = $installTempPath
+      NoProfileUpdate      = $true
+      NoPSModulePathUpdate = $true
+      Confirm              = $false
+    }
   }
   It 'Installs Module' {
     #HACK: The testdrive mount is not available in the threadjob runspaces so we need to translate it
-    $testDrivePath = (Get-Item testdrive:).fullname
-    Install-ModuleFast 'Az.Accounts' -Destination $testDrivePath -NoProfileUpdate -NoPSModulePathUpdate
-    Get-Item TestDrive:\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
+    Install-ModuleFast @imfParams 'Az.Accounts'
+    Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
   It 'Installs Module with lots of dependencies (Az)' {
-    Install-ModuleFast 'Az' -Destination (Get-Item testdrive:).fullname -NoProfileUpdate -NoPSModulePathUpdate
+    Install-ModuleFast @imfParams 'Az'
   }
   It 'Installs Module with 4 section version numbers (VMware.PowerCLI)' {
-    $testDrivePath = (Get-Item testdrive:).fullname
-    Install-ModuleFast 'VMware.VimAutomation.Common' -Destination $testDrivePath -NoProfileUpdate -NoPSModulePathUpdate
+    Install-ModuleFast @imfParams 'VMware.VimAutomation.Common'
     Get-Item TestDrive:\*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
       Import-PowerShellDataFile -Path $_.FullName | ForEach-Object ModuleVersion | Should -Be $moduleFolderVersion
