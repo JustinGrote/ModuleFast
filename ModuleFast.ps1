@@ -33,7 +33,9 @@ function Install-ModuleFast {
     #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
     [Switch]$NoPSModulePathUpdate,
     #Setting this won't add the default destination to your profile.
-    [Switch]$NoProfileUpdate
+    [Switch]$NoProfileUpdate,
+    #Setting this will check remote if the module spec has a higher bound than any currently installed local packages.
+    [Switch]$Update
   )
 
   # Setup the Destination repository
@@ -67,7 +69,7 @@ function Install-ModuleFast {
   $WhatIfPreference = $false
   $httpClient = New-ModuleFastClient -Credential $Credential
   Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-  $plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source
+  $plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
   $WhatIfPreference = $currentWhatIfPreference
 
   if ($plan.Count -eq 0) {
@@ -199,7 +201,7 @@ function Get-ModuleFastPlan {
     #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
     try {
       foreach ($moduleSpec in $ModulesToResolve) {
-        [string]$localMatch = Find-LocalModule $moduleSpec
+        [string]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
         if ($localMatch -and -not $Update) {
           Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
           #TODO: Capture this somewhere that we can use it to report in the deploy plan
@@ -1107,31 +1109,37 @@ function Add-DestinationToPSModulePath {
 
   # Check if the destination is in the PSModulePath
   [string[]]$modulePaths = $env:PSModulePath -split [Path]::PathSeparator
-
-  if ($Destination -notin $modulePaths) {
-    Write-Verbose "Updating PSModulePath to include $Destination"
-    $modulePaths += $Destination
-    $env:PSModulePath = $modulePaths -join [Path]::PathSeparator
+  if ($Destination -in $modulePaths) {
+    Write-Debug "Destination '$Destination' is already in the PSModulePath, we will assume it is already configured correctly"
+    return
   }
 
-  if (-not $NoProfileUpdate) {
-    #TODO: Support other profiles?
-    $myProfile = $profile.CurrentUserAllHosts
+  Write-Verbose "Updating PSModulePath to include $Destination"
+  $modulePaths += $Destination
+  $env:PSModulePath = $modulePaths -join [Path]::PathSeparator
 
-    if (-not (Test-Path $myProfile)) {
-      if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
-      Write-Verbose 'User All Hosts profile not found, creating one.'
-      New-Item -ItemType File -Path $myProfile -Force | Out-Null
-    }
-    $ProfileLine = "`$env:PSModulePath += '$([IO.Path]::PathSeparator + $Destination)' #Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast."
-    if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
-      if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile.")) { return }
-      Write-Verbose "Adding $Destination to profile $myProfile"
-      Add-Content -Path $myProfile -Value "`n`n"
-      Add-Content -Path $myProfile -Value $ProfileLine
-    } else {
-      Write-Verbose "PSModulePath $Destination already in profile, skipping..."
-    }
+  if ($NoProfileUpdate) {
+    Write-Debug 'Skipping updating the profile because -NoProfileUpdate was specified'
+    return
+  }
+
+  #TODO: Support other profiles?
+  $myProfile = $profile.CurrentUserAllHosts
+
+  if (-not (Test-Path $myProfile)) {
+    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
+    Write-Verbose 'User All Hosts profile not found, creating one.'
+    New-Item -ItemType File -Path $myProfile -Force | Out-Null
+  }
+
+  [string]$profileLine = "if ('$destination' -notin (`$env:PSModulePath -split [Path]::PathSeparator)) { `$env:PSModulePath += `$([IO.Path]::PathSeparator + '$Destination') } #Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast."
+  if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
+    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile.")) { return }
+    Write-Verbose "Adding $Destination to profile $myProfile"
+    Add-Content -Path $myProfile -Value "`n`n"
+    Add-Content -Path $myProfile -Value $ProfileLine
+  } else {
+    Write-Verbose "PSModulePath $Destination already in profile, skipping..."
   }
 }
 
@@ -1142,7 +1150,8 @@ Searches local PSModulePath repositories
 function Find-LocalModule {
   param(
     [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-    [string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator)
+    [string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator),
+    [Switch]$Update
   )
   $ErrorActionPreference = 'Stop'
   # BUG: Prerelease Module paths are still not recognized by internal PS commands and can break things
@@ -1232,6 +1241,11 @@ function Find-LocalModule {
         }
 
         [string]$matchingManifest = $candidateVersions[$versionMatch]
+
+        if ($Update -and $moduleSpec.Max -gt [ModuleFastSpec]::ParseVersion($versionMatch)) {
+          Write-Debug "$moduleSpec`: Found a matching module version $versionMatch at $matchingManifest, but -Update was specified and the module spec allows for higher versions. Checking remote for updates..."
+          return $null
+        }
 
         if (-not [File]::Exists($matchingManifest)) {
           throw "A matching module folder was found for $ModuleSpec but the manifest is not present at $matchingManifest. This is a bug and should never happen as we should have checked this ahead of time."

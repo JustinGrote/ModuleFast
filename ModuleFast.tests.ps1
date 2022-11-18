@@ -1,5 +1,6 @@
 using namespace System.Management.Automation
 using namespace System.Collections.Generic
+using namespace System.Diagnostics.CodeAnalysis
 
 BeforeAll {
   . ./ModuleFast.ps1
@@ -327,9 +328,22 @@ Describe 'NugetRange' {
 
 
 Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
-  $DebugPreference = 'contine'
-  $VerbosePreference = 'continue'
+  BeforeAll {
+    $SCRIPT:__existingPSModulePath = $env:PSModulePath
+    $env:PSModulePath = $testDrive
+
+    $SCRIPT:__existingProgressPreference = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+
+  }
+  AfterAll {
+    $env:PSModulePath = $SCRIPT:__existingPSModulePath
+    $ProgressPreference = $SCRIPT:__existingProgressPreference
+  }
+
+  #This is used for testcases
   $SCRIPT:moduleName = 'Az.Accounts'
+
   It 'Gets Module by <Test>' {
     $actual = Get-ModuleFastPlan $spec
     $actual | Should -HaveCount 1
@@ -357,12 +371,20 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 }
 
 Describe 'Install-ModuleFast' -Tag 'E2E' {
+  BeforeAll {
+    $SCRIPT:__existingPSModulePath = $env:PSModulePath
+  }
   BeforeEach {
     #Remove all PSModulePath to not affect existing environment
-    $SCRIPT:__existingPSModulePath = $env:PSModulePath
-    $testDrivePath = (Get-Item testdrive:).fullname
-    $installTempPath = Join-Path $testDrivePath $(New-Guid)
+    $installTempPath = Join-Path $testdrive $(New-Guid)
     New-Item -ItemType Directory -Path $installTempPath -ErrorAction stop
+    $env:PSModulePath = $installTempPath
+
+    [SuppressMessageAttribute(
+      <#Category#>'PSUseDeclaredVarsMoreThanAssignments',
+      <#CheckId#>$null,
+      Justification = 'PSScriptAnalyzer doesnt see the connection between beforeeach and Describe/It'
+    )]
     $imfParams = @{
       Destination          = $installTempPath
       NoProfileUpdate      = $true
@@ -370,24 +392,28 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
       Confirm              = $false
     }
   }
+  AfterAll {
+    $env:PSModulePath = $SCRIPT:__existingPSModulePath
+  }
   It 'Installs Module' {
     #HACK: The testdrive mount is not available in the threadjob runspaces so we need to translate it
     Install-ModuleFast @imfParams 'Az.Accounts'
     Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
-  It 'Installs Module with lots of dependencies (Az)' {
-    Install-ModuleFast @imfParams 'Az'
-  }
   It 'Installs Module with 4 section version numbers (VMware.PowerCLI)' {
     Install-ModuleFast @imfParams 'VMware.VimAutomation.Common'
-    Get-Item TestDrive:\*\*\*.psd1 | ForEach-Object {
+    Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
       Import-PowerShellDataFile -Path $_.FullName | ForEach-Object ModuleVersion | Should -Be $moduleFolderVersion
     }
-    $env:PSModulePath = $testDrivePath
     Get-Module VMWare* -ListAvailable | Should -HaveCount 2
   }
-  AfterAll {
-    $env:PSModulePath = $SCRIPT:__existingPSModulePath
+  It 'Installs Module with lots of dependencies (Az)' {
+    Install-ModuleFast @imfParams 'Az'
+    (Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
+  }
+  It 'Installs Module with specific requiredVersion' {
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.3' }
+    Get-Module Az.Accounts -ListAvailable | Select-Object -ExpandProperty Version | Should -Be '2.7.3'
   }
 }
