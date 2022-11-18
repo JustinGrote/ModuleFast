@@ -400,7 +400,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'Az.Accounts'
     Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
-  It 'Installs Module with 4 section version numbers (VMware.PowerCLI)' {
+  It '4 section version numbers (VMware.PowerCLI)' {
     Install-ModuleFast @imfParams 'VMware.VimAutomation.Common'
     Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
@@ -408,12 +408,25 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     }
     Get-Module VMWare* -ListAvailable | Should -HaveCount 2
   }
-  It 'Installs Module with lots of dependencies (Az)' {
+  It 'lots of dependencies (Az)' {
     Install-ModuleFast @imfParams 'Az'
     (Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
   }
-  It 'Installs Module with specific requiredVersion' {
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.3' }
-    Get-Module Az.Accounts -ListAvailable | Select-Object -ExpandProperty Version | Should -Be '2.7.3'
+  It 'specific requiredVersion' {
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    Get-Module Az.Accounts -ListAvailable | Select-Object -ExpandProperty Version | Should -Be '2.7.4'
+  }
+  It 'specific requiredVersion when newer version is present' {
+    Install-ModuleFast @imfParams 'Az.Accounts'
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    $installedVersions = Get-Module Az.Accounts -ListAvailable | Select-Object -ExpandProperty Version
+    $installedVersions | Should -HaveCount 2
+    $installedVersions | Should -Contain '2.7.4'
+  }
+  It 'Installs when Maximumversion is lower than currently installed' {
+    $DebugPreference = 'continue'
+    Install-ModuleFast @imfParams 'Az.Accounts'
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
+    Get-Module Az.Accounts -ListAvailable | Select-Object -ExpandProperty Version | Should -Contain '2.7.3'
   }
 }
