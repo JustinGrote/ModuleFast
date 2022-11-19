@@ -32,7 +32,7 @@ function Install-ModuleFast {
     $Destination,
     $ModuleCache = $(New-Item -ItemType Directory -Force -Path Temp:\ModuleFastCache),
     #The repository to scan for modules. TODO: Multi-repo support
-    [string]$Source = 'https://preview.pwsh.gallery/index.json',
+    [string]$Source = 'https://pwsh.gallery/index.json',
     #The credential to use to authenticate. Only basic auth is supported
     [PSCredential]$Credential,
     #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
