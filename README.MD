@@ -5,16 +5,10 @@ used as a bootstrap to quickly install and update modules in a declarative fashi
 
 ## Quick Start Bootstrap
 
-### NOTE: Recommended PSModulePath Prerequisite
-
-ModuleFast installs modules to your `LocalAppData/powershell/Modules` folder.
-This is the default install folder on Linux however it is not on Windows, so on Windows the
-script will automatically update your profile to add this path to your psmodulepath on startup. You can
-alternatively add a `powershell.config.json`
 
 ### Load ModuleFast as a module for the session
 
-Modulefast can be quickly bootstrapped without relying on the built-in PSGet package manager
+ModuleFast can be quickly bootstrapped without relying on the built-in PowershellGet package manager
 
 ```powershell
 iwr tinyurl.com/modulefast | iex
@@ -23,11 +17,30 @@ Install-ModuleFast ImportExcel
 
 ### Single Line Installation (good for CI/CD)
 
-Adding args to the bootstrap passes them to Install-ModuleFast automatically, so you can one-line install modules as needed
+Adding args to the bootstrap passes them to Install-ModuleFast automatically, so you can one-line install modules as needed.
+This passes thru all arguments to ModuleFast.
 
 ```powershell
 & ([scriptblock]::Create((iwr 'tinyurl.com/modulefast'))) ImportExcel
 ```
+
+### ModuleSpecification Install
+
+You can specify a set of `ModuleSpecification` hashtables to Install-ModuleFast for explicit version constraints. For instance,
+you can have only a very specific version to be installed, or only versions below a certain to be installed as well.
+
+```powershell
+#Installs the latest ImportExcel lower than 7.7.0
+& ([scriptblock]::Create((iwr 'tinyurl.com/modulefast'))) @{ModuleName='ImportExcel';MaximumVersion='7.7.0'}
+```
+
+### NOTE: Recommended PSModulePath Prerequisite
+
+ModuleFast installs modules to your `LocalAppData/powershell/Modules` folder.
+This is the default install folder on Linux however it is not on Windows, so on Windows the
+script will automatically update your profile to add this path to your psmodulepath on startup (it will prompt you to do this).
+You can alternatively set it as your `powershell.config.json` PSModulePath, add it to your PSModulePath another way such as in your profile,
+or specify -Destination to point wherever you want, such as the classic "Documents" location.
 
 ## Goals
 
