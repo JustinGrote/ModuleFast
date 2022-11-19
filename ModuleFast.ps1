@@ -1,5 +1,5 @@
 #requires -version 7.2
-# This is the bootstrap script for ModuleFast. It is used to load the module and do a simple invocation if arguments were specified.
+# This is the bootstrap script for ModuleFast. It is used to load the module ephemerally and do a simple invocation if arguments were specified.
 
 $moduleUri = 'https://raw.githubusercontent.com/JustinGrote/ModuleFast/main/ModuleFast.psm1'
 Write-Debug "Fetching Modulefast from $moduleUri"

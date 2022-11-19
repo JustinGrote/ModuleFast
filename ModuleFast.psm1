@@ -13,6 +13,11 @@ using namespace System.Text
 using namespace System.Threading
 using namespace System.Threading.Tasks
 
+#Because we are changing state, we want to be safe
+#TODO: Implement logic to only fail on module installs, such that one module failure doesn't prevent others from installing.
+#Probably need to take into account inconsistent state, such as if a dependent module fails then the depending modules should be removed.
+$ErrorActionPreference = 'Stop'
+
 <#
 .SYNOPSIS
 High Performance Powershell Module Installation
@@ -32,7 +37,7 @@ function Install-ModuleFast {
     [PSCredential]$Credential,
     #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
     [Switch]$NoPSModulePathUpdate,
-    #Setting this won't add the default destination to your profile.
+    #Setting this won't add the default destination to your powershell.config.json. This really only matters on Windows.
     [Switch]$NoProfileUpdate,
     #Setting this will check remote if the module spec has a higher bound than any currently installed local packages.
     [Switch]$Update
@@ -50,17 +55,14 @@ function Install-ModuleFast {
       New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     }
   }
-
-  # Should error if not present
+  # Should error if the specified destination is not present
   [string]$Destination = Resolve-Path $Destination
 
-  if ($defaultRepoPath -ne $Destination) {
-    if (-not $NoProfileUpdate) {
-      Write-Warning 'Parameter -Destination is set to a custom path. We assume you know what you are doing, so it will not automatically be added to your Profile but will be added to PSModulePath. Set -NoProfileUpdate to suppress this message in the future.'
-    }
-    $NoProfileUpdate = $true
-  }
   if (-not $NoPSModulePathUpdate) {
+    if ($defaultRepoPath -ne $Destination -and $Destination -notin $PSModulePaths) {
+      Write-Warning 'Parameter -Destination is set to a custom path not in your current PSModulePath. We will add it to your PSModulePath for this session. You can suppress this behavior with the -NoPSModulePathUpdate switch.'
+      $NoProfileUpdate = $true
+    }
     Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
   }
 
@@ -76,7 +78,7 @@ function Install-ModuleFast {
     if ($WhatIfPreference) {
       Write-Host -fore DarkGreen '✅ No modules found to install or all modules are already installed.'
     }
-    Write-Verbose 'No modules found to install or all modules are already installed. Exiting.'
+    Write-Verbose '✅ All required modules installed! Exiting.'
     return
   }
 
@@ -498,7 +500,6 @@ function Get-ModuleFastPlan {
   }
 }
 
-
 #endregion Main
 
 function Install-ModuleFastHelper {
@@ -545,11 +546,20 @@ function Install-ModuleFastHelper {
     Write-Verbose "$($context.Module): Starting Extract Job to $installPath"
     # This is a sync process and we want to do it in parallel, hence the threadjob
     $installJob = Start-ThreadJob -ThrottleLimit 8 {
-      $zip = [IO.Compression.ZipArchive]::new($USING:stream, 'Read')
-      [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $USING:installPath)
+      param(
+        [ValidateNotNullOrEmpty()][string]$InstallPath = $USING:installPath,
+        [ValidateNotNullOrEmpty()]$stream = $USING:stream,
+        [ValidateNotNullOrEmpty()]$context = $USING:context
+      )
+      #TODO: Add a ".incomplete" marker file to the folder and remove it when done. This will allow us to detect failed installations
+      $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
+      [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
+      Write-Verbose "Cleanup Nuget Files in $installPath"
+      if (-not $installPath) { throw 'ModuleDestination was not set. This is a bug, report it' }
+      Remove-Item -Path $installPath -Include '_rels', 'package', '*.nuspec' -Recurse -Force
       ($zip).Dispose()
-      ($USING:stream).Dispose()
-      return ($USING:context).Module
+      ($stream).Dispose()
+      return ($context).Module
     }
     $installJobs.Add($installJob)
   }
@@ -567,31 +577,7 @@ function Install-ModuleFastHelper {
   }
 }
 
-# This will be run inside a threadjob. We separate this so that we can test it independently
-# NOTE: This function is called in a threadjob and has context outside of what is defined here.
-function Install-ModuleFastOperation {
-  param(
-    #Name of the module to install
-    [string]$Name,
-    #Version of the module
-    [string]$Version,
-    #Path where the nuget package is stored
-    [string]$DownloadPath,
-    #Path where the module will be installed into a subfolder of its name and version
-    [string]$Destination
-  )
-  $ErrorActionPreference = 'Stop'
-  $ModuleDestination = Join-Path $Destination $Name $Version
-  Write-Verbose "Installing $Name $Version from $DownloadPath to $ModuleDestination"
-  $progressPreference = 'SilentlyContinue'
-  Expand-Archive -Path $DownloadPath -DestinationPath $ModuleDestination -Force
-  $progressPreference = 'Continue'
-  Write-Verbose "Cleanup Nuget Files in $ModuleDestination"
-  if (-not $ModuleDestination) { throw 'ModuleDestination was not set. This is a bug, report it' }
-  Remove-Item -Path $ModuleDestination -Include '_rels', 'package', '*.nuspec' -Recurse -Force
-  Remove-Item -LiteralPath (Join-Path $ModuleDestination '[Content_Types].xml')
-  Write-Verbose "Installed $Name $Version from $DownloadPath to $ModuleDestination"
-}
+
 
 #region Classes
 
@@ -1101,22 +1087,22 @@ Adds an existing PowerShell Modules path to the current session as well as the p
 function Add-DestinationToPSModulePath {
   [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
   param(
-    [string]$Destination,
+    [Parameter(Mandatory)][string]$Destination,
     [switch]$NoProfileUpdate
   )
   $ErrorActionPreference = 'Stop'
   $Destination = Resolve-Path $Destination #Will error if it doesn't exist
 
-  # Check if the destination is in the PSModulePath
-  [string[]]$modulePaths = $env:PSModulePath -split [Path]::PathSeparator
+  # Check if the destination is in the PSModulePath. For a default setup this should basically always be true for Mac/Linux
+  [string[]]$modulePaths = $env:PSModulePath.split([Path]::PathSeparator)
   if ($Destination -in $modulePaths) {
     Write-Debug "Destination '$Destination' is already in the PSModulePath, we will assume it is already configured correctly"
     return
   }
 
+  # Generally we only get this far on Windows where the default CurrentUser is in Documents
   Write-Verbose "Updating PSModulePath to include $Destination"
-  $modulePaths += $Destination
-  $env:PSModulePath = $modulePaths -join [Path]::PathSeparator
+  $env:PSModulePath = $Destination, $env:PSModulePath -join [Path]::PathSeparator
 
   if ($NoProfileUpdate) {
     Write-Debug 'Skipping updating the profile because -NoProfileUpdate was specified'
@@ -1132,9 +1118,9 @@ function Add-DestinationToPSModulePath {
     New-Item -ItemType File -Path $myProfile -Force | Out-Null
   }
 
-  [string]$profileLine = "if ('$destination' -notin (`$env:PSModulePath -split [Path]::PathSeparator)) { `$env:PSModulePath += `$([IO.Path]::PathSeparator + '$Destination') } #Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast."
+  [string]$profileLine = "if ('$Destination' -notin (`$env:PSModulePath.split([IO.Path]::PathSeparator))) { `$env:PSModulePath = '$Destination' + `$([IO.Path]::PathSeparator + '$Destination') } #Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way."
   if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
-    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile.")) { return }
+    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the specified destination to your powershell.config.json or to your PSModulePath another way.")) { return }
     Write-Verbose "Adding $Destination to profile $myProfile"
     Add-Content -Path $myProfile -Value "`n`n"
     Add-Content -Path $myProfile -Value $ProfileLine
@@ -1338,7 +1324,6 @@ function ConvertTo-AuthenticationHeaderValue ([PSCredential]$Credential) {
 function Get-StringHash ([string]$String, [string]$Algorithm = 'SHA256') {
   (Get-FileHash -InputStream ([MemoryStream]::new([Encoding]::UTF8.GetBytes($String))) -Algorithm $algorithm).Hash
 }
-
 #endregion Helpers
 
 ### ISSUES

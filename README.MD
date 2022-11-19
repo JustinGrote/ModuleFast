@@ -3,6 +3,32 @@
 This is a PowerShell module installer that is optimized for high performance and no external dependencies so it can be
 used as a bootstrap to quickly install and update modules in a declarative fashion.
 
+## Quick Start Bootstrap
+
+### NOTE: Recommended PSModulePath Prerequisite
+
+ModuleFast installs modules to your `LocalAppData/powershell/Modules` folder.
+This is the default install folder on Linux however it is not on Windows, so on Windows the
+script will automatically update your profile to add this path to your psmodulepath on startup. You can
+alternatively add a `powershell.config.json`
+
+### Load ModuleFast as a module for the session
+
+Modulefast can be quickly bootstrapped without relying on the built-in PSGet package manager
+
+```powershell
+iwr tinyurl.com/modulefast | iex
+Install-ModuleFast ImportExcel
+```
+
+### Single Line Installation (good for CI/CD)
+
+Adding args to the bootstrap passes them to Install-ModuleFast automatically, so you can one-line install modules as needed
+
+```powershell
+& ([scriptblock]::Create((iwr 'tinyurl.com/modulefast'))) ImportExcel
+```
+
 ## Goals
 
 Given a set of packages, install the packages and their dependencies as fast as possible in a declarative plan/apply incremental approach.
@@ -21,7 +47,7 @@ PSGetv3 is compatibility, the focus with ModuleFast is speed at the expense of b
    using batch queries where possible to optimize for performance. This is all done in native PowerShell, no C# required
    (though C# would allow for certain operations to be even more parallelizable by chaining tasks).
 1. Uses HTTP/2 to run all queries in a single TCP conversation where possible (PSGallery supports it)
-1. For PowerShell gallery, uses an optimized CloudFlare Worker to resolve dependencies as fast as possible.
+1. For PowerShell Gallery, uses an optimized [CloudFlare Worker](https://github.com/justingrote/pwshgallery) to resolve dependencies as fast as possible.
 
 ## What this script is not
 
