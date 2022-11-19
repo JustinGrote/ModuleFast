@@ -425,9 +425,13 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     $installedVersions | Should -Contain '2.7.4'
   }
   It 'Installs when Maximumversion is lower than currently installed' {
-    $DebugPreference = 'continue'
     Install-ModuleFast @imfParams 'Az.Accounts'
     Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
     Get-Module Az.Accounts -ListAvailable | Select-Object -ExpandProperty Version | Should -Contain '2.7.3'
+  }
+  It 'Only installs once when Update is specified' {
+    Install-ModuleFast @imfParams 'Az.Accounts' -Update
+    #This will error if the file already exists
+    Install-ModuleFast @imfParams 'Az.Accounts' -Update
   }
 }

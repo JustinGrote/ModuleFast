@@ -76,14 +76,15 @@ function Install-ModuleFast {
 
   if ($plan.Count -eq 0) {
     if ($WhatIfPreference) {
-      Write-Host -fore DarkGreen '✅ No modules found to install or all modules are already installed.'
+      Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
     }
-    Write-Verbose '✅ All required modules installed! Exiting.'
+    #TODO: Deduplicate this with the end into its own function
+    Write-Verbose "`u{2705} All required modules installed! Exiting."
     return
   }
 
   if (-not $PSCmdlet.ShouldProcess($Destination, "Install $($plan.Count) Modules")) {
-    Write-Host -fore DarkGreen '🚀 ModuleFast Install Plan BEGIN'
+    Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan BEGIN"
     #TODO: Separate planned installs and dependencies
     $plan
     | Select-Object Name, @{N = 'Version'; E = { [ModuleFastSpec]::VersionToString($_.Required) } }
@@ -91,7 +92,7 @@ function Install-ModuleFast {
     | Format-Table -AutoSize
     | Out-String
     | Write-Host -ForegroundColor DarkGray
-    Write-Host -fore DarkGreen '🚀 ModuleFast Install Plan END'
+    Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan END"
     return
   }
 
@@ -106,9 +107,11 @@ function Install-ModuleFast {
     CancellationToken = $cancelSource.Token
     ModuleCache       = $ModuleCache
     HttpClient        = $httpClient
+    Update            = $Update
   }
   Install-ModuleFastHelper @installHelperParams
   Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
+  Write-Verbose "`u{2705} All required modules installed! Exiting."
 }
 
 function New-ModuleFastClient {
@@ -509,7 +512,8 @@ function Install-ModuleFastHelper {
     [string]$Destination,
     [string]$ModuleCache,
     [CancellationToken]$CancellationToken,
-    [HttpClient]$HttpClient
+    [HttpClient]$HttpClient,
+    [switch]$Update
   )
   $ErrorActionPreference = 'Stop'
 
@@ -521,6 +525,21 @@ function Install-ModuleFastHelper {
       Module       = $module
       DownloadPath = Join-Path $ModuleCache "$($module.Name).$($module.Version).nupkg"
     }
+
+    $installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
+    if (Test-Path $installPath) {
+      #TODO: Check for a corrupted module
+      #TODO: Prerelease checking
+      if (-not $Update) {
+        throw "$($context.Module)`: Module already exists at $installPath and -Update wasn't specified. This is a bug"
+      } else {
+        Write-Verbose "$($context.Module)`: Module already exists at $installPath but -Update was specified. This can happen because we did in fact have the latest version. Skipping."
+        continue
+      }
+    }
+
+    $context.InstallPath = $installPath
+
     Write-Verbose "$module`: Starting Download for $($module.DownloadLink)"
     if (-not $module.DownloadLink) {
       throw "$module`: No Download Link found. This is a bug"
@@ -541,16 +560,14 @@ function Install-ModuleFastHelper {
     $streamTasks.RemoveAt($thisTaskIndex)
 
     #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
-
-    $installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
-    Write-Verbose "$($context.Module): Starting Extract Job to $installPath"
+    Write-Verbose "$($context.Module): Starting Extract Job to $($context.installPath)"
     # This is a sync process and we want to do it in parallel, hence the threadjob
     $installJob = Start-ThreadJob -ThrottleLimit 8 {
       param(
-        [ValidateNotNullOrEmpty()][string]$InstallPath = $USING:installPath,
         [ValidateNotNullOrEmpty()]$stream = $USING:stream,
         [ValidateNotNullOrEmpty()]$context = $USING:context
       )
+      $installPath = $context.InstallPath
       #TODO: Add a ".incomplete" marker file to the folder and remove it when done. This will allow us to detect failed installations
       $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
       [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
