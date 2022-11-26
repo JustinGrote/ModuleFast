@@ -5,7 +5,6 @@ used as a bootstrap to quickly install and update modules in a declarative fashi
 
 ## Quick Start Bootstrap
 
-
 ### Load ModuleFast as a module for the session
 
 ModuleFast can be quickly bootstrapped without relying on the built-in PowershellGet package manager
