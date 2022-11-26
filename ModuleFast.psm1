@@ -127,6 +127,7 @@ function New-ModuleFastClient {
   $httpHandler = [SocketsHttpHandler]@{
     MaxConnectionsPerServer        = 100
     EnableMultipleHttp2Connections = $true
+    AutomaticDecompression         = 'All'
     # ConnectTimeout          = 1000
   }
 
@@ -163,7 +164,7 @@ function Get-ModuleFastPlan {
     #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
     [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
     #The repository to scan for modules. TODO: Multi-repo support
-    [string]$Source = 'https://preview.pwsh.gallery/index.json',
+    [string]$Source = 'https://pwsh.gallery/index.json',
     #Whether to include prerelease modules in the request
     [Switch]$PreRelease,
     #By default we use in-place modules if they satisfy the version requirements. This switch will force a search for all latest modules
@@ -1061,7 +1062,7 @@ function Get-ModuleInfoAsync {
     [Parameter(Mandatory, ParameterSetName = 'endpoint')][string]$Name,
     # The URI of the nuget v3 repository base, e.g. https://pwsh.gallery/index.json
     [Parameter(Mandatory, ParameterSetName = 'endpoint')]$Endpoint,
-    # The path we are calling for the registration
+    # The path we are calling for the registration.
     [Parameter(ParameterSetName = 'endpoint')][string]$Path = 'index.json',
 
     #The direct URI to the registration endpoint
