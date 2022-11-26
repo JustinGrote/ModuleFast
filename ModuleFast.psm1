@@ -366,7 +366,7 @@ function Get-ModuleFastPlan {
 						$PSItem -and !$PSItem.contains('-')
 					}
 
-					[Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $moduleSpec -Versions $inlinedVersions -Highest
+					[Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $currentModuleSpec -Versions $inlinedVersions -Highest
 					if ($versionMatch) {
 						Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in one of the additional pages."
 

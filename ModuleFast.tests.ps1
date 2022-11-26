@@ -405,9 +405,39 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
 		Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
 		Get-Module Az.Accounts -ListAvailable | Select-Object -ExpandProperty Version | Should -Contain '2.7.3'
 	}
-	It 'Only installs once when Update is specified' {
+	It 'Only installs once when Update is specified and latest has not changed' {
 		Install-ModuleFast @imfParams 'Az.Accounts' -Update
 		#This will error if the file already exists
 		Install-ModuleFast @imfParams 'Az.Accounts' -Update
+	}
+
+	It 'Updates only dependent module that requires update' {
+		Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
+		Install-ModuleFast @imfParams	@{ ModuleName = 'Az.Compute'; RequiredVersion = '5.0.0'}
+		Get-Module Az.Accounts -ListAvailable
+		| Select-Object -ExpandProperty Version
+		| Sort-Object Version -Descending
+		| Select-Object -First 1
+		| Should -Be '2.10.2'
+
+		Install-ModuleFast @imfParams 'Az.Compute','Az.Accounts' #Should not update
+		Get-Module Az.Accounts -ListAvailable
+		| Select-Object -ExpandProperty Version
+		| Sort-Object Version -Descending
+		| Select-Object -First 1
+		| Should -Be '2.10.2'
+
+		Install-ModuleFast @imfParams 'Az.Compute' -Update #Should disregard local install and update latest Az.Accounts
+		Get-Module Az.Accounts -ListAvailable
+		| Select-Object -ExpandProperty Version
+		| Sort-Object Version -Descending
+		| Select-Object -First 1
+		| Should -BeGreaterThan ([version]'2.10.2')
+
+		Get-Module Az.Compute -ListAvailable
+		| Select-Object -ExpandProperty Version
+		| Sort-Object Version -Descending
+		| Select-Object -First 1
+		| Should -BeGreaterThan ([version]'5.0.0')
 	}
 }
