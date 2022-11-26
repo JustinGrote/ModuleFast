@@ -18,6 +18,7 @@ using namespace System.Threading.Tasks
 #Probably need to take into account inconsistent state, such as if a dependent module fails then the depending modules should be removed.
 $ErrorActionPreference = 'Stop'
 
+#region Public
 <#
 .SYNOPSIS
 High Performance Powershell Module Installation
@@ -284,7 +285,6 @@ function Get-ModuleFastPlan {
           Limit-ModuleFastSpecVersions -ModuleSpec $currentModuleSpec -Highest -Versions $inlinedVersions
         }
 
-
         $selectedEntry = if ($versionMatch) {
           Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in the inlined index."
 
@@ -503,8 +503,9 @@ function Get-ModuleFastPlan {
   }
 }
 
-#endregion Main
+#endregion Public
 
+#region Private
 function Install-ModuleFastHelper {
   [CmdletBinding()]
   param(
@@ -594,22 +595,23 @@ function Install-ModuleFastHelper {
   }
 }
 
+#endregion Private
 
 
 #region Classes
 
-<#
-A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
-values are the same. This should also be consistent across processes and can be cached.
 
-The version and semantic version classes allow nulls in way too many locations, and requiredmodule is redundant with
-setting min and max the same.
-
-It is somewhat non-null that can be used to compare modules but it should really be immutable. I really should make a C# version for this.
-#>
 
 class ModuleFastSpec : IComparable {
+  <#
+  A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
+  values are the same. This should also be consistent across processes and can be cached.
 
+  The version and semantic version classes allow nulls in way too many locations, and requiredmodule is redundant with
+  setting min and max the same.
+
+  It is somewhat non-null that can be used to compare modules but it should really be immutable. I really should make a C# version for this.
+  #>
   static [SemanticVersion]$MinVersion = 0
   static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
   #Special string we use to translate between Version and SemanticVersion since SemanticVersion doesnt support Semver 2.0 properly and doesnt allow + only
@@ -1097,11 +1099,12 @@ function Get-ModuleInfoAsync {
   return $HttpClient.GetStringAsync($uri, $CancellationToken)
 }
 
-<#
-.SYNOPSIS
-Adds an existing PowerShell Modules path to the current session as well as the profile
-#>
+
 function Add-DestinationToPSModulePath {
+  <#
+  .SYNOPSIS
+  Adds an existing PowerShell Modules path to the current session as well as the profile
+  #>
   [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
   param(
     [Parameter(Mandatory)][string]$Destination,
@@ -1146,11 +1149,12 @@ function Add-DestinationToPSModulePath {
   }
 }
 
-<#
-.SYNOPSIS
-Searches local PSModulePath repositories
-#>
+
 function Find-LocalModule {
+  <#
+  .SYNOPSIS
+  Searches local PSModulePath repositories
+  #>
   param(
     [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
     [string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator),
