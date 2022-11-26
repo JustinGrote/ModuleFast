@@ -550,8 +550,8 @@ function Install-ModuleFastHelper {
 		$taskMap.Add($fetchTask, $context)
 		$fetchTask
 	}
-	[List[Job2]]$installJobs = @()
-	[List[Task]]$downloadTasks = while ($streamTasks.count -gt 0) {
+
+	[List[Job2]]$installJobs = while ($streamTasks.count -gt 0) {
 		$noTasksYetCompleted = -1
 		[int]$thisTaskIndex = [Task]::WaitAny($streamTasks, 500)
 		if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
@@ -580,11 +580,10 @@ function Install-ModuleFastHelper {
 			($stream).Dispose()
 			return ($context).Module
 		}
-		$installJobs.Add($installJob)
+		$installJob
 	}
 
 	$installed = 0
-	$installProgressId = (Get-Random)
 	while ($installJobs.count -gt 0) {
 		$ErrorActionPreference = 'Stop'
 		$completedJob = $installJobs | Wait-Job -Any
