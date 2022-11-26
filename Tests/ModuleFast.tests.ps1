@@ -62,23 +62,6 @@ InModuleScope 'ModuleFast' {
       }
     }
 
-    # Deprecated in favor of ModuleSpecification since we can have only 1 implicit cast
-    # Context 'Version Implicit Conversion' {
-    #   It 'Converts to Version' {
-    #     $spec = [ModuleFastSpec]::new('Test', '1.2.3')
-    #     [Version]$spec | Should -Be ([Version]'1.2.3')
-
-    #   }
-    #   It 'Converts to Version with Build Number' {
-    #     $spec = [ModuleFastSpec]::new('Test', '1.2.3.1')
-    #     [Version]$spec | Should -Be ([Version]'1.2.3.1')
-    #   }
-    #   It 'Converts to Version with Build Number' {
-    #     $spec = [ModuleFastSpec]::new('Test', '1.2.3.1')
-    #     [Version]$spec | Should -Be ([Version]'1.2.3.1')
-    #   }
-    # }
-
     Context 'ParseVersion' {
       It 'parses a normal version' {
         $version = '1.2.3'
@@ -230,13 +213,6 @@ InModuleScope 'ModuleFast' {
         $version = [SemanticVersion]::new('1.2.3')
         $spec1 -eq $version | Should -BeTrue
       }
-
-      #TODO: Impelement guid constructor
-      # It 'ModuleFastSpec not equal on guid' {
-      #   $spec1 = [ModuleFastSpec]::new('Test', '1.2.3', '1.2.4', [Guid]::NewGuid())
-      #   $spec2 = [ModuleFastSpec]::new('Test', '1.2.3', '1.2.4', [Guid]::NewGuid())
-      #   $spec1 -eq $spec2 | Should -BeFalse
-      # }
 
       It 'String Comparisons' {
         $spec = [ModuleFastSpec]::new('Test', '1.1.1', '2.2.2')
