@@ -26,6 +26,11 @@ param (
 )
 $ErrorActionPreference = 'Stop'
 
+if (Get-Module $ModuleName) {
+	Write-Warning "Module $ModuleName already loaded, skipping bootstrap."
+	return
+}
+
 Write-Debug "Fetching $ModuleName from $Uri"
 $ProgressPreference = 'SilentlyContinue'
 try {
@@ -40,10 +45,14 @@ Write-Debug 'Fetched response'
 $scriptBlock = [ScriptBlock]::Create($response)
 $ProgressPreference = 'Continue'
 
-New-Module -Name $ModuleName -ScriptBlock $scriptblock | Out-Null
+#We don't use New-Module here because it has some eccentricies like not being unloadable
+$bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptblock | Import-Module -PassThru
 Write-Debug "Loaded Module $ModuleName"
 
 if ($installArgs) {
 	Write-Debug "Detected we were started with args, running $Entrypoint $($installArgs -join ' ')"
 	& $EntryPoint @installArgs
+
+	#Remove the bootstrap module if args were specified, otherwise persist it in memory
+	Remove-Module $bootstrapModule
 }
