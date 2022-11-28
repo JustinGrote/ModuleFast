@@ -143,7 +143,7 @@ function New-ModuleFastClient {
 
 	#This user agent is important, it indicates to pwsh.gallery that we want dependency-only metadata
 	#TODO: Do this with a custom header instead
-	$userHeaderAdded = $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (https://gist.github.com/JustinGrote/ecdf96b4179da43fb017dccbd1cc56f6)')
+	$userHeaderAdded = $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (github.com/JustinGrote/ModuleFast)')
 	if (-not $userHeaderAdded) {
 		throw 'Failed to add User-Agent header to HttpClient. This is a bug'
 	}
