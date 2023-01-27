@@ -10,7 +10,7 @@ used as a bootstrap to quickly install and update modules in a declarative fashi
 ModuleFast can be quickly bootstrapped without relying on the built-in PowershellGet package manager
 
 ```powershell
-iwr tinyurl.com/modulefast | iex
+iwr bit.ly/modulefast | iex
 Install-ModuleFast ImportExcel
 ```
 
@@ -20,7 +20,7 @@ Adding args to the bootstrap passes them to Install-ModuleFast automatically, so
 This passes thru all arguments to ModuleFast.
 
 ```powershell
-& ([scriptblock]::Create((iwr 'tinyurl.com/modulefast'))) ImportExcel
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) ImportExcel
 ```
 
 ### ModuleSpecification Install
@@ -30,7 +30,7 @@ you can have only a very specific version to be installed, or only versions belo
 
 ```powershell
 #Installs the latest ImportExcel lower than 7.7.0
-& ([scriptblock]::Create((iwr 'tinyurl.com/modulefast'))) @{ModuleName='ImportExcel';MaximumVersion='7.7.0'}
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) @{ModuleName='ImportExcel';MaximumVersion='7.7.0'}
 ```
 
 ### NOTE: Recommended PSModulePath Prerequisite

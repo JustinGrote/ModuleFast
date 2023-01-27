@@ -154,9 +154,6 @@ function New-ModuleFastClient {
 	if (-not $userHeaderAdded) {
 		throw 'Failed to add User-Agent header to HttpClient. This is a bug'
 	}
-	#TODO: Add switch to force HTTP/2. Most of the time it should work fine tho
-	# $httpClient.DefaultRequestVersion = '2.0'
-	#I tried to drop support for HTTP/1.1 but proxies and cloudflare testing still require it
 
 	#This will multiplex all queries over a single connection, minimizing TLS setup overhead
 	#Should also support HTTP/3 on newest PS versions
@@ -248,7 +245,6 @@ function Get-ModuleFastPlan {
 
 				Write-Debug "$currentModuleSpec`: Processing Response"
 				# We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
-				#TODO: TryCatch logic for GetResult
 				try {
 					$response = $completedTask.GetAwaiter().GetResult()
 					| ConvertFrom-Json
