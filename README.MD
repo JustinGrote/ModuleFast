@@ -1,3 +1,4 @@
+![ModuleFast Logo](./images/logo.gif)
 # ModuleFast
 
 This is a PowerShell module installer that is optimized for high performance and no external dependencies so it can be
