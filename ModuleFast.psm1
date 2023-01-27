@@ -70,7 +70,16 @@ function Install-ModuleFast {
 	$currentWhatIfPreference = $WhatIfPreference
 	#We do some stuff here that doesn't affect the system but triggers whatif, so we disable it
 	$WhatIfPreference = $false
-	$httpClient = New-ModuleFastClient -Credential $Credential
+
+	#We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
+	#it is still a best practice.
+	if (-not $SCRIPT:__ModuleFastHttpClient) {
+		$SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential
+		if (-not $SCRIPT:__ModuleFastHttpClient) {
+			throw 'Failed to create ModuleFast HTTPClient. This is a bug'
+		}
+	}
+	$httpClient = $SCRIPT:__ModuleFastHttpClient
 	Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
 	$plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
 	$WhatIfPreference = $currentWhatIfPreference
@@ -131,8 +140,6 @@ function New-ModuleFastClient {
 		# ConnectTimeout          = 1000
 	}
 
-	#Only need one httpclient for all operations, hence why we set it at Script (Module) scope
-	#This is not as big of a deal as it used to be.
 	$httpClient = [HttpClient]::new($httpHandler)
 	$httpClient.BaseAddress = $Source
 
