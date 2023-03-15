@@ -27,7 +27,7 @@ THIS IS NOT FOR PRODUCTION, it should be considered "Fragile" and has very littl
 It also doesn't generate the PowershellGet XML files currently, so PSGet v2 will see them as "External" modules (PSGetv3 doesn't care)
 #>
 function Install-ModuleFast {
-	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		$ModulesToInstall,
 		$Destination,
@@ -64,7 +64,15 @@ function Install-ModuleFast {
 			Write-Warning 'Parameter -Destination is set to a custom path not in your current PSModulePath. We will add it to your PSModulePath for this session. You can suppress this behavior with the -NoPSModulePathUpdate switch.'
 			$NoProfileUpdate = $true
 		}
-		Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate
+
+		$addToPathParams = @{
+			Destination     = $Destination
+			NoProfileUpdate = $NoProfileUpdate
+		}
+		if ($PSBoundParameters.ContainsKey('Confirm')) {
+			$addToPathParams.Confirm = $PSBoundParameters.Confirm
+		}
+		Add-DestinationToPSModulePath @addtoPathParams
 	}
 
 	$currentWhatIfPreference = $WhatIfPreference
@@ -1141,7 +1149,8 @@ function Add-DestinationToPSModulePath {
 		New-Item -ItemType File -Path $myProfile -Force | Out-Null
 	}
 
-	[string]$profileLine = "if ('$Destination' -notin (`$env:PSModulePath.split([IO.Path]::PathSeparator))) { `$env:PSModulePath = '$Destination' + `$([IO.Path]::PathSeparator + `$env:PSModulePath) } #Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way."
+	[string]$profileLine = { if ('$Destination' -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) { `$env:PSModulePath = '$Destination' + $([IO.Path]::PathSeparator + $env:PSModulePath) } <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
+
 	if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
 		if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the specified destination to your powershell.config.json or to your PSModulePath another way.")) { return }
 		Write-Verbose "Adding $Destination to profile $myProfile"
