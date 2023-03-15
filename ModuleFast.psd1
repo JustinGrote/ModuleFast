@@ -104,13 +104,13 @@
             ProjectUri = 'https://github.com/JustinGrote/ModuleFast'
 
             # A URL to an icon representing this module.
-            # IconUri = ''
+            IconUri    = 'https://raw.githubusercontent.com/JustinGrote/ModuleFast/main/images/logo.gif'
 
             # ReleaseNotes of this module
             # ReleaseNotes = ''
 
             # Prerelease string of this module
-            Prerelease = 'source'
+            Prerelease = 'SOURCE'
 
             # Flag to indicate whether the module requires explicit user acceptance for install/update/save
             # RequireLicenseAcceptance = $false
