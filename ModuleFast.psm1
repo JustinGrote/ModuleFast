@@ -30,7 +30,7 @@ function Install-ModuleFast {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		$ModulesToInstall,
-		$Destination,
+		[string]$Destination,
 		$ModuleCache = $(New-Item -ItemType Directory -Force -Path Temp:\ModuleFastCache),
 		#The repository to scan for modules. TODO: Multi-repo support
 		[string]$Source = 'https://pwsh.gallery/index.json',
@@ -56,8 +56,8 @@ function Install-ModuleFast {
 			New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 		}
 	}
-	# Should error if the specified destination is not present
-	[string]$Destination = Resolve-Path $Destination
+
+  $Destination = Resolve-Path $Destination
 
 	if (-not $NoPSModulePathUpdate) {
 		if ($defaultRepoPath -ne $Destination -and $Destination -notin $PSModulePaths) {
@@ -66,7 +66,7 @@ function Install-ModuleFast {
 		}
 
 		$addToPathParams = @{
-			Destination     = $Destination
+			Destination     = $Destination -ne $defaultRepoPath ? $Destination : ''
 			NoProfileUpdate = $NoProfileUpdate
 		}
 		if ($PSBoundParameters.ContainsKey('Confirm')) {
@@ -1147,6 +1147,16 @@ function Add-DestinationToPSModulePath {
 		Write-Verbose 'User All Hosts profile not found, creating one.'
 		New-Item -ItemType File -Path $myProfile -Force | Out-Null
 	}
+
+  #Prepare a relative destination if possible using Path.GetRelativePath
+  [environment]::GetFolderPath('LocalApplicationData'),$Home | Foreach-Object {
+    $relativeDestination = [IO.Path]::GetRelativePath($_, $Destination)
+    if ($relativeDestination -ne $Destination) {
+      Write-Verbose "Using relative path '$relativeDestination' instead of '$Destination' in profile"
+      $Destination = $relativeDestination
+      break
+    }
+  }
 
 	[string]$profileLine = {if ('##DESTINATION##' -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) {$env:PSModulePath = '##DESTINATION##' + $([IO.Path]::PathSeparator + $env:PSModulePath)} <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
 
