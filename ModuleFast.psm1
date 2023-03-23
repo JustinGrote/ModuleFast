@@ -66,7 +66,7 @@ function Install-ModuleFast {
 		}
 
 		$addToPathParams = @{
-			Destination     = $Destination -ne $defaultRepoPath ? $Destination : ''
+			Destination     = $Destination
 			NoProfileUpdate = $NoProfileUpdate
 		}
 		if ($PSBoundParameters.ContainsKey('Confirm')) {
@@ -1149,16 +1149,20 @@ function Add-DestinationToPSModulePath {
 	}
 
   #Prepare a relative destination if possible using Path.GetRelativePath
-  [environment]::GetFolderPath('LocalApplicationData'),$Home | Foreach-Object {
-    $relativeDestination = [IO.Path]::GetRelativePath($_, $Destination)
+  foreach ($basePath in [environment]::GetFolderPath('LocalApplicationData'),$Home) {
+    $relativeDestination = [IO.Path]::GetRelativePath($basePath, $Destination)
     if ($relativeDestination -ne $Destination) {
-      Write-Verbose "Using relative path '$relativeDestination' instead of '$Destination' in profile"
-      $Destination = $relativeDestination
+      [string]$newDestination = '$([environment]::GetFolderPath(''LocalApplicationData''))' +
+        [IO.Path]::DirectorySeparatorChar +
+        $relativeDestination
+      Write-Verbose "Using relative path $newDestination instead of '$Destination' in profile"
+      $Destination = $newDestination
       break
     }
   }
+  Write-Verbose 'Checked for relative destination'
 
-	[string]$profileLine = {if ('##DESTINATION##' -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) {$env:PSModulePath = '##DESTINATION##' + $([IO.Path]::PathSeparator + $env:PSModulePath)} <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
+	[string]$profileLine = {if ("##DESTINATION##" -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) {$env:PSModulePath = "##DESTINATION##" + $([IO.Path]::PathSeparator + $env:PSModulePath)} <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
 
   #We can't use string formatting because of the braces already present
   $profileLine = $profileLine -replace '##DESTINATION##', $Destination
