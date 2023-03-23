@@ -45,7 +45,6 @@ Write-Debug 'Fetched response'
 $scriptBlock = [ScriptBlock]::Create($response)
 $ProgressPreference = 'Continue'
 
-#We don't use New-Module here because it has some eccentricies like not being unloadable
 $bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptblock | Import-Module -PassThru
 Write-Debug "Loaded Module $ModuleName"
 
