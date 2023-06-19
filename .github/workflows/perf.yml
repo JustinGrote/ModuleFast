@@ -26,7 +26,7 @@ jobs:
       # Runs a set of commands using the runners shell
       - name: install
         run: |
-          iwr bit.ly/Modulefast | iex
+          iwr bit.ly/modulefast | iex
           Install-ModuleFast Az -Verbose
   PSGetv3:
     runs-on: ubuntu-latest
