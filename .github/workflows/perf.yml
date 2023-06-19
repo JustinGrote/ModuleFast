@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: cleanup
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path |  Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
           Install-Module Az -Verbose -Force
@@ -27,11 +27,11 @@ jobs:
     steps:
       - name: cleanup
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
 
       - name: install
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
 
           Install-Module -Name Microsoft.PowerShell.PSResourceGet -AllowPrerelease -Force
           Install-PSResource Az -Verbose -TrustRepository
@@ -40,7 +40,7 @@ jobs:
     steps:
       - name: cleanup
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
           iwr bit.ly/modulefast | iex
@@ -51,10 +51,10 @@ jobs:
     steps:
       - name: cleanup
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
 
           Install-Module Az -Verbose -Force
   Win-PSGetv3:
@@ -62,10 +62,10 @@ jobs:
     steps:
       - name: cleanup
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
 
           Install-Module -Name Microsoft.PowerShell.PSResourceGet -AllowPrerelease -Force
           Install-PSResource Az -Verbose -TrustRepository
@@ -74,10 +74,10 @@ jobs:
     steps:
       - name: cleanup
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+          get-module -ListAvailable az* |% modulebase | Split-Path | Remove-Item -Recurse -Force -Verbose
 
           iwr bit.ly/modulefast | iex
           Install-ModuleFast Az -Verbose
@@ -85,18 +85,12 @@ jobs:
   Linux-PSGetv2-update:
     runs-on: ubuntu-latest
     steps:
-      - name: cleanup
-        run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
       - name: update
         run: |
           Update-Module Az -Verbose -Force
   Linux-PSGetv3-update:
     runs-on: ubuntu-latest
     steps:
-      - name: cleanup
-        run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
           Install-Module -Name Microsoft.PowerShell.PSResourceGet -AllowPrerelease -Force
@@ -104,9 +98,6 @@ jobs:
   Linux-moduleFast-update:
     runs-on: ubuntu-latest
     steps:
-      - name: cleanup
-        run: |
-          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
       - name: update
         run: |
           iwr bit.ly/modulefast | iex
