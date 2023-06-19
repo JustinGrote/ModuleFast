@@ -35,4 +35,4 @@ jobs:
       - name: install
         run: |
           Install-Module -Name Microsoft.PowerShell.PSResourceGet -AllowPrerelease -Force
-          Install-PSResource Az -Verbose -Force
+          Install-PSResource Az -Verbose
