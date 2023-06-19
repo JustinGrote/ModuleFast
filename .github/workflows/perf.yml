@@ -16,16 +16,19 @@ jobs:
   Linux-PSGetv2:
     runs-on: ubuntu-latest
     steps:
-      # Runs a set of commands using the runners shell
-      - name: install
+      - name: cleanup
         run: |
           get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
-
+      - name: install
+        run: |
           Install-Module Az -Verbose -Force
   Linux-PSGetv3:
     runs-on: ubuntu-latest
     steps:
-      # Runs a set of commands using the runners shell
+      - name: cleanup
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+
       - name: install
         run: |
           get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
@@ -35,18 +38,20 @@ jobs:
   Linux-moduleFast:
     runs-on: ubuntu-latest
     steps:
-      # Runs a set of commands using the runners shell
-      - name: install
+      - name: cleanup
         run: |
           get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
-
+      - name: install
+        run: |
           iwr bit.ly/modulefast | iex
           Install-ModuleFast Az -Verbose
 
   Win-PSGetv2:
     runs-on: windows-latest
     steps:
-      # Runs a set of commands using the runners shell
+      - name: cleanup
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
           get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
@@ -55,7 +60,9 @@ jobs:
   Win-PSGetv3:
     runs-on: windows-latest
     steps:
-      # Runs a set of commands using the runners shell
+      - name: cleanup
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
           get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
@@ -65,10 +72,42 @@ jobs:
   Win-moduleFast:
     runs-on: windows-latest
     steps:
-      # Runs a set of commands using the runners shell
+      - name: cleanup
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
       - name: install
         run: |
           get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
 
           iwr bit.ly/modulefast | iex
           Install-ModuleFast Az -Verbose
+
+  Linux-PSGetv2-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cleanup
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+      - name: update
+        run: |
+          Update-Module Az -Verbose -Force
+  Linux-PSGetv3-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cleanup
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+      - name: install
+        run: |
+          Install-Module -Name Microsoft.PowerShell.PSResourceGet -AllowPrerelease -Force
+          Update-PSResource Az -Verbose -TrustRepository
+  Linux-moduleFast-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cleanup
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+      - name: update
+        run: |
+          iwr bit.ly/modulefast | iex
+          Install-ModuleFast Az -Update -Verbose
