@@ -13,26 +13,62 @@ defaults:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  PSGetv2:
+  Linux-PSGetv2:
     runs-on: ubuntu-latest
     steps:
       # Runs a set of commands using the runners shell
       - name: install
         run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+
           Install-Module Az -Verbose -Force
-  moduleFast:
+  Linux-PSGetv3:
     runs-on: ubuntu-latest
     steps:
       # Runs a set of commands using the runners shell
       - name: install
         run: |
-          iwr bit.ly/modulefast | iex
-          Install-ModuleFast Az -Verbose
-  PSGetv3:
-    runs-on: ubuntu-latest
-    steps:
-      # Runs a set of commands using the runners shell
-      - name: install
-        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+
           Install-Module -Name Microsoft.PowerShell.PSResourceGet -AllowPrerelease -Force
           Install-PSResource Az -Verbose -TrustRepository
+  Linux-moduleFast:
+    runs-on: ubuntu-latest
+    steps:
+      # Runs a set of commands using the runners shell
+      - name: install
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+
+          iwr bit.ly/modulefast | iex
+          Install-ModuleFast Az -Verbose
+
+  Win-PSGetv2:
+    runs-on: windows-latest
+    steps:
+      # Runs a set of commands using the runners shell
+      - name: install
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+
+          Install-Module Az -Verbose -Force
+  Win-PSGetv3:
+    runs-on: windows-latest
+    steps:
+      # Runs a set of commands using the runners shell
+      - name: install
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+
+          Install-Module -Name Microsoft.PowerShell.PSResourceGet -AllowPrerelease -Force
+          Install-PSResource Az -Verbose -TrustRepository
+  Win-moduleFast:
+    runs-on: windows-latest
+    steps:
+      # Runs a set of commands using the runners shell
+      - name: install
+        run: |
+          get-module -ListAvailable az* |% modulebase | Remove-Item -Recurse -Force -Verbose
+
+          iwr bit.ly/modulefast | iex
+          Install-ModuleFast Az -Verbose
