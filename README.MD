@@ -43,15 +43,18 @@ You can alternatively set it as your `powershell.config.json` PSModulePath, add 
 
 ## Goals
 
-* Given a set of packages, install the packages and their dependencies as fast as possible in a declarative plan/apply incremental approach. Packages once deployed should be fully compatible with built-in *-Module commands, PSGetv2, and PSGetv3.
+* Given a set of packages, install the packages and their dependencies as fast as possible in a declarative plan/apply incremental approach.
+* Packages once deployed should be fully compatible with built-in *-Module commands, PSGetv2, and PSGetv3.
 * Support a "plan" view that shows what will change before it changes, Terraform-style
 * Support a dependencies file that can declaratively define what packages a module should have
 * Support a "complete" mode that will clean up packages that aren't the latest versions of the specified modules.
 
 ## Non-Goals
 
-**This is not a replacement for PowerShellGetv3** This is a compliment to the hard work being done there. The focus with
-PSGetv3 is compatibility, the focus with ModuleFast is speed at the expense of backwards compatability.
+* **This is not a replacement for PowerShellGetv3** This is a compliment to the hard work being done there. The focus with
+PSGetv3 is compatibility, the focus with ModuleFast is speed of installation/update at the expense of backwards compatability.
+* It will probably never support nuget v2 repositories, only nuget v3. PowerShell Gallery is supported via `pwsh.gallery`, a nuget v2 -> v3 proxy (though any nuget v2 repo could be supported in this fashion)
+* It will likely not support local filesystem or fileshares for installation, since those are usually fast enough with PSGet/PSResourceGet. I may add them for more unified dependency resolution.
 
 ## How this script works
 
