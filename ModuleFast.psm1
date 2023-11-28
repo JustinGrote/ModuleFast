@@ -607,6 +607,19 @@ function Install-ModuleFastHelper {
 
 #region Classes
 
+#This is a module construction helper to create "getters" in classes. The getters must be defined as a static hidden class prefixed with Get_ (case sensitive) and take a single parameter of the PSObject type that will be an instance of the class object for you to act on. Place this in your class constructor to automatically add the getters to the class.
+function Add-Getters ([Parameter(Mandatory, ValueFromPipeline)][Type]$Type) {
+  $Type.GetMethods([BindingFlags]::Static -bor [BindingFlags]::Public)
+  | Where-Object name -CLike 'Get_*'
+  | Where-Object { $_.GetCustomAttributes([HiddenAttribute]) }
+  | Where-Object {
+    $params = $_.GetParameters()
+    $params.count -eq 1 -and $params[0].ParameterType -eq [PSObject]
+  }
+  | ForEach-Object {
+    Update-TypeData -TypeName $Type.FullName -MemberType CodeProperty -MemberName $($_.Name -replace 'Get_', '') -Value $PSItem -Force
+  }
+}
 
 
 class ModuleFastSpec : IComparable {
@@ -657,7 +670,6 @@ class ModuleFastSpec : IComparable {
   #https://stackoverflow.com/questions/44413206/constructor-chaining-in-powershell-call-other-constructors-in-the-same-class
   #HACK: Guid and SemanticVersion are non-nullable and just causes problems trying to enforce it here, we make sure it doesn't get set to a null value later on
   hidden Initialize([string]$Name, $Min, $Max, $Guid, [ModuleSpecification]$moduleSpec) {
-    Add-Getters
 
     #Explode out moduleSpec information if present and then follow the same validation logic
     if ($moduleSpec) {
@@ -951,6 +963,7 @@ class ModuleFastSpec : IComparable {
     return [ModuleSpecification]$moduleSpecification
   }
 }
+[ModuleFastSpec] | Add-Getters
 
 #This is a helper function that processes nuget ranges.
 #Reference: https://github.com/NuGet/NuGet.Client/blob/035850255a15b60437d22f9178c4206bafe0b6a9/src/NuGet.Core/NuGet.Versioning/VersionRangeFactory.cs#L91-L265
@@ -1045,19 +1058,6 @@ class NugetRange {
   }
 }
 
-#This is a module construction helper to create "getters" in classes. The getters must be defined as a static hidden class prefixed with Get_ (case sensitive) and take a single parameter of the PSObject type that will be an instance of the class object for you to act on. Place this in your class constructor to automatically add the getters to the class.
-function Add-Getters {
-  $this.GetType().GetMethods([BindingFlags]::Static -bor [BindingFlags]::Public)
-  | Where-Object name -CLike 'Get_*'
-  | Where-Object { $_.GetCustomAttributes([HiddenAttribute]) }
-  | Where-Object {
-    $params = $_.GetParameters()
-    $params.count -eq 1 -and $params[0].ParameterType -eq [PSObject]
-  }
-  | ForEach-Object {
-    Add-Member -InputObject $this -MemberType CodeProperty -Name $($_.Name -replace 'Get_', '') -Value $PSItem
-  }
-}
 #endRegion Classes
 
 #region Helpers
