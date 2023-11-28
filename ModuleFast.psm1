@@ -30,500 +30,497 @@ function Install-ModuleFast {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		$ModulesToInstall,
-		[string]$Destination,
-		$ModuleCache = $(New-Item -ItemType Directory -Force -Path Temp:\ModuleFastCache),
-		#The repository to scan for modules. TODO: Multi-repo support
-		[string]$Source = 'https://pwsh.gallery/index.json',
-		#The credential to use to authenticate. Only basic auth is supported
-		[PSCredential]$Credential,
-		#By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
-		[Switch]$NoPSModulePathUpdate,
-		#Setting this won't add the default destination to your powershell.config.json. This really only matters on Windows.
-		[Switch]$NoProfileUpdate,
-		#Setting this will check remote if the module spec has a higher bound than any currently installed local packages.
-		[Switch]$Update
-	)
+    [string]$Destination,
+    #The repository to scan for modules. TODO: Multi-repo support
+    [string]$Source = 'https://pwsh.gallery/index.json',
+    #The credential to use to authenticate. Only basic auth is supported
+    [PSCredential]$Credential,
+    #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
+    [Switch]$NoPSModulePathUpdate,
+    #Setting this won't add the default destination to your powershell.config.json. This really only matters on Windows.
+    [Switch]$NoProfileUpdate,
+    #Setting this will check remote if the module spec has a higher bound than any currently installed local packages.
+    [Switch]$Update
+  )
 
-	# Setup the Destination repository
-	$defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
-	if (-not $Destination) {
-		$Destination = $defaultRepoPath
-	}
+  # Setup the Destination repository
+  $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
+  if (-not $Destination) {
+    $Destination = $defaultRepoPath
+  }
 
-	# Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
-	if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
-		if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
-			New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-		}
-	}
+  # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
+  if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
+    if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
+      New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    }
+  }
 
   $Destination = Resolve-Path $Destination
 
-	if (-not $NoPSModulePathUpdate) {
-		if ($defaultRepoPath -ne $Destination -and $Destination -notin $PSModulePaths) {
-			Write-Warning 'Parameter -Destination is set to a custom path not in your current PSModulePath. We will add it to your PSModulePath for this session. You can suppress this behavior with the -NoPSModulePathUpdate switch.'
-			$NoProfileUpdate = $true
-		}
+  if (-not $NoPSModulePathUpdate) {
+    if ($defaultRepoPath -ne $Destination -and $Destination -notin $PSModulePaths) {
+      Write-Warning 'Parameter -Destination is set to a custom path not in your current PSModulePath. We will add it to your PSModulePath for this session. You can suppress this behavior with the -NoPSModulePathUpdate switch.'
+      $NoProfileUpdate = $true
+    }
 
-		$addToPathParams = @{
-			Destination     = $Destination
-			NoProfileUpdate = $NoProfileUpdate
-		}
-		if ($PSBoundParameters.ContainsKey('Confirm')) {
-			$addToPathParams.Confirm = $PSBoundParameters.Confirm
-		}
-		Add-DestinationToPSModulePath @addtoPathParams
-	}
+    $addToPathParams = @{
+      Destination     = $Destination
+      NoProfileUpdate = $NoProfileUpdate
+    }
+    if ($PSBoundParameters.ContainsKey('Confirm')) {
+      $addToPathParams.Confirm = $PSBoundParameters.Confirm
+    }
+    Add-DestinationToPSModulePath @addtoPathParams
+  }
 
-	$currentWhatIfPreference = $WhatIfPreference
-	#We do some stuff here that doesn't affect the system but triggers whatif, so we disable it
-	$WhatIfPreference = $false
+  $currentWhatIfPreference = $WhatIfPreference
+  #We do some stuff here that doesn't affect the system but triggers whatif, so we disable it
+  $WhatIfPreference = $false
 
-	#We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
-	#it is still a best practice.
-	if (-not $SCRIPT:__ModuleFastHttpClient) {
-		$SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential
-		if (-not $SCRIPT:__ModuleFastHttpClient) {
-			throw 'Failed to create ModuleFast HTTPClient. This is a bug'
-		}
-	}
-	$httpClient = $SCRIPT:__ModuleFastHttpClient
-	Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-	$plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
-	$WhatIfPreference = $currentWhatIfPreference
+  #We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
+  #it is still a best practice.
+  if (-not $SCRIPT:__ModuleFastHttpClient) {
+    $SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential
+    if (-not $SCRIPT:__ModuleFastHttpClient) {
+      throw 'Failed to create ModuleFast HTTPClient. This is a bug'
+    }
+  }
+  $httpClient = $SCRIPT:__ModuleFastHttpClient
+  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
+  $plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
+  $WhatIfPreference = $currentWhatIfPreference
 
-	if ($plan.Count -eq 0) {
-		if ($WhatIfPreference) {
-			Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
-		}
-		#TODO: Deduplicate this with the end into its own function
-		Write-Verbose "`u{2705} All required modules installed! Exiting."
-		return
-	}
+  if ($plan.Count -eq 0) {
+    if ($WhatIfPreference) {
+      Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
+    }
+    #TODO: Deduplicate this with the end into its own function
+    Write-Verbose "`u{2705} All required modules installed! Exiting."
+    return
+  }
 
-	if (-not $PSCmdlet.ShouldProcess($Destination, "Install $($plan.Count) Modules")) {
-		Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan BEGIN"
-		#TODO: Separate planned installs and dependencies
-		$plan
+  if (-not $PSCmdlet.ShouldProcess($Destination, "Install $($plan.Count) Modules")) {
+    Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan BEGIN"
+    #TODO: Separate planned installs and dependencies
+    $plan
 		| Select-Object Name, @{N = 'Version'; E = { [ModuleFastSpec]::VersionToString($_.Required) } }
 		| Sort-Object Name
 		| Format-Table -AutoSize
 		| Out-String
 		| Write-Host -ForegroundColor DarkGray
-		Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan END"
-		return
-	}
+    Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan END"
+    return
+  }
 
 
-	Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($plan.count) Modules" -PercentComplete 50
+  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($plan.count) Modules" -PercentComplete 50
 
-	$cancelSource = [CancellationTokenSource]::new()
+  $cancelSource = [CancellationTokenSource]::new()
 
-	$installHelperParams = @{
-		ModuleToInstall   = $plan
-		Destination       = $Destination
-		CancellationToken = $cancelSource.Token
-		ModuleCache       = $ModuleCache
-		HttpClient        = $httpClient
-		Update            = $Update
-	}
-	Install-ModuleFastHelper @installHelperParams
-	Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
-	Write-Verbose "`u{2705} All required modules installed! Exiting."
+  $installHelperParams = @{
+    ModuleToInstall   = $plan
+    Destination       = $Destination
+    CancellationToken = $cancelSource.Token
+    HttpClient        = $httpClient
+    Update            = $Update
+  }
+  Install-ModuleFastHelper @installHelperParams
+  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
+  Write-Verbose "`u{2705} All required modules installed! Exiting."
 }
 
 function New-ModuleFastClient {
-	param(
-		[PSCredential]$Credential
-	)
-	Write-Debug 'Creating new ModuleFast HTTP Client. This should only happen once!'
-	$ErrorActionPreference = 'Stop'
-	#SocketsHttpHandler is the modern .NET 5+ default handler for HttpClient.
-	#We want more concurrent connections to improve our performance and fairly aggressive timeouts
-	#The max connections are only in case we end up using HTTP/1.1 instead of HTTP/2 for whatever reason.
-	$httpHandler = [SocketsHttpHandler]@{
-		MaxConnectionsPerServer        = 100
-		EnableMultipleHttp2Connections = $true
-		AutomaticDecompression         = 'All'
-		# ConnectTimeout          = 1000
-	}
+  param(
+    [PSCredential]$Credential
+  )
+  Write-Debug 'Creating new ModuleFast HTTP Client. This should only happen once!'
+  $ErrorActionPreference = 'Stop'
+  #SocketsHttpHandler is the modern .NET 5+ default handler for HttpClient.
+  #We want more concurrent connections to improve our performance and fairly aggressive timeouts
+  #The max connections are only in case we end up using HTTP/1.1 instead of HTTP/2 for whatever reason.
+  $httpHandler = [SocketsHttpHandler]@{
+    MaxConnectionsPerServer        = 100
+    EnableMultipleHttp2Connections = $true
+    AutomaticDecompression         = 'All'
+    # ConnectTimeout          = 1000
+  }
 
-	$httpClient = [HttpClient]::new($httpHandler)
-	$httpClient.BaseAddress = $Source
+  $httpClient = [HttpClient]::new($httpHandler)
+  $httpClient.BaseAddress = $Source
 
-	#If a credential was provided, use it as a basic auth credential
-	if ($Credential) {
-		$httpClient.DefaultRequestHeaders.Authorization = ConvertTo-AuthenticationHeaderValue $Credential
-	}
+  #If a credential was provided, use it as a basic auth credential
+  if ($Credential) {
+    $httpClient.DefaultRequestHeaders.Authorization = ConvertTo-AuthenticationHeaderValue $Credential
+  }
 
-	#This user agent is important, it indicates to pwsh.gallery that we want dependency-only metadata
-	#TODO: Do this with a custom header instead
-	$userHeaderAdded = $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (github.com/JustinGrote/ModuleFast)')
-	if (-not $userHeaderAdded) {
-		throw 'Failed to add User-Agent header to HttpClient. This is a bug'
-	}
+  #This user agent is important, it indicates to pwsh.gallery that we want dependency-only metadata
+  #TODO: Do this with a custom header instead
+  $userHeaderAdded = $httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd('ModuleFast (github.com/JustinGrote/ModuleFast)')
+  if (-not $userHeaderAdded) {
+    throw 'Failed to add User-Agent header to HttpClient. This is a bug'
+  }
 
-	#This will multiplex all queries over a single connection, minimizing TLS setup overhead
-	#Should also support HTTP/3 on newest PS versions
-	$httpClient.DefaultVersionPolicy = [HttpVersionPolicy]::RequestVersionOrHigher
-	#This should enable HTTP/3 on Win11 22H2+ (or linux with http3 library) and PS 7.2+
-	[void][AppContext]::SetSwitch('System.Net.SocketsHttpHandler.Http3Support', $true)
-	return $httpClient
+  #This will multiplex all queries over a single connection, minimizing TLS setup overhead
+  #Should also support HTTP/3 on newest PS versions
+  $httpClient.DefaultVersionPolicy = [HttpVersionPolicy]::RequestVersionOrHigher
+  #This should enable HTTP/3 on Win11 22H2+ (or linux with http3 library) and PS 7.2+
+  [void][AppContext]::SetSwitch('System.Net.SocketsHttpHandler.Http3Support', $true)
+  return $httpClient
 }
 
 function Get-ModuleFastPlan {
-	param(
-		#A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
-		[Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
-		#The repository to scan for modules. TODO: Multi-repo support
-		[string]$Source = 'https://pwsh.gallery/index.json',
-		#Whether to include prerelease modules in the request
-		[Switch]$PreRelease,
-		#By default we use in-place modules if they satisfy the version requirements. This switch will force a search for all latest modules
-		[Switch]$Update,
-		[PSCredential]$Credential,
-		[HttpClient]$HttpClient = $(New-ModuleFastClient -Credential $Credential),
-		[int]$ParentProgress
-	)
+  param(
+    #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
+    [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
+    #The repository to scan for modules. TODO: Multi-repo support
+    [string]$Source = 'https://pwsh.gallery/index.json',
+    #Whether to include prerelease modules in the request
+    [Switch]$PreRelease,
+    #By default we use in-place modules if they satisfy the version requirements. This switch will force a search for all latest modules
+    [Switch]$Update,
+    [PSCredential]$Credential,
+    [HttpClient]$HttpClient = $(New-ModuleFastClient -Credential $Credential),
+    [int]$ParentProgress
+  )
 
-	BEGIN {
-		$ErrorActionPreference = 'Stop'
-		[HashSet[ModuleFastSpec]]$modulesToResolve = @()
+  BEGIN {
+    $ErrorActionPreference = 'Stop'
+    [HashSet[ModuleFastSpec]]$modulesToResolve = @()
 
-		#We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient
-		$cancelToken = [CancellationTokenSource]::new()
+    #We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient
+    $cancelToken = [CancellationTokenSource]::new()
 
-		#We pass this splat to all our HTTP requests to cut down on boilerplate
-		$httpContext = @{
-			HttpClient        = $httpClient
-			CancellationToken = $cancelToken.Token
-		}
-	}
-	PROCESS {
-		foreach ($spec in $Name) {
-			if (-not $ModulesToResolve.Add($spec)) {
-				Write-Warning "$spec was specified twice, skipping duplicate"
-			}
-		}
-	}
-	END {
-		# A deduplicated list of modules to install
-		[HashSet[ModuleFastSpec]]$modulesToInstall = @{}
+    #We pass this splat to all our HTTP requests to cut down on boilerplate
+    $httpContext = @{
+      HttpClient        = $httpClient
+      CancellationToken = $cancelToken.Token
+    }
+  }
+  PROCESS {
+    foreach ($spec in $Name) {
+      if (-not $ModulesToResolve.Add($spec)) {
+        Write-Warning "$spec was specified twice, skipping duplicate"
+      }
+    }
+  }
+  END {
+    # A deduplicated list of modules to install
+    [HashSet[ModuleFastSpec]]$modulesToInstall = @{}
 
-		# We use this as a fast lookup table for the context of the request
-		[Dictionary[Task[String], ModuleFastSpec]]$resolveTasks = @{}
+    # We use this as a fast lookup table for the context of the request
+    [Dictionary[Task[String], ModuleFastSpec]]$resolveTasks = @{}
 
-		#We use this to track the tasks that are currently running
-		#We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
-		[List[Task[String]]]$currentTasks = @()
+    #We use this to track the tasks that are currently running
+    #We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
+    [List[Task[String]]]$currentTasks = @()
 
-		#This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
-		try {
-			foreach ($moduleSpec in $ModulesToResolve) {
-				[string]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
-				if ($localMatch -and -not $Update) {
-					Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
-					#TODO: Capture this somewhere that we can use it to report in the deploy plan
-					continue
-				}
+    #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
+    try {
+      foreach ($moduleSpec in $ModulesToResolve) {
+        [string]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
+        if ($localMatch -and -not $Update) {
+          Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
+          #TODO: Capture this somewhere that we can use it to report in the deploy plan
+          continue
+        }
 
-				$task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $moduleSpec.Name
-				$resolveTasks[$task] = $moduleSpec
-				$currentTasks.Add($task)
-			}
+        $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $moduleSpec.Name
+        $resolveTasks[$task] = $moduleSpec
+        $currentTasks.Add($task)
+      }
 
-			[int]$tasksCompleteCount = 1
-			[int]$resolveTaskCount = $currentTasks.Count -as [Int]
-			while ($currentTasks.Count -gt 0) {
-				#The timeout here allow ctrl-C to continue working in PowerShell
-				#-1 is returned by WaitAny if we hit the timeout before any tasks completed
-				$noTasksYetCompleted = -1
-				[int]$thisTaskIndex = [Task]::WaitAny($currentTasks, 500)
-				if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
+      [int]$tasksCompleteCount = 1
+      [int]$resolveTaskCount = $currentTasks.Count -as [Int]
+      while ($currentTasks.Count -gt 0) {
+        #The timeout here allow ctrl-C to continue working in PowerShell
+        #-1 is returned by WaitAny if we hit the timeout before any tasks completed
+        $noTasksYetCompleted = -1
+        [int]$thisTaskIndex = [Task]::WaitAny($currentTasks, 500)
+        if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
 
-				#The Plan whitespace is intentional so that it lines up with install progress using the compact format
-				Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Plan: Resolving $tasksCompleteCount/$resolveTaskCount Module Dependencies" -PercentComplete ((($tasksCompleteCount / $resolveTaskCount) * 50) + 1)
+        #The Plan whitespace is intentional so that it lines up with install progress using the compact format
+        Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Plan: Resolving $tasksCompleteCount/$resolveTaskCount Module Dependencies" -PercentComplete ((($tasksCompleteCount / $resolveTaskCount) * 50) + 1)
 
-				#TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
-				#For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
-				#TODO: Perform a HEAD query to see if something has changed
+        #TODO: This only indicates headers were received, content may still be downloading and we dont want to block on that.
+        #For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
+        #TODO: Perform a HEAD query to see if something has changed
 
-				[Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
-				[ModuleFastSpec]$currentModuleSpec = $resolveTasks[$completedTask]
+        [Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
+        [ModuleFastSpec]$currentModuleSpec = $resolveTasks[$completedTask]
 
-				Write-Debug "$currentModuleSpec`: Processing Response"
-				# We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
-				try {
-					$response = $completedTask.GetAwaiter().GetResult()
-					| ConvertFrom-Json
-					Write-Debug "$currentModuleSpec`: Received Response with $($response.Count) pages"
-				} catch {
-					$taskException = $PSItem.Exception.InnerException
-					#TODO: Rewrite this as a handle filter
-					if ($taskException -isnot [HttpRequestException]) { throw }
-					[HttpRequestException]$err = $taskException
-					if ($err.StatusCode -eq [HttpStatusCode]::NotFound) {
-						throw [InvalidOperationException]"$currentModuleSpec`: module was not found in the $Source repository. Check the spelling and try again."
-					}
+        Write-Debug "$currentModuleSpec`: Processing Response"
+        # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
+        try {
+          $response = $completedTask.GetAwaiter().GetResult()
+          | ConvertFrom-Json
+          Write-Debug "$currentModuleSpec`: Received Response with $($response.Count) pages"
+        } catch {
+          $taskException = $PSItem.Exception.InnerException
+          #TODO: Rewrite this as a handle filter
+          if ($taskException -isnot [HttpRequestException]) { throw }
+          [HttpRequestException]$err = $taskException
+          if ($err.StatusCode -eq [HttpStatusCode]::NotFound) {
+            throw [InvalidOperationException]"$currentModuleSpec`: module was not found in the $Source repository. Check the spelling and try again."
+          }
 
-					#All other cases
-					$PSItem.ErrorDetails = "$currentModuleSpec`: Failed to fetch module $currentModuleSpec from $Source. Error: $PSItem"
-					throw $PSItem
-				}
+          #All other cases
+          $PSItem.ErrorDetails = "$currentModuleSpec`: Failed to fetch module $currentModuleSpec from $Source. Error: $PSItem"
+          throw $PSItem
+        }
 
-				if (-not $response.count) {
-					throw [InvalidDataException]"$currentModuleSpec`: invalid result received from $Source. This is probably a bug. Content: $response"
-				}
+        if (-not $response.count) {
+          throw [InvalidDataException]"$currentModuleSpec`: invalid result received from $Source. This is probably a bug. Content: $response"
+        }
 
-				#If what we are looking for exists in the response, we can stop looking
-				#TODO: Type the responses and check on the type, not the existence of a property.
+        #If what we are looking for exists in the response, we can stop looking
+        #TODO: Type the responses and check on the type, not the existence of a property.
 
-				#HACK: Add the download URI to the catalog entry, this makes life easier.
-				#TODO: This needs to be moved to a function so it isn't duplicated down in the "else" section below
-				$pageLeaves = $response.items.items
-				$pageLeaves | ForEach-Object {
-					if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
-						$PSItem.catalogEntry
-						| Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
-					}
-				}
+        #HACK: Add the download URI to the catalog entry, this makes life easier.
+        #TODO: This needs to be moved to a function so it isn't duplicated down in the "else" section below
+        $pageLeaves = $response.items.items
+        $pageLeaves | ForEach-Object {
+          if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
+            $PSItem.catalogEntry
+            | Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
+          }
+        }
 
-				$entries = $pageLeaves.catalogEntry
-				[Version]$versionMatch = if ($entries) {
-					[version[]]$inlinedVersions = $entries.version
-					| Where-Object {
-						$PSItem -and !$PSItem.contains('-')
-					}
-					Limit-ModuleFastSpecVersions -ModuleSpec $currentModuleSpec -Highest -Versions $inlinedVersions
-				}
+        $entries = $pageLeaves.catalogEntry
+        [Version]$versionMatch = if ($entries) {
+          [version[]]$inlinedVersions = $entries.version
+          | Where-Object {
+            $PSItem -and !$PSItem.contains('-')
+          }
+          Limit-ModuleFastSpecVersions -ModuleSpec $currentModuleSpec -Highest -Versions $inlinedVersions
+        }
 
-				$selectedEntry = if ($versionMatch) {
-					Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in the inlined index."
+        $selectedEntry = if ($versionMatch) {
+          Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in the inlined index."
 
-					#Output
-					$entries | Where-Object version -EQ $versionMatch
-				} else {
-					#TODO: This should maybe be a separate function
+          #Output
+          $entries | Where-Object version -EQ $versionMatch
+        } else {
+          #TODO: This should maybe be a separate function
 
-					#Do a more detailed resolution
-					Write-Debug "$currentModuleSpec`: not found in inlined index. Determining appropriate page(s) to query"
-					#If not inlined, we need to find what page(s) might have the candidate info we are looking for.
-					#While this may seem inefficient, all pages but latest are static and have a long lifetime so we trade a
-					#longer cold start to a nearly infinite requery, which will handle all subsequent dependency lookups.
-					#stats show most modules have a few common dependencies, so caching all versions of those dependencies is
-					#very helpful for fast performance
+          #Do a more detailed resolution
+          Write-Debug "$currentModuleSpec`: not found in inlined index. Determining appropriate page(s) to query"
+          #If not inlined, we need to find what page(s) might have the candidate info we are looking for.
+          #While this may seem inefficient, all pages but latest are static and have a long lifetime so we trade a
+          #longer cold start to a nearly infinite requery, which will handle all subsequent dependency lookups.
+          #stats show most modules have a few common dependencies, so caching all versions of those dependencies is
+          #very helpful for fast performance
 
-					# HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
-					# TODO: Should probably typesafe and validate this using classes
+          # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
+          # TODO: Should probably typesafe and validate this using classes
 
-					$pages = $response.items | Where-Object {
-						[SemanticVersion]$upper = [ModuleFastSpec]::ParseVersionString($PSItem.Upper)
-						[SemanticVersion]$lower = [ModuleFastSpec]::ParseVersionString($PSItem.Lower)
-						if ($currentModuleSpec.Required) {
-							if ($currentModuleSpec.Required -le $upper -and $currentModuleSpec.Required -ge $lower ) {
-								return $true
-							}
-						} else {
-							[Version]$min = $currentModuleSpec.Version ?? '0.0.0'
-							[version]$max = $currentModuleSpec.MaximumVersion ?? '{0}.{0}.{0}.{0}' -f [Int32]::MaxValue
-							#Min and Max are outside the range (meaning the range is inside the min and max)
-							if ($min -le $lower -and $max -ge $upper) {
-								return $true
-							}
-							#Min or max is in range (partial worth exploring)
-							if ($min -ge $lower -and $min -le $upper) {
-								return $true
-							}
-							#Max is in range (partial worth exploring)
-							if ($max -ge $lower -and $max -le $upper) {
-								return $true
-							}
-							#Otherwise there is no match
-						}
-					}
+          $pages = $response.items | Where-Object {
+            [SemanticVersion]$upper = [ModuleFastSpec]::ParseVersionString($PSItem.Upper)
+            [SemanticVersion]$lower = [ModuleFastSpec]::ParseVersionString($PSItem.Lower)
+            if ($currentModuleSpec.Required) {
+              if ($currentModuleSpec.Required -le $upper -and $currentModuleSpec.Required -ge $lower ) {
+                return $true
+              }
+            } else {
+              [Version]$min = $currentModuleSpec.Version ?? '0.0.0'
+              [version]$max = $currentModuleSpec.MaximumVersion ?? '{0}.{0}.{0}.{0}' -f [Int32]::MaxValue
+              #Min and Max are outside the range (meaning the range is inside the min and max)
+              if ($min -le $lower -and $max -ge $upper) {
+                return $true
+              }
+              #Min or max is in range (partial worth exploring)
+              if ($min -ge $lower -and $min -le $upper) {
+                return $true
+              }
+              #Max is in range (partial worth exploring)
+              if ($max -ge $lower -and $max -le $upper) {
+                return $true
+              }
+              #Otherwise there is no match
+            }
+          }
 
-					if (-not $pages) {
-						throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. If this happens during dependency lookup, it is a bug in ModuleFast."
-					}
-					Write-Debug "$currentModuleSpec`: Found $(@($pages).Count) additional pages that might match the query: $($pages.'@id' -join ',')"
+          if (-not $pages) {
+            throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. If this happens during dependency lookup, it is a bug in ModuleFast."
+          }
+          Write-Debug "$currentModuleSpec`: Found $(@($pages).Count) additional pages that might match the query: $($pages.'@id' -join ',')"
 
-					#TODO: This is relatively slow and blocking, but we would need complicated logic to process it in the main task handler loop.
-					#I really should make a pipeline that breaks off tasks based on the type of the response.
-					#This should be a relatively rare query that only happens when the latest package isn't being resolved.
-					[Task[string][]]$tasks = foreach ($page in $pages) {
-						Get-ModuleInfoAsync @httpContext -Uri $page.'@id'
-						#Used to track progress as tasks can get removed
-						#This loop is here to support ctrl-c cancellation again
-					}
-					while ($false -in $tasks.IsCompleted) {
-						[void][Task]::WaitAll($tasks, 500)
-					}
-					$response = $tasks.GetAwaiter().GetResult() | ConvertFrom-Json
-					$items = $response.items
+          #TODO: This is relatively slow and blocking, but we would need complicated logic to process it in the main task handler loop.
+          #I really should make a pipeline that breaks off tasks based on the type of the response.
+          #This should be a relatively rare query that only happens when the latest package isn't being resolved.
+          [Task[string][]]$tasks = foreach ($page in $pages) {
+            Get-ModuleInfoAsync @httpContext -Uri $page.'@id'
+            #Used to track progress as tasks can get removed
+            #This loop is here to support ctrl-c cancellation again
+          }
+          while ($false -in $tasks.IsCompleted) {
+            [void][Task]::WaitAll($tasks, 500)
+          }
+          $response = $tasks.GetAwaiter().GetResult() | ConvertFrom-Json
+          $items = $response.items
 
-					$pageLeaves = $items
-					$pageLeaves | ForEach-Object {
-						if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
-							$PSItem.catalogEntry
-							| Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
-						}
-					}
+          $pageLeaves = $items
+          $pageLeaves | ForEach-Object {
+            if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
+              $PSItem.catalogEntry
+              | Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
+            }
+          }
 
-					$entries = $pageLeaves.catalogEntry
+          $entries = $pageLeaves.catalogEntry
 
-					# TODO: Dedupe this logic with the above
-					[HashSet[Version]]$inlinedVersions = $entries.version
-					| Where-Object {
-						$PSItem -and !$PSItem.contains('-')
-					}
+          # TODO: Dedupe this logic with the above
+          [HashSet[Version]]$inlinedVersions = $entries.version
+          | Where-Object {
+            $PSItem -and !$PSItem.contains('-')
+          }
 
-					[Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $currentModuleSpec -Versions $inlinedVersions -Highest
-					if ($versionMatch) {
-						Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in one of the additional pages."
+          [Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $currentModuleSpec -Versions $inlinedVersions -Highest
+          if ($versionMatch) {
+            Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in one of the additional pages."
 
-						#Output
-						$entries | Where-Object version -EQ $versionMatch
-						#TODO: Resolve dependencies in separate function
-					}
-				}
+            #Output
+            $entries | Where-Object version -EQ $versionMatch
+            #TODO: Resolve dependencies in separate function
+          }
+        }
 
-				if ($selectedEntry.count -ne 1) {
-					throw 'Something other than exactly 1 selectedModule was specified. This should never happen and is a bug'
-				}
+        if ($selectedEntry.count -ne 1) {
+          throw 'Something other than exactly 1 selectedModule was specified. This should never happen and is a bug'
+        }
 
-				if (-not $selectedEntry.packageContent) { throw "No package content found for $($selectedEntry.packageContent). This should never happen and is a bug" }
-				[ModuleFastSpec]$moduleInfo = [ModuleFastSpec]::new(
-					$selectedEntry.id,
-					$selectedEntry.version,
-					[uri]$selectedEntry.packageContent
-				)
+        if (-not $selectedEntry.packageContent) { throw "No package content found for $($selectedEntry.packageContent). This should never happen and is a bug" }
+        [ModuleFastSpec]$moduleInfo = [ModuleFastSpec]::new(
+          $selectedEntry.id,
+          $selectedEntry.version,
+          [uri]$selectedEntry.packageContent
+        )
 
-				#Check if we have already processed this item and move on if we have
-				if (-not $modulesToInstall.Add($moduleInfo)) {
-					Write-Debug "$moduleInfo ModulesToInstall already exists. Skipping..."
-					#TODO: Fix the flow so this isn't stated twice
-					[void]$resolveTasks.Remove($completedTask)
-					[void]$currentTasks.Remove($completedTask)
-					$tasksCompleteCount++
-					continue
-				}
+        #Check if we have already processed this item and move on if we have
+        if (-not $modulesToInstall.Add($moduleInfo)) {
+          Write-Debug "$moduleInfo ModulesToInstall already exists. Skipping..."
+          #TODO: Fix the flow so this isn't stated twice
+          [void]$resolveTasks.Remove($completedTask)
+          [void]$currentTasks.Remove($completedTask)
+          $tasksCompleteCount++
+          continue
+        }
 
-				Write-Verbose "$moduleInfo`: Adding to install plan"
+        Write-Verbose "$moduleInfo`: Adding to install plan"
 
-				# HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
-				# TODO: Should it? Should we check for the target framework and only install if it matches?
-				$dependencyInfo = $selectedEntry.dependencyGroups.dependencies
+        # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
+        # TODO: Should it? Should we check for the target framework and only install if it matches?
+        $dependencyInfo = $selectedEntry.dependencyGroups.dependencies
 
-				#Determine dependencies and add them to the pending tasks
-				if ($dependencyInfo) {
-					# HACK: I should be using the Id provided by the server, for now I'm just guessing because
-					# I need to add it to the ComparableModuleSpec class
-					Write-Debug "$currentModuleSpec`: Processing dependencies"
-					[List[ModuleFastSpec]]$dependencies = $dependencyInfo | ForEach-Object {
-						[ModuleFastSpec]::new($PSItem.id, [NuGetRange]$PSItem.range)
-					}
-					Write-Debug "$currentModuleSpec has $($dependencies.count) dependencies"
+        #Determine dependencies and add them to the pending tasks
+        if ($dependencyInfo) {
+          # HACK: I should be using the Id provided by the server, for now I'm just guessing because
+          # I need to add it to the ComparableModuleSpec class
+          Write-Debug "$currentModuleSpec`: Processing dependencies"
+          [List[ModuleFastSpec]]$dependencies = $dependencyInfo | ForEach-Object {
+            [ModuleFastSpec]::new($PSItem.id, [NuGetRange]$PSItem.range)
+          }
+          Write-Debug "$currentModuleSpec has $($dependencies.count) dependencies"
 
-					# TODO: Where loop filter maybe
-					[ModuleFastSpec[]]$dependenciesToResolve = $dependencies | Where-Object {
-						# TODO: This dependency resolution logic should be a separate function
-						# Maybe ModulesToInstall should be nested/grouped by Module Name then version to speed this up, as it currently
-						# enumerates every time which shouldn't be a big deal for small dependency trees but might be a
-						# meaninful performance difference on a whole-system upgrade.
-						[HashSet[string]]$moduleNames = $modulesToInstall.Name
-						if ($PSItem.Name -notin $ModuleNames) {
-							Write-Debug "$PSItem not already in ModulesToInstall. Resolving..."
-							return $true
-						}
+          # TODO: Where loop filter maybe
+          [ModuleFastSpec[]]$dependenciesToResolve = $dependencies | Where-Object {
+            # TODO: This dependency resolution logic should be a separate function
+            # Maybe ModulesToInstall should be nested/grouped by Module Name then version to speed this up, as it currently
+            # enumerates every time which shouldn't be a big deal for small dependency trees but might be a
+            # meaninful performance difference on a whole-system upgrade.
+            [HashSet[string]]$moduleNames = $modulesToInstall.Name
+            if ($PSItem.Name -notin $ModuleNames) {
+              Write-Debug "$PSItem not already in ModulesToInstall. Resolving..."
+              return $true
+            }
 
-						$plannedVersions = $modulesToInstall
-						| Where-Object Name -EQ $PSItem.Name
-						| Sort-Object RequiredVersion -Descending
+            $plannedVersions = $modulesToInstall
+            | Where-Object Name -EQ $PSItem.Name
+            | Sort-Object RequiredVersion -Descending
 
-						# TODO: Consolidate with Get-HighestSatisfiesVersion function
-						$highestPlannedVersion = $plannedVersions[0].RequiredVersion
+            # TODO: Consolidate with Get-HighestSatisfiesVersion function
+            $highestPlannedVersion = $plannedVersions[0].RequiredVersion
 
-						if ($PSItem.Version -and ($PSItem.Version -gt $highestPlannedVersion)) {
-							Write-Debug "$($PSItem.Name): Minimum Version $($PSItem.Version) not satisfied by highest existing match $highestPlannedVersion. Performing Lookup."
-							return $true
-						}
+            if ($PSItem.Version -and ($PSItem.Version -gt $highestPlannedVersion)) {
+              Write-Debug "$($PSItem.Name): Minimum Version $($PSItem.Version) not satisfied by highest existing match $highestPlannedVersion. Performing Lookup."
+              return $true
+            }
 
-						if ($PSItem.MaximumVersion -and ($PSItem.MaximumVersion -lt $highestPlannedVersion)) {
-							Write-Debug "$($PSItem.Name): $highestPlannedVersion is higher than Maximum Version $($PSItem.MaximumVersion). Performing Lookup"
-							return $true
-						}
+            if ($PSItem.MaximumVersion -and ($PSItem.MaximumVersion -lt $highestPlannedVersion)) {
+              Write-Debug "$($PSItem.Name): $highestPlannedVersion is higher than Maximum Version $($PSItem.MaximumVersion). Performing Lookup"
+              return $true
+            }
 
-						if ($PSItem.RequiredVersion -and ($PSItem.RequiredVersion -notin $plannedVersions.RequiredVersion)) {
-							Write-Debug "$($PSItem.Name): Explicity Required Version $($PSItem.RequiredVersion) is not within existing planned versions ($($plannedVersions.RequiredVersion -join ',')). Performing Lookup"
-							return $true
-						}
+            if ($PSItem.RequiredVersion -and ($PSItem.RequiredVersion -notin $plannedVersions.RequiredVersion)) {
+              Write-Debug "$($PSItem.Name): Explicity Required Version $($PSItem.RequiredVersion) is not within existing planned versions ($($plannedVersions.RequiredVersion -join ',')). Performing Lookup"
+              return $true
+            }
 
-						#If it didn't match, skip it
-						Write-Debug "$($PSItem.Name) dependency satisfied by $highestPlannedVersion already in the plan"
-					}
+            #If it didn't match, skip it
+            Write-Debug "$($PSItem.Name) dependency satisfied by $highestPlannedVersion already in the plan"
+          }
 
-					if (-not $dependenciesToResolve) {
-						Write-Debug "$moduleSpec has no remaining dependencies that need resolving"
-						continue
-					}
+          if (-not $dependenciesToResolve) {
+            Write-Debug "$moduleSpec has no remaining dependencies that need resolving"
+            continue
+          }
 
-					Write-Debug "Fetching info on remaining $($dependenciesToResolve.count) dependencies"
+          Write-Debug "Fetching info on remaining $($dependenciesToResolve.count) dependencies"
 
-					# We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
-					# TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
-					foreach ($dependencySpec in $dependenciesToResolve) {
-						[string]$localMatch = Find-LocalModule $dependencySpec
-						if ($localMatch -and -not $Update) {
-							Write-Verbose "Found local module $localMatch that satisfies dependency $dependencySpec. Skipping..."
-							#TODO: Capture this somewhere that we can use it to report in the deploy plan
-							continue
-						} else {
-							Write-Debug "No local modules that satisfies dependency $dependencySpec. Checking Remote..."
-						}
-						# TODO: Deduplicate in-flight queries (az.accounts is a good example)
-						# Write-Debug "$moduleSpec`: Checking if $dependencySpec already has an in-flight request that satisfies the requirement"
+          # We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
+          # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
+          foreach ($dependencySpec in $dependenciesToResolve) {
+            [string]$localMatch = Find-LocalModule $dependencySpec
+            if ($localMatch -and -not $Update) {
+              Write-Verbose "Found local module $localMatch that satisfies dependency $dependencySpec. Skipping..."
+              #TODO: Capture this somewhere that we can use it to report in the deploy plan
+              continue
+            } else {
+              Write-Debug "No local modules that satisfies dependency $dependencySpec. Checking Remote..."
+            }
+            # TODO: Deduplicate in-flight queries (az.accounts is a good example)
+            # Write-Debug "$moduleSpec`: Checking if $dependencySpec already has an in-flight request that satisfies the requirement"
 
-						Write-Debug "$currentModuleSpec`: Fetching dependency $dependencySpec"
-						#TODO: Do a direct version lookup if the dependency is a required version
-						$task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $dependencySpec.Name
-						$resolveTasks[$task] = $dependencySpec
-						#Used to track progress as tasks can get removed
-						$resolveTaskCount++
+            Write-Debug "$currentModuleSpec`: Fetching dependency $dependencySpec"
+            #TODO: Do a direct version lookup if the dependency is a required version
+            $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $dependencySpec.Name
+            $resolveTasks[$task] = $dependencySpec
+            #Used to track progress as tasks can get removed
+            $resolveTaskCount++
 
-						$currentTasks.Add($task)
-					}
-				}
-				try {
-					[void]$resolveTasks.Remove($completedTask)
-					[void]$currentTasks.Remove($completedTask)
-					$tasksCompleteCount++
-				} catch {
-					throw
-				}
-				Write-Debug "Remaining Tasks: $($currentTasks.count)"
-			}
-		} finally {
-			#This gets called even if ctrl-c occured during the process
-			#Should cancel any outstanding requests
-			if ($currentTasks.count -gt 0) {
-				Write-Debug "Cancelling $($currentTasks.count) outstanding tasks"
-			}
+            $currentTasks.Add($task)
+          }
+        }
+        try {
+          [void]$resolveTasks.Remove($completedTask)
+          [void]$currentTasks.Remove($completedTask)
+          $tasksCompleteCount++
+        } catch {
+          throw
+        }
+        Write-Debug "Remaining Tasks: $($currentTasks.count)"
+      }
+    } finally {
+      #This gets called even if ctrl-c occured during the process
+      #Should cancel any outstanding requests
+      if ($currentTasks.count -gt 0) {
+        Write-Debug "Cancelling $($currentTasks.count) outstanding tasks"
+      }
 
-			$cancelToken.Dispose()
-		}
-		return $modulesToInstall
-	}
+      $cancelToken.Dispose()
+    }
+    return $modulesToInstall
+  }
 }
 
 #endregion Public
 
 #region Private
 function Install-ModuleFastHelper {
-	[CmdletBinding()]
-	param(
-		[ModuleFastSpec[]]$ModuleToInstall,
-		[string]$Destination,
-		[string]$ModuleCache,
+  [CmdletBinding()]
+  param(
+    [ModuleFastSpec[]]$ModuleToInstall,
+    [string]$Destination,
 		[CancellationToken]$CancellationToken,
 		[HttpClient]$HttpClient,
 		[switch]$Update
@@ -536,7 +533,6 @@ function Install-ModuleFastHelper {
 	[List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
 		$context = @{
 			Module       = $module
-			DownloadPath = Join-Path $ModuleCache "$($module.Name).$($module.Version).nupkg"
 		}
 
 		$installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
