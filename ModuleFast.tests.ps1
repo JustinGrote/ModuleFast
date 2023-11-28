@@ -1,7 +1,7 @@
 using namespace System.Management.Automation
 using namespace System.Collections.Generic
 using namespace System.Diagnostics.CodeAnalysis
-Import-Module ./ModuleFast.psm1 -Force
+Import-Module $PSScriptRoot/ModuleFast.psm1 -Force
 
 BeforeAll {
 	if ($env:MFURI) {

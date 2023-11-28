@@ -9,6 +9,7 @@ using namespace System.IO.Pipelines
 using namespace System.Management.Automation
 using namespace System.Net
 using namespace System.Net.Http
+using namespace System.Reflection
 using namespace System.Text
 using namespace System.Threading
 using namespace System.Threading.Tasks
@@ -27,9 +28,9 @@ THIS IS NOT FOR PRODUCTION, it should be considered "Fragile" and has very littl
 It also doesn't generate the PowershellGet XML files currently, so PSGet v2 will see them as "External" modules (PSGetv3 doesn't care)
 #>
 function Install-ModuleFast {
-	[CmdletBinding(SupportsShouldProcess)]
-	param(
-		$ModulesToInstall,
+  [CmdletBinding(SupportsShouldProcess)]
+  param(
+    $ModulesToInstall,
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
     [string]$Source = 'https://pwsh.gallery/index.json',
@@ -521,85 +522,85 @@ function Install-ModuleFastHelper {
   param(
     [ModuleFastSpec[]]$ModuleToInstall,
     [string]$Destination,
-		[CancellationToken]$CancellationToken,
-		[HttpClient]$HttpClient,
-		[switch]$Update
-	)
-	$ErrorActionPreference = 'Stop'
+    [CancellationToken]$CancellationToken,
+    [HttpClient]$HttpClient,
+    [switch]$Update
+  )
+  $ErrorActionPreference = 'Stop'
 
-	#Used to keep track of context with Tasks, because we dont have "await" style syntax like C#
-	[Dictionary[Task, hashtable]]$taskMap = @{}
+  #Used to keep track of context with Tasks, because we dont have "await" style syntax like C#
+  [Dictionary[Task, hashtable]]$taskMap = @{}
 
-	[List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
-		$context = @{
-			Module       = $module
-		}
+  [List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
+    $context = @{
+      Module = $module
+    }
 
-		$installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
-		if (Test-Path $installPath) {
-			#TODO: Check for a corrupted module
-			#TODO: Prerelease checking
-			if (-not $Update) {
-				throw "$($context.Module)`: Module already exists at $installPath and -Update wasn't specified. This is a bug"
-			} else {
-				Write-Verbose "$($context.Module)`: Module already exists at $installPath but -Update was specified. This can happen because we did in fact have the latest version. Skipping."
-				continue
-			}
-		}
+    $installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
+    if (Test-Path $installPath) {
+      #TODO: Check for a corrupted module
+      #TODO: Prerelease checking
+      if (-not $Update) {
+        throw "$($context.Module)`: Module already exists at $installPath and -Update wasn't specified. This is a bug"
+      } else {
+        Write-Verbose "$($context.Module)`: Module already exists at $installPath but -Update was specified. This can happen because we did in fact have the latest version. Skipping."
+        continue
+      }
+    }
 
-		$context.InstallPath = $installPath
+    $context.InstallPath = $installPath
 
-		Write-Verbose "$module`: Starting Download for $($module.DownloadLink)"
-		if (-not $module.DownloadLink) {
-			throw "$module`: No Download Link found. This is a bug"
-		}
-		$fetchTask = $httpClient.GetStreamAsync($module.DownloadLink, $CancellationToken)
-		$taskMap.Add($fetchTask, $context)
-		$fetchTask
-	}
+    Write-Verbose "$module`: Starting Download for $($module.DownloadLink)"
+    if (-not $module.DownloadLink) {
+      throw "$module`: No Download Link found. This is a bug"
+    }
+    $fetchTask = $httpClient.GetStreamAsync($module.DownloadLink, $CancellationToken)
+    $taskMap.Add($fetchTask, $context)
+    $fetchTask
+  }
 
-	[List[Job2]]$installJobs = while ($streamTasks.count -gt 0) {
-		$noTasksYetCompleted = -1
-		[int]$thisTaskIndex = [Task]::WaitAny($streamTasks, 500)
-		if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
-		$thisTask = $streamTasks[$thisTaskIndex]
-		$stream = $thisTask.GetAwaiter().GetResult()
-		$context = $taskMap[$thisTask]
-		$context.fetchStream = $stream
-		$streamTasks.RemoveAt($thisTaskIndex)
+  [List[Job2]]$installJobs = while ($streamTasks.count -gt 0) {
+    $noTasksYetCompleted = -1
+    [int]$thisTaskIndex = [Task]::WaitAny($streamTasks, 500)
+    if ($thisTaskIndex -eq $noTasksYetCompleted) { continue }
+    $thisTask = $streamTasks[$thisTaskIndex]
+    $stream = $thisTask.GetAwaiter().GetResult()
+    $context = $taskMap[$thisTask]
+    $context.fetchStream = $stream
+    $streamTasks.RemoveAt($thisTaskIndex)
 
-		#We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
-		Write-Verbose "$($context.Module): Starting Extract Job to $($context.installPath)"
-		# This is a sync process and we want to do it in parallel, hence the threadjob
-		$installJob = Start-ThreadJob -ThrottleLimit 8 {
-			param(
-				[ValidateNotNullOrEmpty()]$stream = $USING:stream,
-				[ValidateNotNullOrEmpty()]$context = $USING:context
-			)
-			$installPath = $context.InstallPath
-			#TODO: Add a ".incomplete" marker file to the folder and remove it when done. This will allow us to detect failed installations
-			$zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
-			[IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
-			Write-Verbose "Cleanup Nuget Files in $installPath"
-			if (-not $installPath) { throw 'ModuleDestination was not set. This is a bug, report it' }
-			Remove-Item -Path $installPath -Include '_rels', 'package', '*.nuspec' -Recurse -Force
+    #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
+    Write-Verbose "$($context.Module): Starting Extract Job to $($context.installPath)"
+    # This is a sync process and we want to do it in parallel, hence the threadjob
+    $installJob = Start-ThreadJob -ThrottleLimit 8 {
+      param(
+        [ValidateNotNullOrEmpty()]$stream = $USING:stream,
+        [ValidateNotNullOrEmpty()]$context = $USING:context
+      )
+      $installPath = $context.InstallPath
+      #TODO: Add a ".incomplete" marker file to the folder and remove it when done. This will allow us to detect failed installations
+      $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
+      [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
+      Write-Verbose "Cleanup Nuget Files in $installPath"
+      if (-not $installPath) { throw 'ModuleDestination was not set. This is a bug, report it' }
+      Remove-Item -Path $installPath -Include '_rels', 'package', '*.nuspec' -Recurse -Force
 			($zip).Dispose()
 			($stream).Dispose()
-			return ($context).Module
-		}
-		$installJob
-	}
+      return ($context).Module
+    }
+    $installJob
+  }
 
-	$installed = 0
-	while ($installJobs.count -gt 0) {
-		$ErrorActionPreference = 'Stop'
-		$completedJob = $installJobs | Wait-Job -Any
-		$installedModule = $completedJob | Receive-Job -Wait -AutoRemoveJob
-		if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
-		$installed++
-		Write-Verbose "$installedModule`: Successfuly installed to $installPath"
-		Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
-	}
+  $installed = 0
+  while ($installJobs.count -gt 0) {
+    $ErrorActionPreference = 'Stop'
+    $completedJob = $installJobs | Wait-Job -Any
+    $installedModule = $completedJob | Receive-Job -Wait -AutoRemoveJob
+    if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
+    $installed++
+    Write-Verbose "$installedModule`: Successfuly installed to $installPath"
+    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
+  }
 }
 
 #endregion Private
@@ -609,7 +610,7 @@ function Install-ModuleFastHelper {
 
 
 class ModuleFastSpec : IComparable {
-	<#
+  <#
 	A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
 	values are the same. This should also be consistent across processes and can be cached.
 
@@ -618,442 +619,444 @@ class ModuleFastSpec : IComparable {
 
 	It is somewhat non-null that can be used to compare modules but it should really be immutable. I really should make a C# version for this.
 	#>
-	static [SemanticVersion]$MinVersion = 0
-	static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
-	#Special string we use to translate between Version and SemanticVersion since SemanticVersion doesnt support Semver 2.0 properly and doesnt allow + only
-	#Someone actually using this string may cause a conflict, it's not foolproof but it's better than nothing
-	hidden static [string]$SYSTEM_VERSION_LABEL = 'SYSTEMVERSION'
-	hidden static [string]$SYSTEM_VERSION_REGEX = '^(?<major>\d+)\.(?<minor>\d+)\.(?<build>\d+)\.(?<revision>\d+)$'
+  static [SemanticVersion]$MinVersion = 0
+  static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
+  #Special string we use to translate between Version and SemanticVersion since SemanticVersion doesnt support Semver 2.0 properly and doesnt allow + only
+  #Someone actually using this string may cause a conflict, it's not foolproof but it's better than nothing
+  hidden static [string]$SYSTEM_VERSION_LABEL = 'SYSTEMVERSION'
+  hidden static [string]$SYSTEM_VERSION_REGEX = '^(?<major>\d+)\.(?<minor>\d+)\.(?<build>\d+)\.(?<revision>\d+)$'
 
-	#These properties are effectively read only thanks to some wizardry
-	hidden [uri]$_DownloadLink
-	hidden [uri]Get_DownloadLink() { return $this._DownloadLink }
-	hidden [string]$_Name
-	hidden [string]Get_Name() { return $this._Name }
-	hidden [guid]$_Guid
-	hidden [guid]Get_Guid() { return $this._Guid }
-	hidden [SemanticVersion]$_Min = [ModuleFastSpec]::MinVersion
-	hidden [SemanticVersion]Get_Min() { return $this._Min }
-	hidden [SemanticVersion]$_Max = [ModuleFastSpec]::MaxVersion
-	hidden [SemanticVersion]Get_Max() { return $this._Max }
+  #These properties are effectively read only thanks to some getter wizardy
+  hidden [uri]$_DownloadLink
+  static hidden [uri]Get_DownloadLink([PSObject]$i) { return $i._DownloadLink }
+  hidden [string]$_Name
+  static hidden [string]Get_Name([PSObject]$i) { return $i._Name }
+  hidden [guid]$_Guid
+  static hidden [guid]Get_Guid([PSObject]$i) { return $i._Guid }
+  hidden [SemanticVersion]$_Min = [ModuleFastSpec]::MinVersion
+  static hidden [SemanticVersion]Get_Min([PSObject]$i) { return $i._Min }
+  hidden [SemanticVersion]$_Max = [ModuleFastSpec]::MaxVersion
+  static hidden [SemanticVersion]Get_Max([PSObject]$i) { return $i._Max }
 
-	hidden [SemanticVersion]Get_Required() {
-		if ($this.Min -eq $this.Max) {
-			return $this.Min
-		} else {
-			return $null
-		}
-	}
+  static hidden [SemanticVersion]Get_Required([PSObject]$i) {
+    if ($i.Min -eq $i.Max) {
+      return $i.Min
+    } else {
+      return $null
+    }
+  }
 
-	#ModuleSpecification Compatible Getters
-	hidden [Version]Get_RequiredVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Required) }
-	hidden [Version]Get_Version() { return [ModuleFastSpec]::ParseSemanticVersion($this.Min) }
-	hidden [Version]Get_MaximumVersion() { return [ModuleFastSpec]::ParseSemanticVersion($this.Max) }
+  #ModuleSpecification Compatible Getters
+  static hidden [Version]Get_RequiredVersion([PSObject]$i) { return [ModuleFastSpec]::ParseSemanticVersion($i.Required) }
+  static hidden [Version]Get_Version([PSObject]$i) { return [ModuleFastSpec]::ParseSemanticVersion($i.Min) }
+  static hidden [Version]Get_MaximumVersion([PSObject]$i) { return [ModuleFastSpec]::ParseSemanticVersion($i.Max) }
 
-	#Constructors
+  #Constructors
 
-	#HACK: A helper because we can't do constructor chaining in PowerShell
-	#https://stackoverflow.com/questions/44413206/constructor-chaining-in-powershell-call-other-constructors-in-the-same-class
-	#HACK: Guid and SemanticVersion are non-nullable and just causes problems trying to enforce it here, we make sure it doesn't get set to a null value later on
-	hidden Initialize([string]$Name, $Min, $Max, $Guid, [ModuleSpecification]$moduleSpec) {
-		Add-Getters
+  #HACK: A helper because we can't do constructor chaining in PowerShell
+  #https://stackoverflow.com/questions/44413206/constructor-chaining-in-powershell-call-other-constructors-in-the-same-class
+  #HACK: Guid and SemanticVersion are non-nullable and just causes problems trying to enforce it here, we make sure it doesn't get set to a null value later on
+  hidden Initialize([string]$Name, $Min, $Max, $Guid, [ModuleSpecification]$moduleSpec) {
+    Add-Getters
 
-		#Explode out moduleSpec information if present and then follow the same validation logic
-		if ($moduleSpec) {
-			$Name = $ModuleSpec.Name
-			$Guid = $ModuleSpec.Guid
-			if ($ModuleSpec.RequiredVersion) {
-				$Min = [ModuleFastSpec]::ParseVersionString($ModuleSpec.RequiredVersion)
-				$Max = [ModuleFastSpec]::ParseVersionString($ModuleSpec.RequiredVersion)
-			} else {
-				$Min = $moduleSpec.Version ? [ModuleFastSpec]::ParseVersionString($ModuleSpec.Version) : $null
-				$Max = $moduleSpec.MaximumVersion ? [ModuleFastSpec]::ParseVersionString($ModuleSpec.MaximumVersion) : $null
-			}
-		}
+    #Explode out moduleSpec information if present and then follow the same validation logic
+    if ($moduleSpec) {
+      $Name = $ModuleSpec.Name
+      $Guid = $ModuleSpec.Guid
+      if ($ModuleSpec.RequiredVersion) {
+        $Min = [ModuleFastSpec]::ParseVersionString($ModuleSpec.RequiredVersion)
+        $Max = [ModuleFastSpec]::ParseVersionString($ModuleSpec.RequiredVersion)
+      } else {
+        $Min = $moduleSpec.Version ? [ModuleFastSpec]::ParseVersionString($ModuleSpec.Version) : $null
+        $Max = $moduleSpec.MaximumVersion ? [ModuleFastSpec]::ParseVersionString($ModuleSpec.MaximumVersion) : $null
+      }
+    }
 
-		#HACK: The nulls here are just to satisfy the ternary operator, they go off into the ether and arent returned or used
-		$Name ? ($this._Name = $Name) : $null
-		$Min ? ($this._Min = $Min) : $null
-		$Max ? ($this._Max = $Max) : $null
-		$Guid ? ($this._Guid = $Guid) : $null
-		if ($this.Guid -ne [Guid]::Empty -and -not $this.Required) {
-			throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
-		}
-	}
+    #HACK: The nulls here are just to satisfy the ternary operator, they go off into the ether and arent returned or used
+    $Name ? ($this._Name = $Name) : $null
+    $Min ? ($this._Min = $Min) : $null
+    $Max ? ($this._Max = $Max) : $null
+    $Guid ? ($this._Guid = $Guid) : $null
+    if ($this.Guid -ne [Guid]::Empty -and -not $this.Required) {
+      throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
+    }
+  }
 
-	# HACK: We dont want a string constructor because it messes with Equals (we dont want strings implicitly cast to ModuleFastSpec).
-	# ModuleName is a workaround for this and still make it easy to define a spec that matches all versions of a module.
-	ModuleFastSpec([string]$Name) {
-		$this.Initialize($Name, $null, $null, $null, $null)
-	}
-	ModuleFastSpec([string]$Name, [string]$Required) {
-		[SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
-		$this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
-	}
-	ModuleFastSpec([string]$Name, [String]$Required, [Guid]$Guid) {
-		[SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
-		$this.Initialize($Name, $requiredVersion, $requiredVersion, $Guid, $null)
-	}
-	ModuleFastSpec([string]$Name, [String]$Required, [Uri]$DownloadLink) {
-		[SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
-		$this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
-		$this._DownloadLink = [uri]$DownloadLink
-	}
-	ModuleFastSpec([string]$Name, [string]$Min, [string]$Max) {
-		[SemanticVersion]$minVer = $min ? [ModuleFastSpec]::ParseVersionString($min) : $null
-		[SemanticVersion]$maxVer = $max ? [ModuleFastSpec]::ParseVersionString($max) : $null
-		$this.Initialize($Name, $minVer, $maxVer, $null, $null)
-	}
+  # HACK: We dont want a string constructor because it messes with Equals (we dont want strings implicitly cast to ModuleFastSpec).
+  # ModuleName is a workaround for this and still make it easy to define a spec that matches all versions of a module.
+  ModuleFastSpec([string]$Name) {
+    $this.Initialize($Name, $null, $null, $null, $null)
+  }
+  ModuleFastSpec([string]$Name, [string]$Required) {
+    [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+    $this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
+  }
+  ModuleFastSpec([string]$Name, [String]$Required, [Guid]$Guid) {
+    [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+    $this.Initialize($Name, $requiredVersion, $requiredVersion, $Guid, $null)
+  }
+  ModuleFastSpec([string]$Name, [String]$Required, [Uri]$DownloadLink) {
+    [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+    $this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
+    $this._DownloadLink = [uri]$DownloadLink
+  }
+  ModuleFastSpec([string]$Name, [string]$Min, [string]$Max) {
+    [SemanticVersion]$minVer = $min ? [ModuleFastSpec]::ParseVersionString($min) : $null
+    [SemanticVersion]$maxVer = $max ? [ModuleFastSpec]::ParseVersionString($max) : $null
+    $this.Initialize($Name, $minVer, $maxVer, $null, $null)
+  }
 
-	# These can be used for performance to avoid parsing to string and back. Probably makes little difference
-	ModuleFastSpec([string]$Name, [SemanticVersion]$Required) {
-		$this.Initialize($Name, $Required, $Required, $null, $null)
-	}
-	ModuleFastSpec([string]$Name, [NugetRange]$Range) {
-		$Range.Min
-		$this.Initialize($Name, $range.Min, $range.Max, $null, $null)
-	}
+  # These can be used for performance to avoid parsing to string and back. Probably makes little difference
+  ModuleFastSpec([string]$Name, [SemanticVersion]$Required) {
+    $this.Initialize($Name, $Required, $Required, $null, $null)
+  }
+  ModuleFastSpec([string]$Name, [NugetRange]$Range) {
+    $Range.Min
+    $this.Initialize($Name, $range.Min, $range.Max, $null, $null)
+  }
 
 
-	#TODO: Version versions maybe? Probably should just use the parser and let those go to string
-	ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
-		$this.Initialize($null, $null, $null, $null, $ModuleSpec)
-	}
+  #TODO: Version versions maybe? Probably should just use the parser and let those go to string
+  ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
+    $this.Initialize($null, $null, $null, $null, $ModuleSpec)
+  }
 
-	#Hashtable constructor works the same as for moduleSpecification for ease of use/understanding
-	ModuleFastSpec([hashtable]$hashtable) {
-		#Will implicitly convert the hashtable to ModuleSpecification
-		$this.Initialize($null, $null, $null, $null, $hashtable)
-	}
+  #Hashtable constructor works the same as for moduleSpecification for ease of use/understanding
+  ModuleFastSpec([hashtable]$hashtable) {
+    #Will implicitly convert the hashtable to ModuleSpecification
+    $this.Initialize($null, $null, $null, $null, $hashtable)
+  }
 
-	### Version Helper Methods
-	#Determines if a version is within range of the spec.
-	[bool] Matches([SemanticVersion]$Version) {
-		if ($null -eq $Version) { return $false }
-		if ($Version -ge $this.Min -and $Version -le $this.Max) { return $true }
-		return $false
-	}
-	[bool] Matches([Version]$Version) {
-		return $this.Matches([ModuleFastSpec]::ParseVersion($Version))
-	}
-	[bool] Matches([String]$Version) {
-		return $this.Matches([ModuleFastSpec]::ParseVersionString($Version))
-	}
+  ### Version Helper Methods
+  #Determines if a version is within range of the spec.
+  [bool] Matches([SemanticVersion]$Version) {
+    if ($null -eq $Version) { return $false }
+    if ($Version -ge $this.Min -and $Version -le $this.Max) { return $true }
+    return $false
+  }
+  [bool] Matches([Version]$Version) {
+    return $this.Matches([ModuleFastSpec]::ParseVersion($Version))
+  }
+  [bool] Matches([String]$Version) {
+    return $this.Matches([ModuleFastSpec]::ParseVersionString($Version))
+  }
 
-	#Determines if this spec is at least partially inside of the supplied spec
-	[bool] Overlaps([ModuleFastSpec]$Spec) {
-		if ($null -eq $Spec) { return $false }
-		if ($Spec.Name -ne $this.Name) { throw "Supplied Spec Name $($Spec.Name) does not match this spec name $($this.Name)" }
-		if ($Spec.Guid -ne $this.Guid) { throw "Supplied Spec Guid $($Spec.Name) does not match this spec guid $($this.Name)" }
+  #Determines if this spec is at least partially inside of the supplied spec
+  [bool] Overlaps([ModuleFastSpec]$Spec) {
+    if ($null -eq $Spec) { return $false }
+    if ($Spec.Name -ne $this.Name) { throw "Supplied Spec Name $($Spec.Name) does not match this spec name $($this.Name)" }
+    if ($Spec.Guid -ne $this.Guid) { throw "Supplied Spec Guid $($Spec.Name) does not match this spec guid $($this.Name)" }
 
-		# Returns true if there is any overlap between $this and $spec
-		if ($this.Min -lt $Spec.Max -and $this.Max -gt $Spec.Min) { return $true }
-		return $false
-	}
+    # Returns true if there is any overlap between $this and $spec
+    if ($this.Min -lt $Spec.Max -and $this.Max -gt $Spec.Min) { return $true }
+    return $false
+  }
 
-	# Parses either a assembly version or semver to a semver string
-	static [SemanticVersion] ParseVersionString([string]$Version) {
-		if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
-		if ($Version -as [Version]) {
-			return [ModuleFastSpec]::ParseVersion($Version)
-		}
-		return $Version
-	}
+  # Parses either a assembly version or semver to a semver string
+  static [SemanticVersion] ParseVersionString([string]$Version) {
+    if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
+    if ($Version -as [Version]) {
+      return [ModuleFastSpec]::ParseVersion($Version)
+    }
+    return $Version
+  }
 
-	# A version number with 4 octets wont cast to semanticversion properly, this is a helper method for that.
-	# We treat "revision" as "build" and "build" as patch for purposes of translation
-	# Needed because SemVer can't parse builds correctly
-	#https://github.com/PowerShell/PowerShell/issues/14605
-	static [SemanticVersion] ParseVersion([Version]$Version) {
-		if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
+  # A version number with 4 octets wont cast to semanticversion properly, this is a helper method for that.
+  # We treat "revision" as "build" and "build" as patch for purposes of translation
+  # Needed because SemVer can't parse builds correctly
+  #https://github.com/PowerShell/PowerShell/issues/14605
+  static [SemanticVersion] ParseVersion([Version]$Version) {
+    if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
 
-		[list[string]]$buildLabels = @()
-		$buildVersion = $null
-		if ($Version.Build -eq -1) { $buildLabels.Add('NOBUILD'); $buildVersion = 0 }
-		if ($Version.Revision -ne -1) {
-			$buildLabels.Add('HASREVISION')
-		}
-		if ($buildLabels.count -eq 0) {
-			#This version maps directly to semantic version and we can return early
-			return [SemanticVersion]::new($Version.Major, $Version.Minor, $Version.Build)
-		}
+    [list[string]]$buildLabels = @()
+    $buildVersion = $null
+    if ($Version.Build -eq -1) { $buildLabels.Add('NOBUILD'); $buildVersion = 0 }
+    if ($Version.Revision -ne -1) {
+      $buildLabels.Add('HASREVISION')
+    }
+    if ($buildLabels.count -eq 0) {
+      #This version maps directly to semantic version and we can return early
+      return [SemanticVersion]::new($Version.Major, $Version.Minor, $Version.Build)
+    }
 
-		#Otherwise we need to explicitly note this came from a system version for when we parse it back
-		$buildLabels.Add([ModuleFastSpec]::SYSTEM_VERSION_LABEL)
-		$preReleaseLabel = $null
-		if ($Version.Revision -ge 0) {
-			#We do this so that the sort order is correct in semver (prereleases sort before major versions and is lexically sorted)
-			#Revision can't be 0 while build is -1, so we can skip any evaluation logic there.
-			$preReleaseLabel = $Version.Revision.ToString().PadLeft(10, '0')
-			$buildVersion = $Version.Build + 1
-		}
-		$buildLabels.Reverse()
-		[string]$buildLabel = $buildLabels -join '.'
-		#Nulls will return as 0, which we want. Major and Minor cannot be -1
-		return [SemanticVersion]::new($Version.Major, $Version.Minor, $buildVersion, $preReleaseLabel, $buildLabel)
-	}
+    #Otherwise we need to explicitly note this came from a system version for when we parse it back
+    $buildLabels.Add([ModuleFastSpec]::SYSTEM_VERSION_LABEL)
+    $preReleaseLabel = $null
+    if ($Version.Revision -ge 0) {
+      #We do this so that the sort order is correct in semver (prereleases sort before major versions and is lexically sorted)
+      #Revision can't be 0 while build is -1, so we can skip any evaluation logic there.
+      $preReleaseLabel = $Version.Revision.ToString().PadLeft(10, '0')
+      $buildVersion = $Version.Build + 1
+    }
+    $buildLabels.Reverse()
+    [string]$buildLabel = $buildLabels -join '.'
+    #Nulls will return as 0, which we want. Major and Minor cannot be -1
+    return [SemanticVersion]::new($Version.Major, $Version.Minor, $buildVersion, $preReleaseLabel, $buildLabel)
+  }
 
-	# A way to go back from SemanticVersion, the anticedent to ParseVersion
-	static [Version] ParseSemanticVersion([SemanticVersion]$Version) {
-		if ($null -eq $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
+  # A way to go back from SemanticVersion, the anticedent to ParseVersion
+  static [Version] ParseSemanticVersion([SemanticVersion]$Version) {
+    if ($null -eq $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
 
-		#If this only has a build "version" but no Prerelease tag, we can translate that to the revision
-		if (-not $Version.PreReleaseLabel -and $Version.BuildLabel -and $Version.BuildLabel -as [int]) {
-			return [Version]::new($Version.Major, $Version.Minor, $Version.Patch, $Version.BuildLabel)
-		}
+    #If this only has a build "version" but no Prerelease tag, we can translate that to the revision
+    if (-not $Version.PreReleaseLabel -and $Version.BuildLabel -and $Version.BuildLabel -as [int]) {
+      return [Version]::new($Version.Major, $Version.Minor, $Version.Patch, $Version.BuildLabel)
+    }
 
-		[string[]]$buildFlags = $Version.BuildLabel -split '\.'
-		if ($BuildFlags -notcontains [ModuleFastSpec]::SYSTEM_VERSION_LABEL) {
-			#This is a semantic-compatible version, we can just return it
-			return [Version]::new($Version.Major, $Version.Minor, $Version.Patch)
-		}
-		if ($buildFlags -contains 'NOBUILD') {
-			return [Version]::new($Version.Major, $Version.Minor)
-		}
-		#It is not possible to have no build version but have a revision version, we dont have to test for that
-		if ($buildFlags -contains 'HASREVISION') {
-			#A null prerelease label will map to 0, so this will correctly be for example 3.2.1.0 if it is null but NOREVISION wasnt flagged
-			return [Version]::new($Version.Major, $Version.Minor, $Version.Patch - 1, $Version.PreReleaseLabel)
-		}
+    [string[]]$buildFlags = $Version.BuildLabel -split '\.'
+    if ($BuildFlags -notcontains [ModuleFastSpec]::SYSTEM_VERSION_LABEL) {
+      #This is a semantic-compatible version, we can just return it
+      return [Version]::new($Version.Major, $Version.Minor, $Version.Patch)
+    }
+    if ($buildFlags -contains 'NOBUILD') {
+      return [Version]::new($Version.Major, $Version.Minor)
+    }
+    #It is not possible to have no build version but have a revision version, we dont have to test for that
+    if ($buildFlags -contains 'HASREVISION') {
+      #A null prerelease label will map to 0, so this will correctly be for example 3.2.1.0 if it is null but NOREVISION wasnt flagged
+      return [Version]::new($Version.Major, $Version.Minor, $Version.Patch - 1, $Version.PreReleaseLabel)
+    }
 
-		throw [InvalidDataException]"Unexpected situation when parsing SemanticVersion $Version to Version. This is a bug in ModuleFastSpec and should be reported"
-	}
+    throw [InvalidDataException]"Unexpected situation when parsing SemanticVersion $Version to Version. This is a bug in ModuleFastSpec and should be reported"
+  }
 
-	[Version] ToVersion() {
-		if (-not $this.Required) { throw [NotSupportedException]'You can only convert Required specs to a version.' }
-		#Warning: Return type is not enforced by the method, that's why we did it explicitly here.
-		return [Version][ModuleFastSpec]::ParseSemanticVersion($this.Required)
-	}
+  [Version] ToVersion() {
+    if (-not $this.Required) { throw [NotSupportedException]'You can only convert Required specs to a version.' }
+    #Warning: Return type is not enforced by the method, that's why we did it explicitly here.
+    return [Version][ModuleFastSpec]::ParseSemanticVersion($this.Required)
+  }
 
-	###Implicit Methods
+  ###Implicit Methods
 
-	#This string will be unique for each spec type, and can (probably)? Be safely used as a hashcode
-	#TODO: Implement parsing of this string to the parser to allow it to be "reserialized" to a module spec
-	[string] ToString() {
-		$name = $this._Name + ($this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : '')
-		$versionString = switch ($true) {
+  #This string will be unique for each spec type, and can (probably)? Be safely used as a hashcode
+  #TODO: Implement parsing of this string to the parser to allow it to be "reserialized" to a module spec
+  [string] ToString() {
+    $name = $this._Name + ($this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : '')
+    $versionString = switch ($true) {
 				($this.Min -eq [ModuleFastSpec]::MinVersion -and $this.Max -eq [ModuleFastSpec]::MaxVersion) {
-				#This is the default, so we don't need to print it
-				break
-			}
+        #This is the default, so we don't need to print it
+        break
+      }
 				($null -ne $this.required) { "@$([ModuleFastSpec]::VersionToString($this.Required))"; break }
 				($this.Min -eq [ModuleFastSpec]::MinVersion) { "<$([ModuleFastSpec]::VersionToString($this.Max))"; break }
 				($this.Max -eq [ModuleFastSpec]::MaxVersion) { ">$([ModuleFastSpec]::VersionToString($this.Min))"; break }
-			default { ":$($this.Min)-$($this.Max)" }
-		}
-		return $name + $versionString
-	}
+      default { ":$($this.Min)-$($this.Max)" }
+    }
+    return $name + $versionString
+  }
 
-	#Converts a stored version to a string representation. This handles cases where the value was originally a System.Version
-	static [string] VersionToString([SemanticVersion]$version) {
-		if ($null -eq $version) { return $null }
-		if ($Version.BuildLabel -match 'SYSTEMVERSION' -and $version.PrereleaseLabel -as [int]) {
-			#This is a system version, we need to convert it back to a system version
-			return [ModuleFastSpec]::ParseSemanticVersion($version).ToString()
-		}
-		return $version.ToString()
-	}
+  #Converts a stored version to a string representation. This handles cases where the value was originally a System.Version
+  static [string] VersionToString([SemanticVersion]$version) {
+    if ($null -eq $version) { return $null }
+    if ($Version.BuildLabel -match 'SYSTEMVERSION' -and $version.PrereleaseLabel -as [int]) {
+      #This is a system version, we need to convert it back to a system version
+      return [ModuleFastSpec]::ParseSemanticVersion($version).ToString()
+    }
+    return $version.ToString()
+  }
 
-	#BUG: We cannot implement IEquatable directly because we need to self-reference ModuleFastSpec before it exists.
-	#We can however just add Equals() method
+  #BUG: We cannot implement IEquatable directly because we need to self-reference ModuleFastSpec before it exists.
+  #We can however just add Equals() method
 
-	#Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals?view=net-6.0
-	[boolean] Equals([Object]$obj) {
-		if ($null -eq $obj) { return $false }
-		switch ($obj.GetType()) {
-			#Comparing ModuleSpecs means that we want to ensure they are structurally the same
+  #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals?view=net-6.0
+  [boolean] Equals([Object]$obj) {
+    if ($null -eq $obj) { return $false }
+    switch ($obj.GetType()) {
+      #Comparing ModuleSpecs means that we want to ensure they are structurally the same
 						([ModuleFastSpec]) {
-				return $this.Name -eq $obj.Name -and
-				$this.Guid -eq $obj.Guid -and
-				$obj.Min -ge $this.Min -and
-				$obj.Max -le $this.Max
-			}
+        return $this.Name -eq $obj.Name -and
+        $this.Guid -eq $obj.Guid -and
+        $obj.Min -ge $this.Min -and
+        $obj.Max -le $this.Max
+      }
 						([ModuleSpecification]) { return $this.Equals([ModuleFastSpec]$obj) }
 
-			#When comparing a version, we want to return equal if the version is within the range of the spec
+      #When comparing a version, we want to return equal if the version is within the range of the spec
 						([SemanticVersion]) { return $this.CompareTo($obj) -eq 0 }
 						([string]) { return $this.Equals([ModuleFastSpec]::ParseVersionString($obj)) }
 						([Version]) { return $this.Equals([ModuleFastSpec]::ParseVersion($obj)) }
-			default {
-				#Try a cast. This should work for ModuleSpecification
-				try {
-					return $this.CompareTo([ModuleFastSpec]$obj)
-				} catch [RuntimeException] {
-					#This is a cast error, we want to limit this so that any errors from CompareTo bubble up
-					throw "Cannot compare ModuleFastSpec to $($obj.GetType())"
-				}
-			}
-		}
-		throw [InvalidOperationException]'Unexpected Equals was found. This should never happen and is a bug in ModuleFastSpec'
-	}
+      default {
+        #Try a cast. This should work for ModuleSpecification
+        try {
+          return $this.CompareTo([ModuleFastSpec]$obj)
+        } catch [RuntimeException] {
+          #This is a cast error, we want to limit this so that any errors from CompareTo bubble up
+          throw "Cannot compare ModuleFastSpec to $($obj.GetType())"
+        }
+      }
+    }
+    throw [InvalidOperationException]'Unexpected Equals was found. This should never happen and is a bug in ModuleFastSpec'
+  }
 
-	#Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.icomparable-1.compareto
-	[int] CompareTo([Object]$obj) {
-		if ($null -eq $obj) { throw [NotSupportedException]'null not supported' }
+  #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.icomparable-1.compareto
+  [int] CompareTo([Object]$obj) {
+    if ($null -eq $obj) { throw [NotSupportedException]'null not supported' }
 
-		#This is somewhat analagous to C# Pattern Matching: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/functional/pattern-matching#compare-discrete-values
-		switch ($obj.GetType()) {
-			#We determine greater than or less than if the version is within the range of the spec or not
+    #This is somewhat analagous to C# Pattern Matching: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/functional/pattern-matching#compare-discrete-values
+    switch ($obj.GetType()) {
+      #We determine greater than or less than if the version is within the range of the spec or not
 						([SemanticVersion]) {
-				if ($obj -ge $this.Min -and $obj -le $this.Max) { return 0 }
-				if ($obj -lt $this.Min) { return 1 }
-				if ($obj -gt $this.Max) { return -1 }
-				throw 'Unexpected comparison result. This should never happen and is a bug in ModuleFastSpec'
-			}
+        if ($obj -ge $this.Min -and $obj -le $this.Max) { return 0 }
+        if ($obj -lt $this.Min) { return 1 }
+        if ($obj -gt $this.Max) { return -1 }
+        throw 'Unexpected comparison result. This should never happen and is a bug in ModuleFastSpec'
+      }
 						([ModuleFastSpec]) {
-				if (-not $obj.Required) { throw [NotSupportedException]'Cannot compare two range specs as they can overlap. Supply a required spec to this range' }
-				return $this.CompareTo($obj.Required) #Should go to SemanticVersion
-			}
+        if (-not $obj.Required) { throw [NotSupportedException]'Cannot compare two range specs as they can overlap. Supply a required spec to this range' }
+        return $this.CompareTo($obj.Required) #Should go to SemanticVersion
+      }
 						([Version]) {
-				return $this.CompareTo([ModuleFastSpec]::ParseVersion($obj))
-			}
+        return $this.CompareTo([ModuleFastSpec]::ParseVersion($obj))
+      }
 						([String]) {
-				return $this.CompareTo([ModuleFastSpec]::ParseVersionString($obj))
-			}
-			default {
-				if ($this.Equals($obj)) { return 0 }
-				#Try a cast. This should work for ModuleSpecification
-				try {
-					return $this.CompareTo([ModuleFastSpec]$obj)
-				} catch [RuntimeException] {
-					#This is a cast error, we want to limit this so that any errors from CompareTo bubble up
-					throw "Cannot compare ModuleFastSpec to $($obj.GetType())"
-				}
-			}
-		}
-		throw [InvalidOperationException]'Unexpected Compare was found. This should never happen and is a bug in ModuleFastSpec'
-	}
+        return $this.CompareTo([ModuleFastSpec]::ParseVersionString($obj))
+      }
+      default {
+        if ($this.Equals($obj)) { return 0 }
+        #Try a cast. This should work for ModuleSpecification
+        try {
+          return $this.CompareTo([ModuleFastSpec]$obj)
+        } catch [RuntimeException] {
+          #This is a cast error, we want to limit this so that any errors from CompareTo bubble up
+          throw "Cannot compare ModuleFastSpec to $($obj.GetType())"
+        }
+      }
+    }
+    throw [InvalidOperationException]'Unexpected Compare was found. This should never happen and is a bug in ModuleFastSpec'
+  }
 
-	[int] GetHashCode() {
-		return $this.ToString().GetHashCode()
-	}
+  [int] GetHashCode() {
+    return $this.ToString().GetHashCode()
+  }
 
-	static [ModuleSpecification] op_Implicit([ModuleFastSpec]$moduleFastSpec) {
-		$moduleSpecification = @{
-			ModuleName = $moduleFastSpec.Name
-		}
-		if ($moduleFastSpec.Required) {
-			$moduleSpecification['RequiredVersion'] = $moduleFastSpec.Required
-		} else {
-			#Module Specifications like nulls, so we will accomodate that.
-			if ($moduleFastSpec.Min -gt [ModuleFastSpec]::MinVersion) {
-				$moduleSpecification['ModuleVersion'] = [ModuleFastSpec]::ParseSemanticVersion($moduleFastSpec.Min)
-			}
-			if ($moduleFastSpec.Max -lt [ModuleFastSpec]::MaxVersion) {
-				$moduleSpecification['MaximumVersion'] = [ModuleFastSpec]::ParseSemanticVersion($moduleFastSpec.Max)
-			}
-		}
-		#HACK: This could be more specific but it works for this case
-		if ($moduleSpecification.Keys.Count -eq 1) {
-			$moduleSpecification['ModuleVersion'] = '0.0.0'
-		}
-		return [ModuleSpecification]$moduleSpecification
-	}
+  static [ModuleSpecification] op_Implicit([ModuleFastSpec]$moduleFastSpec) {
+    $moduleSpecification = @{
+      ModuleName = $moduleFastSpec.Name
+    }
+    if ($moduleFastSpec.Required) {
+      $moduleSpecification['RequiredVersion'] = $moduleFastSpec.Required
+    } else {
+      #Module Specifications like nulls, so we will accomodate that.
+      if ($moduleFastSpec.Min -gt [ModuleFastSpec]::MinVersion) {
+        $moduleSpecification['ModuleVersion'] = [ModuleFastSpec]::ParseSemanticVersion($moduleFastSpec.Min)
+      }
+      if ($moduleFastSpec.Max -lt [ModuleFastSpec]::MaxVersion) {
+        $moduleSpecification['MaximumVersion'] = [ModuleFastSpec]::ParseSemanticVersion($moduleFastSpec.Max)
+      }
+    }
+    #HACK: This could be more specific but it works for this case
+    if ($moduleSpecification.Keys.Count -eq 1) {
+      $moduleSpecification['ModuleVersion'] = '0.0.0'
+    }
+    return [ModuleSpecification]$moduleSpecification
+  }
 }
 
 #This is a helper function that processes nuget ranges.
 #Reference: https://github.com/NuGet/NuGet.Client/blob/035850255a15b60437d22f9178c4206bafe0b6a9/src/NuGet.Core/NuGet.Versioning/VersionRangeFactory.cs#L91-L265
 class NugetRange {
-	[SemanticVersion]$Min
-	[SemanticVersion]$Max
-	[boolean]$MinInclusive = $true
-	[boolean]$MaxInclusive = $true
+  [SemanticVersion]$Min
+  [SemanticVersion]$Max
+  [boolean]$MinInclusive = $true
+  [boolean]$MaxInclusive = $true
 
-	static [SemanticVersion]$MinVersion = 0
-	static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
+  static [SemanticVersion]$MinVersion = 0
+  static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
 
-	NugetRange([string]$string) {
-		# Use a regex to parse a semantic version range inclusive
-		# of the NuGet versioning spec.
-		# Reference: https://docs.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges-and-wildcards
+  NugetRange([string]$string) {
+    # Use a regex to parse a semantic version range inclusive
+    # of the NuGet versioning spec.
+    # Reference: https://docs.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges-and-wildcards
 
-		#A null is expected to mean all versions. This is probably a dangerous assumption.
-		if ([String]::IsNullOrWhiteSpace($string)) {
-			$this.Min = [NugetRange]::MinVersion
-			$this.Max = [NugetRange]::MaxVersion
-			return
-		}
+    #A null is expected to mean all versions. This is probably a dangerous assumption.
+    if ([String]::IsNullOrWhiteSpace($string)) {
+      $this.Min = [NugetRange]::MinVersion
+      $this.Max = [NugetRange]::MaxVersion
+      return
+    }
 
-		if ($string -as [SemanticVersion]) {
-			$this.Min = $string
-			$this.Max = $string
-			return
-		}
+    if ($string -as [SemanticVersion]) {
+      $this.Min = $string
+      $this.Max = $string
+      return
+    }
 
-		#Matches for beginning and ending parens or brackets
-		#If it doesnt match this, we've already evaluted the possible other solution
-		if ($string -notmatch '^(\(|\[)(.+)(\)|\])$') {
-			throw "Invalid Nuget Range: $string"
-		}
-		$left, $range, $right = $Matches[1..3]
+    #Matches for beginning and ending parens or brackets
+    #If it doesnt match this, we've already evaluted the possible other solution
+    if ($string -notmatch '^(\(|\[)(.+)(\)|\])$') {
+      throw "Invalid Nuget Range: $string"
+    }
+    $left, $range, $right = $Matches[1..3]
 
-		$this.MinInclusive = $left -eq '['
-		$this.MaxInclusive = $right -eq ']'
+    $this.MinInclusive = $left -eq '['
+    $this.MaxInclusive = $right -eq ']'
 
-		if ($range -notmatch '\,') {
-			$req = [String]::IsNullOrWhiteSpace($range) ? [NugetRange]::MinVersion : [ModuleFastSpec]::ParseVersionString($range)
-			$this.Min = $req
-			$this.Max = $req
-			return
-		}
-		$minString, $maxString = $range.split(',')
-		if (-not [String]::IsNullOrWhiteSpace($minString)) { $this.Min = [ModuleFastSpec]::ParseVersionString($minString) }
-		if (-not [String]::IsNullOrWhiteSpace($maxString)) { $this.Max = [ModuleFastSpec]::ParseVersionString($maxString) }
-	}
+    if ($range -notmatch '\,') {
+      $req = [String]::IsNullOrWhiteSpace($range) ? [NugetRange]::MinVersion : [ModuleFastSpec]::ParseVersionString($range)
+      $this.Min = $req
+      $this.Max = $req
+      return
+    }
+    $minString, $maxString = $range.split(',')
+    if (-not [String]::IsNullOrWhiteSpace($minString)) { $this.Min = [ModuleFastSpec]::ParseVersionString($minString) }
+    if (-not [String]::IsNullOrWhiteSpace($maxString)) { $this.Max = [ModuleFastSpec]::ParseVersionString($maxString) }
+  }
 
-	static [SemanticVersion] Decrement([SemanticVersion]$version) {
-		if ($version.BuildLabel -or $version.PreReleaseLabel) {
-			Write-Warning 'Decrementing a version with a build or prerelease label is not supported as the Powershell Semantic Version class cannot compare them anyways. We will decrement the patch version instead and strip the prerelease headers. Do not rely on this behavior, it will change. https://github.com/PowerShell/PowerShell/issues/18489'
-		}
-		if ($version.Patch -gt 0) {
-			return [SemanticVersion]::new($version.Major, $version.Minor, $version.Patch - 1)
-		}
-		if ($version.Minor -gt 0) {
-			if ($version.Patch -eq 0) {
-				return [SemanticVersion]::new($version.Major, $version.Minor - 1, [int]::MaxValue)
-			}
-			return [SemanticVersion]::new($version.Major, $version.Minor - 1, $version.Patch)
-		}
-		if ($version.Major -gt 0) {
-			if ($version.Minor -eq 0 -and $version.Patch -eq 0) {
-				return [SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
-			}
-		}
-		throw [ArgumentOutOfRangeException]'Unexpected Decrement Scenario Occurred, this should never happen and is a bug in ModuleFastSpec'
-	}
+  static [SemanticVersion] Decrement([SemanticVersion]$version) {
+    if ($version.BuildLabel -or $version.PreReleaseLabel) {
+      Write-Warning 'Decrementing a version with a build or prerelease label is not supported as the Powershell Semantic Version class cannot compare them anyways. We will decrement the patch version instead and strip the prerelease headers. Do not rely on this behavior, it will change. https://github.com/PowerShell/PowerShell/issues/18489'
+    }
+    if ($version.Patch -gt 0) {
+      return [SemanticVersion]::new($version.Major, $version.Minor, $version.Patch - 1)
+    }
+    if ($version.Minor -gt 0) {
+      if ($version.Patch -eq 0) {
+        return [SemanticVersion]::new($version.Major, $version.Minor - 1, [int]::MaxValue)
+      }
+      return [SemanticVersion]::new($version.Major, $version.Minor - 1, $version.Patch)
+    }
+    if ($version.Major -gt 0) {
+      if ($version.Minor -eq 0 -and $version.Patch -eq 0) {
+        return [SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
+      }
+    }
+    throw [ArgumentOutOfRangeException]'Unexpected Decrement Scenario Occurred, this should never happen and is a bug in ModuleFastSpec'
+  }
 
-	static [SemanticVersion] Increment([SemanticVersion]$version) {
-		if ($version.BuildLabel -or $version.PreReleaseLabel) {
-			Write-Warning 'Incrementing a version with a build or prerelease label is not supported as the Powershell Semantic Version class cannot compare them anyways. We will decrement the patch version instead and strip the prerelease headers. Do not rely on this behavior, it will change. https://github.com/PowerShell/PowerShell/issues/18489'
-		}
-		if ($version.Patch -le [int]::MaxValue) {
-			return [SemanticVersion]::new($version.Major, $version.Minor, $version.Patch + 1)
-		}
-		if ($version.Minor -gt 0) {
-			if ($version.Patch -eq [int]::MaxValue) {
-				return [SemanticVersion]::new($version.Major, $version.Minor + 1, 0)
-			}
-			return [SemanticVersion]::new($version.Major, $version.Minor + 1, $version.Patch)
-		}
-		if ($version.Major -gt 0) {
-			if ($version.Minor -eq 0 -and $version.Patch -eq 0) {
-				return [SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
-			}
-		}
-		throw [ArgumentOutOfRangeException]'Unexpected Increment Scenario Occurred, this should never happen and is a bug in ModuleFastSpec'
-	}
+  static [SemanticVersion] Increment([SemanticVersion]$version) {
+    if ($version.BuildLabel -or $version.PreReleaseLabel) {
+      Write-Warning 'Incrementing a version with a build or prerelease label is not supported as the Powershell Semantic Version class cannot compare them anyways. We will decrement the patch version instead and strip the prerelease headers. Do not rely on this behavior, it will change. https://github.com/PowerShell/PowerShell/issues/18489'
+    }
+    if ($version.Patch -le [int]::MaxValue) {
+      return [SemanticVersion]::new($version.Major, $version.Minor, $version.Patch + 1)
+    }
+    if ($version.Minor -gt 0) {
+      if ($version.Patch -eq [int]::MaxValue) {
+        return [SemanticVersion]::new($version.Major, $version.Minor + 1, 0)
+      }
+      return [SemanticVersion]::new($version.Major, $version.Minor + 1, $version.Patch)
+    }
+    if ($version.Major -gt 0) {
+      if ($version.Minor -eq 0 -and $version.Patch -eq 0) {
+        return [SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
+      }
+    }
+    throw [ArgumentOutOfRangeException]'Unexpected Increment Scenario Occurred, this should never happen and is a bug in ModuleFastSpec'
+  }
 }
 
-#This is a module helper to create "getters" in classes
+#This is a module construction helper to create "getters" in classes. The getters must be defined as a static hidden class prefixed with Get_ (case sensitive) and take a single parameter of the PSObject type that will be an instance of the class object for you to act on. Place this in your class constructor to automatically add the getters to the class.
 function Add-Getters {
-	Get-Member -InputObject $this -MemberType Method -Force |
-		Where-Object name -CLike 'Get_*' |
-		ForEach-Object name |
-		ForEach-Object {
-			$getter = [ScriptBlock]::Create(('$this.{0}()' -f $PSItem))
-			$property = $PSItem -replace 'Get_', ''
-			Add-Member -InputObject $this -Name $property -MemberType ScriptProperty -Value $getter
-		}
+  $this.GetType().GetMethods([BindingFlags]::Static -bor [BindingFlags]::Public)
+  | Where-Object name -CLike 'Get_*'
+  | Where-Object { $_.GetCustomAttributes([HiddenAttribute]) }
+  | Where-Object {
+    $params = $_.GetParameters()
+    $params.count -eq 1 -and $params[0].ParameterType -eq [PSObject]
+  }
+  | ForEach-Object {
+    Add-Member -InputObject $this -MemberType CodeProperty -Name $($_.Name -replace 'Get_', '') -Value $PSItem
+  }
 }
 #endRegion Classes
 
