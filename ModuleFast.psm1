@@ -20,7 +20,7 @@ using namespace System.Threading.Tasks
 $ErrorActionPreference = 'Stop'
 
 #region Formats
-#Update-TypeData can only work with files, hence this workaround
+#Update-FormatData can only work with files, hence this workaround
 @'
 <Configuration>
 	<ViewDefinitions>
@@ -56,7 +56,7 @@ $ErrorActionPreference = 'Stop'
 	</ViewDefinitions>
 </Configuration>
 '@ | Out-File -Encoding UTF8 -FilePath 'TEMP:/ModuleFast.format.ps1xml' -Force
-Update-TypeData -PrependPath 'TEMP:/ModuleFast.format.ps1xml'
+Update-FormatData -PrependPath (Resolve-Path 'TEMP:/ModuleFast.format.ps1xml')
 #endregion Formats
 
 #region Public
@@ -1105,97 +1105,97 @@ class NugetRange {
 #region Helpers
 
 function Get-ModuleInfoAsync {
-	[CmdletBinding()]
-	[OutputType([Task[String]])]
-	param (
-		# The name of the module to search for
-		[Parameter(Mandatory, ParameterSetName = 'endpoint')][string]$Name,
-		# The URI of the nuget v3 repository base, e.g. https://pwsh.gallery/index.json
-		[Parameter(Mandatory, ParameterSetName = 'endpoint')]$Endpoint,
-		# The path we are calling for the registration.
-		[Parameter(ParameterSetName = 'endpoint')][string]$Path = 'index.json',
+  [CmdletBinding()]
+  [OutputType([Task[String]])]
+  param (
+    # The name of the module to search for
+    [Parameter(Mandatory, ParameterSetName = 'endpoint')][string]$Name,
+    # The URI of the nuget v3 repository base, e.g. https://pwsh.gallery/index.json
+    [Parameter(Mandatory, ParameterSetName = 'endpoint')]$Endpoint,
+    # The path we are calling for the registration.
+    [Parameter(ParameterSetName = 'endpoint')][string]$Path = 'index.json',
 
-		#The direct URI to the registration endpoint
-		[Parameter(Mandatory, ParameterSetName = 'uri')][string]$Uri,
+    #The direct URI to the registration endpoint
+    [Parameter(Mandatory, ParameterSetName = 'uri')][string]$Uri,
 
-		[Parameter(Mandatory)][HttpClient]$HttpClient,
-		[Parameter(Mandatory)][CancellationToken]$CancellationToken
-	)
+    [Parameter(Mandatory)][HttpClient]$HttpClient,
+    [Parameter(Mandatory)][CancellationToken]$CancellationToken
+  )
 
-	if (-not $Uri) {
-		$ModuleId = $Name
+  if (-not $Uri) {
+    $ModuleId = $Name
 
-		#This call should be cached by httpclient after first attempt to speed up future calls
-		#TODO: Only select supported versions
-		#TODO: Cache this index more centrally to be used for other services
-		if (-not $SCRIPT:__registrationIndex) {
-			$SCRIPT:__registrationIndex = $HttpClient.GetStringAsync($Endpoint, $CancellationToken).GetAwaiter().GetResult()
-		}
+    #This call should be cached by httpclient after first attempt to speed up future calls
+    #TODO: Only select supported versions
+    #TODO: Cache this index more centrally to be used for other services
+    if (-not $SCRIPT:__registrationIndex) {
+      $SCRIPT:__registrationIndex = $HttpClient.GetStringAsync($Endpoint, $CancellationToken).GetAwaiter().GetResult()
+    }
 
-		$registrationBase = $SCRIPT:__registrationIndex
+    $registrationBase = $SCRIPT:__registrationIndex
 		| ConvertFrom-Json
 		| Select-Object -ExpandProperty Resources
 		| Where-Object {
-			$_.'@type' -match 'RegistrationsBaseUrl'
-		}
+      $_.'@type' -match 'RegistrationsBaseUrl'
+    }
 		| Sort-Object -Property '@type' -Descending
 		| Select-Object -ExpandProperty '@id' -First 1
 
-		$uri = "$registrationBase/$($ModuleId.ToLower())/$Path"
-	}
+    $uri = "$registrationBase/$($ModuleId.ToLower())/$Path"
+  }
 
-	#TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
-	Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
+  #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
+  Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
 
-	return $HttpClient.GetStringAsync($uri, $CancellationToken)
+  return $HttpClient.GetStringAsync($uri, $CancellationToken)
 }
 
 
 function Add-DestinationToPSModulePath {
-	<#
+  <#
 	.SYNOPSIS
 	Adds an existing PowerShell Modules path to the current session as well as the profile
 	#>
-	[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
-	param(
-		[Parameter(Mandatory)][string]$Destination,
-		[switch]$NoProfileUpdate
-	)
-	$ErrorActionPreference = 'Stop'
-	$Destination = Resolve-Path $Destination #Will error if it doesn't exist
+  [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+  param(
+    [Parameter(Mandatory)][string]$Destination,
+    [switch]$NoProfileUpdate
+  )
+  $ErrorActionPreference = 'Stop'
+  $Destination = Resolve-Path $Destination #Will error if it doesn't exist
 
-	# Check if the destination is in the PSModulePath. For a default setup this should basically always be true for Mac/Linux
-	[string[]]$modulePaths = $env:PSModulePath.split([Path]::PathSeparator)
-	if ($Destination -in $modulePaths) {
-		Write-Debug "Destination '$Destination' is already in the PSModulePath, we will assume it is already configured correctly"
-		return
-	}
+  # Check if the destination is in the PSModulePath. For a default setup this should basically always be true for Mac/Linux
+  [string[]]$modulePaths = $env:PSModulePath.split([Path]::PathSeparator)
+  if ($Destination -in $modulePaths) {
+    Write-Debug "Destination '$Destination' is already in the PSModulePath, we will assume it is already configured correctly"
+    return
+  }
 
-	# Generally we only get this far on Windows where the default CurrentUser is in Documents
-	Write-Verbose "Updating PSModulePath to include $Destination"
-	$env:PSModulePath = $Destination, $env:PSModulePath -join [Path]::PathSeparator
+  # Generally we only get this far on Windows where the default CurrentUser is in Documents
+  Write-Verbose "Updating PSModulePath to include $Destination"
+  $env:PSModulePath = $Destination, $env:PSModulePath -join [Path]::PathSeparator
 
-	if ($NoProfileUpdate) {
-		Write-Debug 'Skipping updating the profile because -NoProfileUpdate was specified'
-		return
-	}
+  if ($NoProfileUpdate) {
+    Write-Debug 'Skipping updating the profile because -NoProfileUpdate was specified'
+    return
+  }
 
-	#TODO: Support other profiles?
-	$myProfile = $profile.CurrentUserAllHosts
+  #TODO: Support other profiles?
+  $myProfile = $profile.CurrentUserAllHosts
 
-	if (-not (Test-Path $myProfile)) {
-		if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
-		Write-Verbose 'User All Hosts profile not found, creating one.'
-		New-Item -ItemType File -Path $myProfile -Force | Out-Null
-	}
+  if (-not (Test-Path $myProfile)) {
+    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
+    Write-Verbose 'User All Hosts profile not found, creating one.'
+    New-Item -ItemType File -Path $myProfile -Force | Out-Null
+  }
 
   #Prepare a relative destination if possible using Path.GetRelativePath
-  foreach ($basePath in [environment]::GetFolderPath('LocalApplicationData'),$Home) {
+  foreach ($basePath in [environment]::GetFolderPath('LocalApplicationData'), $Home) {
     $relativeDestination = [IO.Path]::GetRelativePath($basePath, $Destination)
     if ($relativeDestination -ne $Destination) {
       [string]$newDestination = '$([environment]::GetFolderPath(''LocalApplicationData''))' +
-        [IO.Path]::DirectorySeparatorChar +
-        $relativeDestination
+      [IO.Path]::DirectorySeparatorChar +
+      $relativeDestination
       Write-Verbose "Using relative path $newDestination instead of '$Destination' in profile"
       $Destination = $newDestination
       break
@@ -1203,203 +1203,196 @@ function Add-DestinationToPSModulePath {
   }
   Write-Verbose 'Checked for relative destination'
 
-	[string]$profileLine = {if ("##DESTINATION##" -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) {$env:PSModulePath = "##DESTINATION##" + $([IO.Path]::PathSeparator + $env:PSModulePath)} <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
+  [string]$profileLine = { if ('##DESTINATION##' -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) { $env:PSModulePath = '##DESTINATION##' + $([IO.Path]::PathSeparator + $env:PSModulePath) } <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
 
   #We can't use string formatting because of the braces already present
   $profileLine = $profileLine -replace '##DESTINATION##', $Destination
 
-	if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
-		if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the specified destination to your powershell.config.json or to your PSModulePath another way.")) { return }
-		Write-Verbose "Adding $Destination to profile $myProfile"
-		Add-Content -Path $myProfile -Value "`n`n"
-		Add-Content -Path $myProfile -Value $ProfileLine
-	} else {
-		Write-Verbose "PSModulePath $Destination already in profile, skipping..."
-	}
+  if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
+    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the specified destination to your powershell.config.json or to your PSModulePath another way.")) { return }
+    Write-Verbose "Adding $Destination to profile $myProfile"
+    Add-Content -Path $myProfile -Value "`n`n"
+    Add-Content -Path $myProfile -Value $ProfileLine
+  } else {
+    Write-Verbose "PSModulePath $Destination already in profile, skipping..."
+  }
 }
 
 
 function Find-LocalModule {
-	<#
+  <#
 	.SYNOPSIS
 	Searches local PSModulePath repositories
 	#>
-	param(
-		[Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-		[string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator),
-		[Switch]$Update
-	)
-	$ErrorActionPreference = 'Stop'
-	# BUG: Prerelease Module paths are still not recognized by internal PS commands and can break things
+  param(
+    [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
+    [string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator),
+    [Switch]$Update
+  )
+  $ErrorActionPreference = 'Stop'
+  # BUG: Prerelease Module paths are still not recognized by internal PS commands and can break things
 
-	# Search all psmodulepaths for the module
-	$modulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
-	if (-Not $modulePaths) {
-		Write-Warning 'No PSModulePaths found in $env:PSModulePath. If you are doing isolated testing you can disregard this.'
-		return
-	}
+  # Search all psmodulepaths for the module
+  $modulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
+  if (-Not $modulePaths) {
+    Write-Warning 'No PSModulePaths found in $env:PSModulePath. If you are doing isolated testing you can disregard this.'
+    return
+  }
 
-	# NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
-	foreach ($modulePath in $modulePaths) {
-		if (-not [Directory]::Exists($modulePath)) {
-			Write-Debug "PSModulePath $modulePath is configured but does not exist, skipping..."
-			continue
-		}
+  # NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
+  foreach ($modulePath in $modulePaths) {
+    if (-not [Directory]::Exists($modulePath)) {
+      Write-Debug "PSModulePath $modulePath is configured but does not exist, skipping..."
+      continue
+    }
 
-		#Linux/Mac support requires a case insensitive search on a user supplied variable.
-		$moduleBaseDir = [Directory]::GetDirectories($modulePath, $moduleSpec.Name, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
-		if ($moduleBaseDir.count -gt 1) { throw "$($moduleSpec.Name) folder is ambiguous, please delete one of these folders: $moduleBaseDir" }
-		if (-not $moduleBaseDir) {
-			Write-Debug "$modulePath does not have a $($moduleSpec.Name) folder. Skipping..."
-			continue
-		}
+    #Linux/Mac support requires a case insensitive search on a user supplied variable.
+    $moduleBaseDir = [Directory]::GetDirectories($modulePath, $moduleSpec.Name, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+    if ($moduleBaseDir.count -gt 1) { throw "$($moduleSpec.Name) folder is ambiguous, please delete one of these folders: $moduleBaseDir" }
+    if (-not $moduleBaseDir) {
+      Write-Debug "$modulePath does not have a $($moduleSpec.Name) folder. Skipping..."
+      continue
+    }
 
-		if ($moduleSpec.Required) {
-			#We can speed up the search for explicit requiredVersion matches
-			$moduleVersion = $ModuleSpec.Version #We want to search using a nuget translated path
-			$moduleFolder = Join-Path $moduleBaseDir $moduleVersion
+    if ($moduleSpec.Required) {
+      #We can speed up the search for explicit requiredVersion matches
+      $moduleVersion = $ModuleSpec.Version #We want to search using a nuget translated path
+      $moduleFolder = Join-Path $moduleBaseDir $moduleVersion
 
-			$manifestPath = Join-Path $moduleFolder "$($ModuleSpec.Name).psd1"
+      $manifestPath = Join-Path $moduleFolder "$($ModuleSpec.Name).psd1"
 
-			if (Test-Path $ModuleFolder) {
-				#Linux/Mac support requires a case insensitive search on a user supplied argument.
-				$manifestPath = [Directory]::GetFiles($moduleFolder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+      if (Test-Path $ModuleFolder) {
+        #Linux/Mac support requires a case insensitive search on a user supplied argument.
+        $manifestPath = [Directory]::GetFiles($moduleFolder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
 
-				if ($manifestPath.count -gt 1) { throw "$moduleFolder manifest is ambiguous, please delete one of these: $manifestPath" }
-				if ($manifestPath.count -eq 1) { return $manifestPath }
-			}
-		} else {
-			#This is used to keep a map of versions to manifests, needed to support both "classic" and "versioned" module folders
-			[Dictionary[Version, String]]$candidateVersions = @{}
+        if ($manifestPath.count -gt 1) { throw "$moduleFolder manifest is ambiguous, please delete one of these: $manifestPath" }
+        if ($manifestPath.count -eq 1) { return $manifestPath }
+      }
+    } else {
+      #This is used to keep a map of versions to manifests, needed to support both "classic" and "versioned" module folders
+      [Dictionary[Version, String]]$candidateVersions = @{}
 
-			#If not a classic module, check for versioned folders
-			$folders = [Directory]::GetDirectories($moduleBaseDir)
-			foreach ($folder in $folders) {
-				$versionCandidate = Split-Path -Leaf $folder
-				[Version]$version = $null
-				if ([Version]::TryParse($versionCandidate, [ref]$version)) {
-					#Try to retrieve the manifest
-					#TODO: Create a "Assert-CaseSensitiveFileExists" function for this pattern used multiple times
-					$versionedManifestPath = [Directory]::GetFiles($folder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
-					if ($versionedManifestPath.count -gt 1) { throw "$folder manifest is ambiguous, please delete one of these: $versionedManifestPath" }
-					if ($versionedManifestPath) {
-						$candidateVersions.Add($version, $versionedManifestPath)
-					}
-				} else {
-					Write-Debug "Could not parse $folder in $moduleBaseDir as a valid version. This is either a bad version directory or this folder is a classic module."
-					continue
-				}
+      #If not a classic module, check for versioned folders
+      $folders = [Directory]::GetDirectories($moduleBaseDir)
+      foreach ($folder in $folders) {
+        $versionCandidate = Split-Path -Leaf $folder
+        [Version]$version = $null
+        if ([Version]::TryParse($versionCandidate, [ref]$version)) {
+          #Try to retrieve the manifest
+          #TODO: Create a "Assert-CaseSensitiveFileExists" function for this pattern used multiple times
+          $versionedManifestPath = [Directory]::GetFiles($folder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+          if ($versionedManifestPath.count -gt 1) { throw "$folder manifest is ambiguous, please delete one of these: $versionedManifestPath" }
+          if ($versionedManifestPath) {
+            $candidateVersions.Add($version, $versionedManifestPath)
+          }
+        } else {
+          Write-Debug "Could not parse $folder in $moduleBaseDir as a valid version. This is either a bad version directory or this folder is a classic module."
+          continue
+        }
 
-				#Check for a "classic" module if no versioned folders were found
-				if ($candidateVersions.count -eq 0) {
-					$classicManifestPath = [Directory]::GetFiles($moduleBaseDir, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
-					if ($classicManifestPath.count -gt 1) { throw "$moduleBaseDir manifest is ambiguous, please delete one of these: $classicManifestPath" }
-					if ($classicManifestPath) {
-						$manifestData = Import-PowerShellDataFile $classicManifestPath
-						#Return the version in the manifest
-						$candidateVersions.Add($manifestData.ModuleVersion, $classicManifestPath)
-						continue
-					}
-				}
+        #Check for a "classic" module if no versioned folders were found
+        if ($candidateVersions.count -eq 0) {
+          $classicManifestPath = [Directory]::GetFiles($moduleBaseDir, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+          if ($classicManifestPath.count -gt 1) { throw "$moduleBaseDir manifest is ambiguous, please delete one of these: $classicManifestPath" }
+          if ($classicManifestPath) {
+            $manifestData = Import-PowerShellDataFile $classicManifestPath
+            #Return the version in the manifest
+            $candidateVersions.Add($manifestData.ModuleVersion, $classicManifestPath)
+            continue
+          }
+        }
 
-				if (-not $candidateVersions.count) {
-					Write-Verbose "$moduleSpec`: module folder exists at $moduleBaseDir but no modules found that match the version spec."
-					continue
-				}
+        if (-not $candidateVersions.count) {
+          Write-Verbose "$moduleSpec`: module folder exists at $moduleBaseDir but no modules found that match the version spec."
+          continue
+        }
 
-				[Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $ModuleSpec -Versions $candidateVersions.Keys -Highest
-				if (-not $versionMatch) {
-					[string[]]$candidateStrings = foreach ($candidate in $candidateVersions.keys) {
-						'{0} ({1})' -f $candidateVersions[$candidate], $candidate
-					}
-					Write-Debug "$moduleSpec`: Module versions were found but none that match the module spec requirement. Found Candidates: $($candidateStrings -join ';')"
-					return $null
-				}
+        [Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $ModuleSpec -Versions $candidateVersions.Keys -Highest
+        if (-not $versionMatch) {
+          [string[]]$candidateStrings = foreach ($candidate in $candidateVersions.keys) {
+            '{0} ({1})' -f $candidateVersions[$candidate], $candidate
+          }
+          Write-Debug "$moduleSpec`: Module versions were found but none that match the module spec requirement. Found Candidates: $($candidateStrings -join ';')"
+          return $null
+        }
 
-				[string]$matchingManifest = $candidateVersions[$versionMatch]
+        [string]$matchingManifest = $candidateVersions[$versionMatch]
 
-				if ($Update -and $moduleSpec.Max -gt [ModuleFastSpec]::ParseVersion($versionMatch)) {
-					Write-Debug "$moduleSpec`: Found a matching module version $versionMatch at $matchingManifest, but -Update was specified and the module spec allows for higher versions. Checking remote for updates..."
-					return $null
-				}
+        if ($Update -and $moduleSpec.Max -gt [ModuleFastSpec]::ParseVersion($versionMatch)) {
+          Write-Debug "$moduleSpec`: Found a matching module version $versionMatch at $matchingManifest, but -Update was specified and the module spec allows for higher versions. Checking remote for updates..."
+          return $null
+        }
 
-				if (-not [File]::Exists($matchingManifest)) {
-					throw "A matching module folder was found for $ModuleSpec but the manifest is not present at $matchingManifest. This is a bug and should never happen as we should have checked this ahead of time."
-				}
-				#TODO: Verify the manifest isn't corrupt by checking the module version? Should we be doing this for all manifests even tho it's a perf hit? Configurable option makes sense
+        if (-not [File]::Exists($matchingManifest)) {
+          throw "A matching module folder was found for $ModuleSpec but the manifest is not present at $matchingManifest. This is a bug and should never happen as we should have checked this ahead of time."
+        }
+        #TODO: Verify the manifest isn't corrupt by checking the module version? Should we be doing this for all manifests even tho it's a perf hit? Configurable option makes sense
 
-				return $matchingManifest
-			}
-		}
-	}
-	return $null
+        return $matchingManifest
+      }
+    }
+  }
+  return $null
 }
 
 # Find all normalized versions of a version, for example 1.0.1.0 also is 1.0.1
 function Get-NormalizedVersions ([Version]$Version) {
-	$versions = @()
-	if ($Version.Revision -eq 0) { $versions += [Version]::new($Version.Major, $Version.Minor, $Version.Build) }
-	if ($Version.Build -eq 0) { $versions += [Version]::new($Version.Major, $Version.Minor) }
-	if ($Version.Minor -ne 0) { $versions += [Version]::new($Version.Major) }
-	return $versions
+  $versions = @()
+  if ($Version.Revision -eq 0) { $versions += [Version]::new($Version.Major, $Version.Minor, $Version.Build) }
+  if ($Version.Build -eq 0) { $versions += [Version]::new($Version.Major, $Version.Minor) }
+  if ($Version.Minor -ne 0) { $versions += [Version]::new($Version.Major) }
+  return $versions
 }
 
 <#
 Given an array of versions, find the ones that satisfy the module spec. Returns $false if no match is found.
 #>
 function Limit-ModuleFastSpecVersions {
-	[OutputType([Version[]])]
-	[OutputType([Version], ParameterSetName = 'Highest')]
-	param(
-		[Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-		#Versions that are potential candidates to satisfy the modulespec
-		[Parameter(Mandatory)][HashSet[Version]]$Versions,
-		#Only return the highest version that satisfies the spec
-		[Parameter(ParameterSetName = 'Highest')][Switch]$Highest
-	)
-	$candidates = $Versions | Where-Object {
-		$ModuleSpec.Matches($PSItem)
-	}
-	-not $Highest ? $candidates : $candidates | Sort-Object -Descending | Select-Object -First 1
+  [OutputType([Version[]])]
+  [OutputType([Version], ParameterSetName = 'Highest')]
+  param(
+    [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
+    #Versions that are potential candidates to satisfy the modulespec
+    [Parameter(Mandatory)][HashSet[Version]]$Versions,
+    #Only return the highest version that satisfies the spec
+    [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
+  )
+  $candidates = $Versions | Where-Object {
+    $ModuleSpec.Matches($PSItem)
+  }
+  -not $Highest ? $candidates : $candidates | Sort-Object -Descending | Select-Object -First 1
 }
 
 function Limit-ModuleFastSpecSemanticVersions {
-	[OutputType([SemanticVersion[]])]
-	[OutputType([Version], ParameterSetName = 'Highest')]
-	param(
-		[Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-		#Versions that are potential candidates to satisfy the modulespec
-		[Parameter(Mandatory)][HashSet[SemanticVersion]]$Versions,
-		#Only return the highest version that satisfies the spec
-		[Parameter(ParameterSetName = 'Highest')][Switch]$Highest
-	)
-	$Versions | Where-Object {
-		$ModuleSpec.Matches($PSItem)
-	}
-	-not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
+  [OutputType([SemanticVersion[]])]
+  [OutputType([Version], ParameterSetName = 'Highest')]
+  param(
+    [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
+    #Versions that are potential candidates to satisfy the modulespec
+    [Parameter(Mandatory)][HashSet[SemanticVersion]]$Versions,
+    #Only return the highest version that satisfies the spec
+    [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
+  )
+  $Versions | Where-Object {
+    $ModuleSpec.Matches($PSItem)
+  }
+  -not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
 }
 function Limit-ModuleFastSpecs {
-	[OutputType([ModuleFastSpec[]])]
-	[OutputType([Version], ParameterSetName = 'Highest')]
-	param(
-		[Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-		#Versions that are potential candidates to satisfy the modulespec
-		[Parameter(Mandatory)][HashSet[ModuleFastSpec]]$ModuleSpecs,
-		#Only return the highest version that satisfies the spec
-		[Parameter(ParameterSetName = 'Highest')][Switch]$Highest
-	)
-	$ModuleSpecs | Where-Object {
-		$ModuleSpec.Matches($PSItem)
-	}
-	-not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
+  [OutputType([ModuleFastSpec[]])]
+  [OutputType([Version], ParameterSetName = 'Highest')]
+  param(
+    [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
+    #Versions that are potential candidates to satisfy the modulespec
+    [Parameter(Mandatory)][HashSet[ModuleFastSpec]]$ModuleSpecs,
+    #Only return the highest version that satisfies the spec
+    [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
+  )
+  $ModuleSpecs | Where-Object {
+    $ModuleSpec.Matches($PSItem)
+  }
+  -not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
 }
-
-try {
-	Update-TypeData -TypeName 'ModuleFastSpec' -DefaultDisplayPropertySet 'Name', 'Required', 'Min', 'Max' -ErrorAction Stop
-} catch [RuntimeException] {
-	if ($PSItem -notmatch 'is already present') { throw }
-}
-
 
 function ConvertTo-AuthenticationHeaderValue ([PSCredential]$Credential) {
 	$basicCredential = [Convert]::ToBase64String(
