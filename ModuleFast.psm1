@@ -815,7 +815,7 @@ class ModuleFastSpec : IComparable {
       return [Version]::new($Version.Major, $Version.Minor, $Version.Patch, $Version.BuildLabel)
     }
 
-    [string[]]$buildFlags = $Version.BuildLabel -split '\.'
+    [string[]]$buildFlags = $Version.BuildLabel.Split('.')
     if ($BuildFlags -notcontains [ModuleFastSpec]::SYSTEM_VERSION_LABEL) {
       #This is a semantic-compatible version, we can just return it
       return [Version]::new($Version.Major, $Version.Minor, $Version.Patch)
@@ -860,7 +860,7 @@ class ModuleFastSpec : IComparable {
   #Converts a stored version to a string representation. This handles cases where the value was originally a System.Version
   static [string] VersionToString([SemanticVersion]$version) {
     if ($null -eq $version) { return $null }
-    if ($Version.BuildLabel -contains 'HASREVISION') {
+    if ($Version.BuildLabel.Split('.') -contains 'HASREVISION') {
       #This is a system version, we need to convert it back to a system version
       return [ModuleFastSpec]::ParseSemanticVersion($version).ToString()
     }
