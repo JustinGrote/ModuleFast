@@ -335,15 +335,15 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 		Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
 	}
 	It 'Gets Module with lots of dependencies (Az)' {
-		#TODO: Mocks
-		Get-ModuleFastPlan 'Az' | Should -HaveCount 78
-	}
-	It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
-		Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
+    Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0' } | Should -HaveCount 86
+  }
+  It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
+    Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
 
-	}
-	It 'Gets multiple modules' {
-		Get-ModuleFastPlan 'Az', 'VMware.PowerCLI' | Should -HaveCount 153
+  }
+  It 'Gets multiple modules' {
+    Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0' }, @{ModuleName = 'VMWare.PowerCli'; ModuleVersion = '13.2' }
+    | Should -HaveCount 168
 	}
 }
 
