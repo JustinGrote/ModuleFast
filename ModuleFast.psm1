@@ -19,6 +19,46 @@ using namespace System.Threading.Tasks
 #Probably need to take into account inconsistent state, such as if a dependent module fails then the depending modules should be removed.
 $ErrorActionPreference = 'Stop'
 
+#region Formats
+#Update-TypeData can only work with files, hence this workaround
+@'
+<Configuration>
+	<ViewDefinitions>
+		<View>
+			<Name>ModuleFastSpec</Name>
+			<ViewSelectedBy>
+				<TypeName>ModuleFastSpec</TypeName>
+			</ViewSelectedBy>
+			<TableControl>
+				<AutoSize>true</AutoSize>
+				<TableHeaders>
+					<TableColumnHeader>
+						<Label>Name</Label>
+					</TableColumnHeader>
+					<TableColumnHeader>
+						<Label>Version</Label>
+					</TableColumnHeader>
+				</TableHeaders>
+				<TableRowEntries>
+					<TableRowEntry>
+						<TableColumnItems>
+							<TableColumnItem>
+								<PropertyName>Name</PropertyName>
+							</TableColumnItem>
+							<TableColumnItem>
+								<ScriptBlock>$_.GetVersionString() -replace '^@'</ScriptBlock>
+							</TableColumnItem>
+						</TableColumnItems>
+					</TableRowEntry>
+				</TableRowEntries>
+			</TableControl>
+		</View>
+	</ViewDefinitions>
+</Configuration>
+'@ | Out-File -Encoding UTF8 -FilePath 'TEMP:/ModuleFast.format.ps1xml' -Force
+Update-TypeData -PrependPath 'TEMP:/ModuleFast.format.ps1xml'
+#endregion Formats
+
 #region Public
 <#
 .SYNOPSIS
@@ -815,7 +855,7 @@ class ModuleFastSpec : IComparable {
       return [Version]::new($Version.Major, $Version.Minor, $Version.Patch, $Version.BuildLabel)
     }
 
-    [string[]]$buildFlags = $Version.BuildLabel.Split('.')
+    [string[]]$buildFlags = $Version.BuildLabel -split ('\.')
     if ($BuildFlags -notcontains [ModuleFastSpec]::SYSTEM_VERSION_LABEL) {
       #This is a semantic-compatible version, we can just return it
       return [Version]::new($Version.Major, $Version.Minor, $Version.Patch)
@@ -844,23 +884,25 @@ class ModuleFastSpec : IComparable {
   #TODO: Implement parsing of this string to the parser to allow it to be "reserialized" to a module spec
   [string] ToString() {
     $name = $this._Name + ($this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : '')
+    return $name + $this.GetVersionString()
+  }
+
+  #Prepares a string summary of the version range
+  [string] GetVersionString() {
     $versionString = switch ($true) {
-				($this.Min -eq [ModuleFastSpec]::MinVersion -and $this.Max -eq [ModuleFastSpec]::MaxVersion) {
-        #This is the default, so we don't need to print it
-        break
-      }
+				($this.Min -eq [ModuleFastSpec]::MinVersion -and $this.Max -eq [ModuleFastSpec]::MaxVersion) { break }
 				($null -ne $this.required) { "@$([ModuleFastSpec]::VersionToString($this.Required))"; break }
 				($this.Min -eq [ModuleFastSpec]::MinVersion) { "<$([ModuleFastSpec]::VersionToString($this.Max))"; break }
 				($this.Max -eq [ModuleFastSpec]::MaxVersion) { ">$([ModuleFastSpec]::VersionToString($this.Min))"; break }
       default { ":$($this.Min)-$($this.Max)" }
     }
-    return $name + $versionString
+    return $versionString
   }
 
   #Converts a stored version to a string representation. This handles cases where the value was originally a System.Version
   static [string] VersionToString([SemanticVersion]$version) {
     if ($null -eq $version) { return $null }
-    if ($Version.BuildLabel.Split('.') -contains 'HASREVISION') {
+    if ($Version.BuildLabel -split '\.' -contains 'HASREVISION') {
       #This is a system version, we need to convert it back to a system version
       return [ModuleFastSpec]::ParseSemanticVersion($version).ToString()
     }

@@ -1,0 +1,33 @@
+<Configuration>
+	<ViewDefinitions>
+		<View>
+			<Name>ModuleFastSpec</Name>
+			<ViewSelectedBy>
+				<TypeName>ModuleFastSpec</TypeName>
+			</ViewSelectedBy>
+			<TableControl>
+				<AutoSize>true</AutoSize>
+				<TableHeaders>
+					<TableColumnHeader>
+						<Label>Name</Label>
+					</TableColumnHeader>
+					<TableColumnHeader>
+						<Label>Version</Label>
+					</TableColumnHeader>
+				</TableHeaders>
+				<TableRowEntries>
+					<TableRowEntry>
+						<TableColumnItems>
+							<TableColumnItem>
+								<PropertyName>Name</PropertyName>
+							</TableColumnItem>
+							<TableColumnItem>
+								<ScriptBlock>$_.GetVersionString() -replace '^@'</ScriptBlock>
+							</TableColumnItem>
+						</TableColumnItems>
+					</TableRowEntry>
+				</TableRowEntries>
+			</TableControl>
+		</View>
+	</ViewDefinitions>
+</Configuration>
