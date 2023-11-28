@@ -860,7 +860,7 @@ class ModuleFastSpec : IComparable {
   #Converts a stored version to a string representation. This handles cases where the value was originally a System.Version
   static [string] VersionToString([SemanticVersion]$version) {
     if ($null -eq $version) { return $null }
-    if ($Version.BuildLabel -match 'SYSTEMVERSION' -and $version.PrereleaseLabel -as [int]) {
+    if ($Version.BuildLabel -contains 'HASREVISION') {
       #This is a system version, we need to convert it back to a system version
       return [ModuleFastSpec]::ParseSemanticVersion($version).ToString()
     }
