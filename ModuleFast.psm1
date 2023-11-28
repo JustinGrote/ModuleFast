@@ -70,7 +70,9 @@ It also doesn't generate the PowershellGet XML files currently, so PSGet v2 will
 function Install-ModuleFast {
   [CmdletBinding(SupportsShouldProcess)]
   param(
+
     [Parameter(Mandatory, ValueFromPipeline)]$ModuleToInstall,
+    #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
     [string]$Source = 'https://pwsh.gallery/index.json',
