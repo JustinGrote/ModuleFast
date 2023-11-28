@@ -70,7 +70,7 @@ It also doesn't generate the PowershellGet XML files currently, so PSGet v2 will
 function Install-ModuleFast {
   [CmdletBinding(SupportsShouldProcess)]
   param(
-    $ModulesToInstall,
+    [Parameter(Mandatory, ValueFromPipeline)]$ModuleToInstall,
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
     [string]$Source = 'https://pwsh.gallery/index.json',
@@ -83,92 +83,102 @@ function Install-ModuleFast {
     #Setting this will check remote if the module spec has a higher bound than any currently installed local packages.
     [Switch]$Update
   )
+  begin {
 
-  # Setup the Destination repository
-  $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
-  if (-not $Destination) {
-    $Destination = $defaultRepoPath
-  }
-
-  # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
-  if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
-    if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
-      New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    }
-  }
-
-  $Destination = Resolve-Path $Destination
-
-  if (-not $NoPSModulePathUpdate) {
-    if ($defaultRepoPath -ne $Destination -and $Destination -notin $PSModulePaths) {
-      Write-Warning 'Parameter -Destination is set to a custom path not in your current PSModulePath. We will add it to your PSModulePath for this session. You can suppress this behavior with the -NoPSModulePathUpdate switch.'
-      $NoProfileUpdate = $true
+    # Setup the Destination repository
+    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
+    if (-not $Destination) {
+      $Destination = $defaultRepoPath
     }
 
-    $addToPathParams = @{
-      Destination     = $Destination
-      NoProfileUpdate = $NoProfileUpdate
+    # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
+    if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
+      if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+      }
     }
-    if ($PSBoundParameters.ContainsKey('Confirm')) {
-      $addToPathParams.Confirm = $PSBoundParameters.Confirm
+
+    $Destination = Resolve-Path $Destination
+
+    if (-not $NoPSModulePathUpdate) {
+      if ($defaultRepoPath -ne $Destination -and $Destination -notin $PSModulePaths) {
+        Write-Warning 'Parameter -Destination is set to a custom path not in your current PSModulePath. We will add it to your PSModulePath for this session. You can suppress this behavior with the -NoPSModulePathUpdate switch.'
+        $NoProfileUpdate = $true
+      }
+
+      $addToPathParams = @{
+        Destination     = $Destination
+        NoProfileUpdate = $NoProfileUpdate
+      }
+      if ($PSBoundParameters.ContainsKey('Confirm')) {
+        $addToPathParams.Confirm = $PSBoundParameters.Confirm
+      }
+      Add-DestinationToPSModulePath @addtoPathParams
     }
-    Add-DestinationToPSModulePath @addtoPathParams
-  }
 
-  $currentWhatIfPreference = $WhatIfPreference
-  #We do some stuff here that doesn't affect the system but triggers whatif, so we disable it
-  $WhatIfPreference = $false
+    $currentWhatIfPreference = $WhatIfPreference
+    #We do some stuff here that doesn't affect the system but triggers whatif, so we disable it
+    $WhatIfPreference = $false
 
-  #We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
-  #it is still a best practice.
-  if (-not $SCRIPT:__ModuleFastHttpClient) {
-    $SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential
+    #We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
+    #it is still a best practice.
     if (-not $SCRIPT:__ModuleFastHttpClient) {
-      throw 'Failed to create ModuleFast HTTPClient. This is a bug'
+      $SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential
+      if (-not $SCRIPT:__ModuleFastHttpClient) {
+        throw 'Failed to create ModuleFast HTTPClient. This is a bug'
+      }
     }
+    $httpClient = $SCRIPT:__ModuleFastHttpClient
+    [List[Object]]$ModulesToInstall = @()
   }
-  $httpClient = $SCRIPT:__ModuleFastHttpClient
-  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-  $plan = Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
-  $WhatIfPreference = $currentWhatIfPreference
 
-  if ($plan.Count -eq 0) {
-    if ($WhatIfPreference) {
-      Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
+  process {
+    $ModulesToInstall.Add($ModuleToInstall)
+  }
+
+  end {
+    $plan = if ($ModulesToInstall -is [ModuleFastSpec] -or $ModulesToInstall -is [ModuleFastSpec[]]) {
+      $ModulesToInstall
+    } else {
+      Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
+      Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
     }
-    #TODO: Deduplicate this with the end into its own function
+
+    $WhatIfPreference = $currentWhatIfPreference
+
+    if ($plan.Count -eq 0) {
+      if ($WhatIfPreference) {
+        Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
+      }
+      #TODO: Deduplicate this with the end into its own function
+      Write-Verbose "`u{2705} All required modules installed! Exiting."
+      return
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($Destination, "Install $($plan.Count) Modules")) {
+      # Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan BEGIN"
+      #TODO: Separate planned installs and dependencies
+      $plan
+      # Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan END"
+      return
+    }
+
+    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($plan.count) Modules" -PercentComplete 50
+
+    $cancelSource = [CancellationTokenSource]::new()
+
+    $installHelperParams = @{
+      ModuleToInstall   = $plan
+      Destination       = $Destination
+      CancellationToken = $cancelSource.Token
+      HttpClient        = $httpClient
+      Update            = $Update
+    }
+    Install-ModuleFastHelper @installHelperParams
+    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
     Write-Verbose "`u{2705} All required modules installed! Exiting."
-    return
   }
 
-  if (-not $PSCmdlet.ShouldProcess($Destination, "Install $($plan.Count) Modules")) {
-    Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan BEGIN"
-    #TODO: Separate planned installs and dependencies
-    $plan
-		| Select-Object Name, @{N = 'Version'; E = { [ModuleFastSpec]::VersionToString($_.Required) } }
-		| Sort-Object Name
-		| Format-Table -AutoSize
-		| Out-String
-		| Write-Host -ForegroundColor DarkGray
-    Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan END"
-    return
-  }
-
-
-  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($plan.count) Modules" -PercentComplete 50
-
-  $cancelSource = [CancellationTokenSource]::new()
-
-  $installHelperParams = @{
-    ModuleToInstall   = $plan
-    Destination       = $Destination
-    CancellationToken = $cancelSource.Token
-    HttpClient        = $httpClient
-    Update            = $Update
-  }
-  Install-ModuleFastHelper @installHelperParams
-  Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
-  Write-Verbose "`u{2705} All required modules installed! Exiting."
 }
 
 function New-ModuleFastClient {
