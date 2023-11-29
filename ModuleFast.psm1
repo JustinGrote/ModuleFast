@@ -66,11 +66,19 @@ High Performance Powershell Module Installation
 .NOTES
 THIS IS NOT FOR PRODUCTION, it should be considered "Fragile" and has very little error handling and type safety
 It also doesn't generate the PowershellGet XML files currently, so PSGet v2 will see them as "External" modules (PSGetv3 doesn't care)
+.EXAMPLE
+Install-ModuleFast 'Az'
+.EXAMPLE
+$plan = Get-ModuleFastPlan 'Az','VMWare.PowerCLI'
+$plan | Install-ModuleFast
+.EXAMPLE
+$plan = Install-ModuleFast 'Az','VMWare.PowerCLI' -WhatIf
+$plan | Install-ModuleFast
 #>
 function Install-ModuleFast {
   [CmdletBinding(SupportsShouldProcess)]
   param(
-
+    #The module(s) to install. This can be a string, a ModuleSpecification, a hashtable with nuget version style (e.g. @{Name='test';Version='1.0'}), a hashtable with ModuleSpecification style (e.g. @{Name='test';RequiredVersion='1.0'}),
     [Parameter(Mandatory, ValueFromPipeline)]$ModuleToInstall,
     #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
     [string]$Destination,
@@ -86,7 +94,6 @@ function Install-ModuleFast {
     [Switch]$Update
   )
   begin {
-
     # Setup the Destination repository
     $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
     if (-not $Destination) {
