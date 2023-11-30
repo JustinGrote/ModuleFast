@@ -239,8 +239,8 @@ function Get-ModuleFastPlan {
     #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
     try {
       foreach ($moduleSpec in $ModulesToResolve) {
-        [string]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
-        if ($localMatch -and -not $Update) {
+        [LocalModule]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
+        if ($localMatch) {
           Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
           #TODO: Capture this somewhere that we can use it to report in the deploy plan
           continue
@@ -667,13 +667,14 @@ class ModuleFastSpec: IComparable {
   }
 
   #ModuleSpecification Compatible Getters
-  static hidden [Version]Get_RequiredVersion([PSObject]$i) { return $i.Required.Version }
+  static hidden [Version]Get_RequiredVersion([PSObject]$i) {
+    return $i.Required.Version
+  }
   static hidden [Version]Get_Version([PSObject]$i) { return $i.Min.Version }
   static hidden [Version]Get_MaximumVersion([PSObject]$i) { return $i.Max.Version }
 
   #Download Link to where the nuget package zip of the module is located
   [uri]$DownloadLink
-
 
   #Constructors
   ModuleFastSpec([string]$Name) {
@@ -724,6 +725,15 @@ class ModuleFastSpec: IComparable {
     #   throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
     # }
   }
+
+  #region Methods
+  [bool] SatisfiedBy([NugetVersion]$Version) {
+    return $this._VersionRange.Satisfies($Version)
+  }
+
+  #endregion Methods
+
+  #region InterfaceImplementations
 
   #IEquatable
   #BUG: We cannot implement IEquatable directly because we need to self-reference ModuleFastSpec before it exists.
@@ -777,7 +787,6 @@ class ModuleFastSpec: IComparable {
     return 0
   }
 
-
   hidden [bool]IsRequiredVersion([VersionRange]$Version) {
     return $Version.MinVersion -ne $Version.MaxVersion -or
     -not $Version.HasLowerAndUpperBounds -or
@@ -786,9 +795,34 @@ class ModuleFastSpec: IComparable {
   }
 
   #end IComparable
+
+  #endregion InterfaceImplementations
+
+  #region ImplicitConversions
+  static [ModuleSpecification] op_Implicit([ModuleFastSpec]$moduleFastSpec) {
+    $moduleSpecProperties = @{
+      ModuleName = $moduleFastSpec.Name
+    }
+    if ($moduleFastSpec.Guid -ne [Guid]::Empty) {
+      $moduleSpecProperties.Guid = $moduleFastSpec.Guid
+    }
+    if ($moduleFastSpec.Required) {
+      [version]$version = $null
+      [version]::TryParse($moduleFastSpec.Required, [ref]$version) | Out-Null
+      $moduleSpecProperties.RequiredVersion = $moduleFastSpec.Required.Version
+    } elseif ($moduleSpecProperties.Min -or $moduleSpecProperties.Max) {
+      $moduleSpecProperties.ModuleVersion = $moduleFastSpec.Min.Version
+      $moduleSpecProperties.MaximumVersion = $moduleFastSpec.Max.Version
+    } else {
+      $moduleSpecProperties.ModuleVersion = [Version]'0.0'
+    }
+
+    return [ModuleSpecification]$moduleSpecProperties
+  }
+
+  #endregion ImplicitConversions
 }
 [ModuleFastSpec] | Add-Getters
-
 
 class OldModuleFastSpec : IComparable {
   <#
@@ -1352,11 +1386,25 @@ function Add-DestinationToPSModulePath {
   }
 }
 
+class LocalModule {
+  [string]$Name
+  #Sometimes the module version is not the same as the folder version
+  [NuGetVersion]$ModuleVersion
+  #The module folder can be derived as the base of the manifest path
+  [string]$ManifestPath
+
+  LocalModule([string]$Name, [NuGetVersion]$ModuleVersion, [String]$ManifestPath) {
+    $this.Name = $Name
+    $this.ModuleVersion = $ModuleVersion
+    $this.ManifestPath = $ManifestPath
+  }
+}
 
 function Find-LocalModule {
+  [OutputType([LocalModule])]
   <#
 	.SYNOPSIS
-	Searches local PSModulePath repositories
+	Searches local PSModulePath repositories for the first module that satisfies the ModuleSpec criteria
 	#>
   param(
     [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
@@ -1373,8 +1421,9 @@ function Find-LocalModule {
     return
   }
 
-  # NOTE: We are intentionally using return instead of continue here, as soon as we find a match we are done.
-  foreach ($modulePath in $modulePaths) {
+  #First property is the manifest path, second property is the actual version (may be different from the folder version as prerelease versions go in the same location)
+
+  [List[[Tuple[string, Version]]]]$candidateModules = foreach ($modulePath in $modulePaths) {
     if (-not [Directory]::Exists($modulePath)) {
       Write-Debug "PSModulePath $modulePath is configured but does not exist, skipping..."
       continue
@@ -1384,89 +1433,126 @@ function Find-LocalModule {
     $moduleBaseDir = [Directory]::GetDirectories($modulePath, $moduleSpec.Name, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
     if ($moduleBaseDir.count -gt 1) { throw "$($moduleSpec.Name) folder is ambiguous, please delete one of these folders: $moduleBaseDir" }
     if (-not $moduleBaseDir) {
-      Write-Debug "$modulePath does not have a $($moduleSpec.Name) folder. Skipping..."
+      Write-Debug "PSModulePath $modulePath does not have a $($moduleSpec.Name) folder. Skipping..."
       continue
     }
 
-    if ($moduleSpec.Required) {
-      #We can speed up the search for explicit requiredVersion matches
-      $moduleVersion = $ModuleSpec.Version #We want to search using a nuget translated path
-      $moduleFolder = Join-Path $moduleBaseDir $moduleVersion
+    $manifestName = "$($ModuleSpec.Name).psd1"
 
-      $manifestPath = Join-Path $moduleFolder "$($ModuleSpec.Name).psd1"
+    #We can attempt a fast-search for modules if the ModuleSpec is for a specific version
+    if ($ModuleSpec.Required) {
+      #TODO: Split this off into Find-RequiredLocalModule
+
+      $moduleVersion = $ModuleSpec.Required.OriginalVersion
+      $moduleFolder = Join-Path $moduleBaseDir $moduleVersion
+      $manifestPath = Join-Path $moduleFolder $manifestName
 
       if (Test-Path $ModuleFolder) {
         #Linux/Mac support requires a case insensitive search on a user supplied argument.
         $manifestPath = [Directory]::GetFiles($moduleFolder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
 
         if ($manifestPath.count -gt 1) { throw "$moduleFolder manifest is ambiguous, please delete one of these: $manifestPath" }
-        if ($manifestPath.count -eq 1) { return $manifestPath }
-      }
-    } else {
-      #This is used to keep a map of versions to manifests, needed to support both "classic" and "versioned" module folders
-      [Dictionary[Version, String]]$candidateVersions = @{}
 
-      #If not a classic module, check for versioned folders
-      $folders = [Directory]::GetDirectories($moduleBaseDir)
-      foreach ($folder in $folders) {
-        $versionCandidate = Split-Path -Leaf $folder
-        [Version]$version = $null
-        if ([Version]::TryParse($versionCandidate, [ref]$version)) {
-          #Try to retrieve the manifest
-          #TODO: Create a "Assert-CaseSensitiveFileExists" function for this pattern used multiple times
-          $versionedManifestPath = [Directory]::GetFiles($folder, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
-          if ($versionedManifestPath.count -gt 1) { throw "$folder manifest is ambiguous, please delete one of these: $versionedManifestPath" }
-          if ($versionedManifestPath) {
-            $candidateVersions.Add($version, $versionedManifestPath)
-          }
-        } else {
-          Write-Debug "Could not parse $folder in $moduleBaseDir as a valid version. This is either a bad version directory or this folder is a classic module."
+        #Early return if we found a manifest, we don't need to do further checking
+        if ($manifestPath.count -eq 1) {
+          [Tuple]::Create([version]$moduleVersion, $manifestPath[0])
           continue
         }
-
-        #Check for a "classic" module if no versioned folders were found
-        if ($candidateVersions.count -eq 0) {
-          $classicManifestPath = [Directory]::GetFiles($moduleBaseDir, "$($ModuleSpec.Name).psd1", [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
-          if ($classicManifestPath.count -gt 1) { throw "$moduleBaseDir manifest is ambiguous, please delete one of these: $classicManifestPath" }
-          if ($classicManifestPath) {
-            $manifestData = Import-PowerShellDataFile $classicManifestPath
-            #Return the version in the manifest
-            $candidateVersions.Add($manifestData.ModuleVersion, $classicManifestPath)
-            continue
-          }
-        }
-
-        if (-not $candidateVersions.count) {
-          Write-Verbose "$moduleSpec`: module folder exists at $moduleBaseDir but no modules found that match the version spec."
-          continue
-        }
-
-        [Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $ModuleSpec -Versions $candidateVersions.Keys -Highest
-        if (-not $versionMatch) {
-          [string[]]$candidateStrings = foreach ($candidate in $candidateVersions.keys) {
-            '{0} ({1})' -f $candidateVersions[$candidate], $candidate
-          }
-          Write-Debug "$moduleSpec`: Module versions were found but none that match the module spec requirement. Found Candidates: $($candidateStrings -join ';')"
-          return $null
-        }
-
-        [string]$matchingManifest = $candidateVersions[$versionMatch]
-
-        if ($Update -and $moduleSpec.Max -gt [ModuleFastSpec]::ParseVersion($versionMatch)) {
-          Write-Debug "$moduleSpec`: Found a matching module version $versionMatch at $matchingManifest, but -Update was specified and the module spec allows for higher versions. Checking remote for updates..."
-          return $null
-        }
-
-        if (-not [File]::Exists($matchingManifest)) {
-          throw "A matching module folder was found for $ModuleSpec but the manifest is not present at $matchingManifest. This is a bug and should never happen as we should have checked this ahead of time."
-        }
-        #TODO: Verify the manifest isn't corrupt by checking the module version? Should we be doing this for all manifests even tho it's a perf hit? Configurable option makes sense
-
-        return $matchingManifest
       }
     }
+
+    #Check for versioned module folders next
+    foreach ($folder in [Directory]::GetDirectories($moduleBaseDir)) {
+      #Sanity check
+      $versionCandidate = Split-Path -Leaf $folder
+      [Version]$version = $null
+      if (-not [Version]::TryParse($versionCandidate, [ref]$version)) {
+        Write-Debug "Could not parse $folder in $moduleBaseDir as a valid version. This is either a bad version directory or this folder is a classic module."
+        continue
+      }
+
+      #Try to retrieve the manifest
+      #TODO: Create a "Assert-CaseSensitiveFileExists" function for this pattern used multiple times
+      $versionedManifestPath = [Directory]::GetFiles($folder, $manifestName, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+
+      if ($versionedManifestPath.count -gt 1) { throw "$folder manifest is ambiguous, this happens on Linux if you have two manifests with different case sensitivity. Please delete one of these: $versionedManifestPath" }
+
+      if (-not $versionedManifestPath) {
+        Write-Warning "Found a candidate versioned module folder $folder but no $manifestName manifest was found in the folder. This is an indication of a corrupt module and you should clean this folder up"
+        continue
+      }
+
+      if ($versionedManifestPath.count -eq 1) {
+        [Tuple]::Create([version]$version, $versionedManifestPath[0])
+      }
+    }
+
+    #Check for a "classic" module if no versioned folders were found
+    if ($candidateModules.count -eq 0) {
+      $classicManifestPath = [Directory]::GetFiles($moduleBaseDir, $manifestName, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+      if ($classicManifestPath.count -gt 1) { throw "$moduleBaseDir manifest is ambiguous, please delete one of these: $classicManifestPath" }
+      if ($classicManifestPath) {
+        #TODO: Optimize this so that import-powershelldatafile is not called twice. This should be a rare occurance so it's not a big deal.
+        [version]$classicVersion = (Import-PowerShellDataFile $classicManifestPath).ModuleVersion
+        [Tuple]::Create($classicVersion, $classicManifestPath)
+        continue
+      }
+    }
+
+    #If we get this far, we didn't find a manifest in this module path
+    Write-Verbose "$moduleSpec`: module folder exists at $moduleBaseDir but no modules found that match the version spec."
   }
-  return $null
+
+  if ($candidateModules.count -eq 0) { return $null }
+
+  # We have to read the manifests to verify if the specified installed module is a prerelease module, which can affect whether it is selected by this function.
+  # TODO: Filter to likely candidates first
+  #NOTE: We use the sort rather than FindBestMatch because we want the highest compatible version, due to auto assembly redirect in PSCore
+  foreach ($moduleInfo in ($candidateModules | Sort-Object Item1 -Descending)) {
+    [version]$version = $moduleInfo.Item1
+    [string]$manifestPath = $moduleInfo.Item2
+
+    #The ModuleSpec.Max.Version check is to support an edge case where the module prerelease version is actually less than the prerelease constraint but we haven't read the manifest yet to determine that.
+    if (-not $ModuleSpec.SatisfiedBy($version) -and $ModuleSpec.Max.Version -ne $version) {
+      Write-Debug "$($ModuleSpec.Name): Found a module $($moduleInfo.Item2) that matches the name but does not satisfy the version spec $($ModuleSpec). Skipping..."
+      continue
+    }
+
+    $manifestData = Import-PowerShellDataFile -Path $manifestPath -ErrorAction stop
+    if ($manifestData.Name -notmatch $ModuleSpec.Name) {
+      Write-Warning "Found a manifest at $manifestPath but the name $($manifestData.Name) in the manifest information does not match the module spec name $($ModuleSpec.Name). This is probably an invalid or corrupt manifest since it should match the name of the manifest .psd1 file"
+      continue
+    }
+
+    [Version]$version = $null
+    if (-not [Version]::TryParse($manifestData.ModuleVersion, [ref]$version)) {
+      Write-Warning "Found a manifest at $manifestPath but the version $($manifestData.ModuleVersion) in the manifest information is not a valid version. This is probably an invalid or corrupt manifest"
+      continue
+    }
+
+    [string]$prerelease = $manifestData.PreRelease
+
+    [NuGetVersion]$manifestVersion = [NuGetVersion]::new($version, $prerelease, $null)
+
+    #Re-Test against the manifest loaded version to be sure
+    if (-not $ModuleSpec.SatisfiedBy($manifestVersion)) {
+      Write-Debug "$(ModuleSpec.Name): Found a module $($moduleInfo.Item2) that initially matched the name and version folder but after reading the manifest, the version label not satisfy the version spec $($ModuleSpec). This is an edge case and should only occur if you specified a prerelease upper bound that is less than the PreRelease label in the manifest. Skipping..."
+      continue
+    }
+
+    #If Update is specified, we will be more strict and only report a matching module if it exactly matches the upper bound of the version spec (otherwise there may be a newer module available remotely)
+    if ($Update) {
+      if ($ModuleSpec.Max -ne $manifestVersion) {
+        Write-Debug "$($ModuleSpec.Name): Found a module $($moduleInfo.Item2) that matches the name and version folder but does not exactly match the upper bound of the version spec $($ModuleSpec). Skipping..."
+        continue
+      } else {
+        Write-Debug "$($ModuleSpec.Name): Found a module $($moduleInfo.Item2) that matches the name and version folder and exactly matches the upper bound of the version spec $($ModuleSpec) because -Update was specified, so it will not be evaluated for install"
+      }
+    }
+
+    #If we pass all sanity checks, we can return this module as meeting the criteria and skip checking all lower modules.
+    return [LocalModule]::new($manifestData.Name, $manifestVersion, $manifestPath)
+  }
 }
 
 # Find all normalized versions of a version, for example 1.0.1.0 also is 1.0.1

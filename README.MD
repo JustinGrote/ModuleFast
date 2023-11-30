@@ -66,7 +66,7 @@ PSGetv3 is compatibility, the focus with ModuleFast is speed of installation/upd
 
 ## How this script works
 
-1. Takes your module specifications and builds a declarative dependency tree, following a IaC plan/apply approach to installing modules.
+1. Takes your module specifications and builds a declarative dependency tree, following a IaC plan/apply approach to installing modules. By default it will evaluate locally installed modules in all of your configured PSModulePath to determine if an already-installed module meets the criteria.
 1. Uses a custom HTTPClient and async tasks to build the dependency tree quickly, querying with minimal data possible and using batch queries where possible to optimize for performance. This is all done in native PowerShell, no C# required (though C# would allow for certain operations to be even more parallelizable by chaining tasks).
 1. Uses HTTP/2 to run all queries in a single TCP conversation where possible (PSGallery supports it)
 1. For PowerShell Gallery, uses an optimized [CloudFlare Worker](https://github.com/justingrote/pwshgallery) to resolve dependencies as fast as possible.
@@ -83,7 +83,6 @@ It makes a lot of very bad assumptions, most of which are safe for PowerShell Ga
 1. Modules with a particular GUID and version are immutable and never change. This is great for caching purposes, and is true for PSGallery, but may not be true for other galleries.
 1. It currently has very little error handling and aggressive timeouts, and not recommended for slow or unreliable
    network connections. It will "fail fast" as much as possible.
-1. The .psd1 file isn't always read to verify the module is correct/not corrupt, only in the case of non-versioned module folders.
 
 ## Lessons learned
 

@@ -48,7 +48,7 @@ InModuleScope 'ModuleFast' {
 				$spec.Name | Should -Be 'Test'
 				$spec.Guid | Should -Be ([Guid]::Empty)
 				$spec.Min | Should -Be '2.1.5'
-				$spec.Max | Should -Be ([ModuleFastSpec]::MaxVersion)
+				$spec.Max | Should -BeNull
 				$spec.Required | Should -BeNull
 			}
 		}
@@ -57,80 +57,19 @@ InModuleScope 'ModuleFast' {
 			It 'Name' {
 				$spec = [ModuleSpecification][ModuleFastSpec]'Test'
 				$spec.Name | Should -Be 'Test'
-				$spec.Version | Should -Be '0.0.0'
+				$spec.Version | Should -Be '0.0'
+				$spec.RequiredVersion | Should -BeNull
+				$spec.MaximumVersion | Should -BeNull
 			}
 			It 'RequiredVersion' {
 				$spec = [ModuleSpecification][ModuleFastSpec]::new('Test', '1.2.3')
 				$spec.Name | Should -Be 'Test'
-				$spec.RequiredVersion | Should -Be '1.2.3'
-			}
-			It 'ModuleVersion' {
-				$spec = [ModuleSpecification][ModuleFastSpec]::new('Test', '1.2.3', '')
-				$spec.Name | Should -Be 'Test'
-				$spec.Version | Should -Be '1.2.3'
+				$spec.RequiredVersion | Should -Be '1.2.3.0'
+				$spec.Version | Should -BeNull
+				$spec.MaximumVersion | Should -BeNull
 			}
 		}
 
-		Context 'ParseVersion' {
-			It 'parses a normal version' {
-				$version = '1.2.3'
-				$result = [ModuleFastSpec]::ParseVersion($version)
-				$result.Major | Should -Be 1
-				$result.Minor | Should -Be 2
-				$result.Patch | Should -Be 3
-				$result.PreReleaseLabel | Should -BeNull
-				$result.BuildLabel | Should -BeNull
-				[ModuleFastSpec]::ParseSemanticVersion($result) | Should -BeExactly $version
-			}
-			It 'parses a system version' {
-				$version = '1.2.3.4'
-				$result = [ModuleFastSpec]::ParseVersion($version)
-				$result.Major | Should -Be 1
-				$result.Minor | Should -Be 2
-				$result.Patch | Should -Be (3 + 1)
-				$result.PreReleaseLabel | Should -Be (4).ToString().PadLeft(10, '0')
-				$result.BuildLabel | Should -Be 'SYSTEMVERSION.HASREVISION'
-				[ModuleFastSpec]::ParseSemanticVersion($result) | Should -BeExactly $version
-			}
-			It 'parses a major/minor only version' {
-				$version = '1.4'
-				$result = [ModuleFastSpec]::ParseVersion($version)
-				$result.Major | Should -Be 1
-				$result.Minor | Should -Be 4
-				$result.Patch | Should -Be 0
-				$result.PreReleaseLabel | Should -BeNull
-				$result.BuildLabel | Should -Be 'SYSTEMVERSION.NOBUILD'
-				[ModuleFastSpec]::ParseSemanticVersion($result) | Should -BeExactly $version
-			}
-			It 'parses a patch version being zero' {
-				$version = '1.4.0.5'
-				$result = [ModuleFastSpec]::ParseVersion($version)
-				$result.Major | Should -Be 1
-				$result.Minor | Should -Be 4
-				$result.Patch | Should -Be (0 + 1)
-				$result.PreReleaseLabel | Should -Be (5).ToString().PadLeft(10, '0')
-				$result.BuildLabel | Should -Be 'SYSTEMVERSION.HASREVISION'
-				[ModuleFastSpec]::ParseSemanticVersion($result) | Should -BeExactly $version
-			}
-		}
-		Context 'ParseSemanticVersion' {
-			It 'parses a normal version' {
-				$version = '1.2.3'
-				$result = [ModuleFastSpec]::ParseSemanticVersion($version)
-				$result.Major | Should -Be 1
-				$result.Minor | Should -Be 2
-				$result.Build | Should -Be 3
-				$result.Revision | Should -Be -1
-			}
-			It 'strips non-version fields' {
-				$version = '1.2.3-something+4'
-				$result = [ModuleFastSpec]::ParseSemanticVersion($version)
-				$result.Major | Should -Be 1
-				$result.Minor | Should -Be 2
-				$result.Build | Should -Be 3
-				$result.Revision | Should -Be -1
-			}
-		}
 		Context 'Overlap' {
 			It 'overlaps exactly' {
 				$spec1 = [ModuleFastSpec]::new('Test', '1.2.3', '1.2.4')
