@@ -1,6 +1,8 @@
 using namespace System.Management.Automation
 using namespace System.Collections.Generic
 using namespace System.Diagnostics.CodeAnalysis
+
+. $PSScriptRoot/ModuleFast.ps1 -ImportNuGetVersioning
 Import-Module $PSScriptRoot/ModuleFast.psm1 -Force
 
 BeforeAll {
@@ -12,12 +14,19 @@ BeforeAll {
 InModuleScope 'ModuleFast' {
 	Describe 'ModuleFastSpec' {
 		Context 'Constructors' {
+			It 'Getters' {
+				$spec = [ModuleFastSpec]'Test'
+				'Name', 'Guid', 'Min', 'Max', 'Required' | ForEach-Object {
+					$spec.PSObject.Properties.name | Should -Contain $PSItem
+				}
+			}
+
 			It 'Name' {
 				$spec = [ModuleFastSpec]'Test'
 				$spec.Name | Should -Be 'Test'
 				$spec.Guid | Should -Be ([Guid]::Empty)
-				$spec.Min | Should -Be ([ModuleFastSpec]::MinVersion)
-				$spec.Max | Should -Be ([ModuleFastSpec]::MaxVersion)
+				$spec.Min | Should -BeNull
+				$spec.Max | Should -BeNull
 				$spec.Required | Should -BeNull
 			}
 

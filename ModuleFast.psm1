@@ -1,12 +1,13 @@
 #requires -version 7.2
 using namespace Microsoft.PowerShell.Commands
+using namespace System.Management.Automation
+using namespace NuGet.Versioning
 using namespace System.Collections.Concurrent
 using namespace System.Collections.Generic
 using namespace System.Collections.Specialized
 using namespace System.IO
 using namespace System.IO.Compression
 using namespace System.IO.Pipelines
-using namespace System.Management.Automation
 using namespace System.Net
 using namespace System.Net.Http
 using namespace System.Reflection
@@ -18,46 +19,6 @@ using namespace System.Threading.Tasks
 #TODO: Implement logic to only fail on module installs, such that one module failure doesn't prevent others from installing.
 #Probably need to take into account inconsistent state, such as if a dependent module fails then the depending modules should be removed.
 $ErrorActionPreference = 'Stop'
-
-#region Formats
-#Update-FormatData can only work with files, hence this workaround
-@'
-<Configuration>
-	<ViewDefinitions>
-		<View>
-			<Name>ModuleFastSpec</Name>
-			<ViewSelectedBy>
-				<TypeName>ModuleFastSpec</TypeName>
-			</ViewSelectedBy>
-			<TableControl>
-				<AutoSize>true</AutoSize>
-				<TableHeaders>
-					<TableColumnHeader>
-						<Label>Name</Label>
-					</TableColumnHeader>
-					<TableColumnHeader>
-						<Label>Version</Label>
-					</TableColumnHeader>
-				</TableHeaders>
-				<TableRowEntries>
-					<TableRowEntry>
-						<TableColumnItems>
-							<TableColumnItem>
-								<PropertyName>Name</PropertyName>
-							</TableColumnItem>
-							<TableColumnItem>
-								<ScriptBlock>$_.GetVersionString() -replace '^@'</ScriptBlock>
-							</TableColumnItem>
-						</TableColumnItems>
-					</TableRowEntry>
-				</TableRowEntries>
-			</TableControl>
-		</View>
-	</ViewDefinitions>
-</Configuration>
-'@ | Out-File -Encoding UTF8 -FilePath 'TEMP:/ModuleFast.format.ps1xml' -Force
-Update-FormatData -PrependPath (Resolve-Path 'TEMP:/ModuleFast.format.ps1xml')
-#endregion Formats
 
 #region Public
 <#
@@ -680,8 +641,156 @@ function Add-Getters ([Parameter(Mandatory, ValueFromPipeline)][Type]$Type) {
   }
 }
 
+class ModuleFastSpec: IComparable {
+  #These properties are effectively read only thanks to some getter wizardy
 
-class ModuleFastSpec : IComparable {
+  #Name of the Module to Download
+  hidden [string]$_Name
+  static hidden [string]Get_Name([PSObject]$i) { return $i._Name }
+
+  #Unique ID of the module. This is optional but detects the rare corruption case if two modules have the same name and version but different GUIDs
+  hidden [guid]$_Guid
+  static hidden [guid]Get_Guid([PSObject]$i) { return $i._Guid }
+
+  #NuGet Version Range that specifies what Versions are acceptable. This can be specified as Nuget Version Syntax string
+  hidden [VersionRange]$_VersionRange
+  static hidden [VersionRange]Get_VersionRange([PSObject]$i) { return $i._VersionRange }
+
+  static hidden [NugetVersion]Get_Min([PSObject]$i) { return $i._VersionRange.MinVersion }
+  static hidden [NugetVersion]Get_Max([PSObject]$i) { return $i._VersionRange.MaxVersion }
+  static hidden [NugetVersion]Get_Required([PSObject]$i) {
+    if ($i.Min -eq $i.Max) {
+      return $i.Min
+    } else {
+      return $null
+    }
+  }
+
+  #ModuleSpecification Compatible Getters
+  static hidden [Version]Get_RequiredVersion([PSObject]$i) { return $i.Required.Version }
+  static hidden [Version]Get_Version([PSObject]$i) { return $i.Min.Version }
+  static hidden [Version]Get_MaximumVersion([PSObject]$i) { return $i.Max.Version }
+
+  #Download Link to where the nuget package zip of the module is located
+  [uri]$DownloadLink
+
+
+  #Constructors
+  ModuleFastSpec([string]$Name) {
+    $this.Initialize($Name, $null, $null, [guid]::Empty)
+  }
+
+  ModuleFastSpec([string]$Name, [string]$RequiredVersion) {
+    $this.Initialize($Name, "[$RequiredVersion]", $null, [guid]::Empty)
+  }
+
+  ModuleFastSpec([string]$Name, [string]$RequiredVersion, [string]$Guid) {
+    $this.Initialize($Name, "[$RequiredVersion]", $Guid, [guid]::Empty)
+  }
+
+  ModuleFastSpec([string]$Name, [VersionRange]$RequiredVersion) {
+    $this.Initialize($Name, $RequiredVersion, $null, [guid]::Empty)
+  }
+
+  ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
+    [string]$Min = $ModuleSpec.RequiredVersion ?? $ModuleSpec.Version
+    [string]$Max = $ModuleSpec.RequiredVersion ?? $ModuleSpec.MaximumVersion
+    $guid = $ModuleSpec.Guid ?? [Guid]::Empty
+    $range = [VersionRange]::new(
+      [String]::IsNullOrEmpty($Min) ? $null : $Min,
+      $true, #Inclusive
+      [String]::IsNullOrEmpty($Max) ? $null : $Max,
+      $true, #Inclusive
+      $null,
+      "ModuleSpecification: $ModuleSpec"
+    )
+
+    $this.Initialize($ModuleSpec.Name, $range, $null, $guid)
+  }
+
+  #TODO: Generic Hashtable/IDictionary constructor for common types
+
+  #HACK: A helper because we can't do constructor chaining in PowerShell
+  #https://stackoverflow.com/questions/44413206/constructor-chaining-in-powershell-call-other-constructors-in-the-same-class
+  hidden Initialize([string]$Name, [VersionRange]$Range, [uri]$DownloadLink, [guid]$Guid) {
+    #HACK: The nulls here are just to satisfy the ternary operator, they go off into the ether and arent returned or used
+    if (-not $Name) { throw 'Name is required' }
+    $this._Name = $Name
+    $this._VersionRange = $Range ?? [VersionRange]::new()
+    $this._Guid = $Guid ?? [Guid]::Empty
+    $this.DownloadLink = $DownloadLink
+    # TODO: Fix this check logic
+    # if ($this.Guid -ne [Guid]::Empty -and -not $this.Required) {
+    #   throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
+    # }
+  }
+
+  #IEquatable
+  #BUG: We cannot implement IEquatable directly because we need to self-reference ModuleFastSpec before it exists.
+  #We can however just add Equals() method
+
+  #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals
+  [bool]Equals($other) {
+    return try {
+      #Guid Comparison only matters for equals
+      if ($other -is [ModuleFastSpec]) {
+        if ($this._Guid -ne $other._Guid) {
+          return $false
+        }
+        if ($this._Name -ne $other._Name) {
+          return $false
+        }
+        if ($this._VersionRange -ne $other._VersionRange) {
+          return $false
+        }
+      }
+    } catch [NotSupportedException] {
+      $false
+    }
+  }
+
+  #end IEquatable
+
+  #IComparable
+  #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.icomparable-1.equals
+  [int]CompareTo($other) {
+    if ($this.Equals($other)) { return 0 }
+    if ($other -is [ModuleFastSpec]) {
+      $other = $other._VersionRange
+    }
+
+    [NuGetVersion]$version = if ($other -is [VersionRange]) {
+      if (-not $this.IsRequiredVersion($other)) {
+        throw [NotSupportedException]"ModuleFastSpec $this has a version range, it must be a single required version e.g. '[1.5.0]'"
+      }
+      $other.MaxVersion
+    } else {
+      $other
+    }
+
+    $thisVersion = $this._VersionRange
+
+    if ($thisVersion.Satisfies($Version)) { return 0 }
+    if ($thisVersion.MinVersion -gt $Version) { return 1 }
+    if ($thisVersion.MaxVersion -lt $Version) { return -1 }
+    throw 'Could not compare. This should not happen and is a bug'
+    return 0
+  }
+
+
+  hidden [bool]IsRequiredVersion([VersionRange]$Version) {
+    return $Version.MinVersion -ne $Version.MaxVersion -or
+    -not $Version.HasLowerAndUpperBounds -or
+    -not $Version.IsMinInclusive -or
+    -not $Version.IsMaxInclusive
+  }
+
+  #end IComparable
+}
+[ModuleFastSpec] | Add-Getters
+
+
+class OldModuleFastSpec : IComparable {
   <#
 	A custom version of ModuleSpecification that is comparable on its values, and will deduplicate in a HashSet if all
 	values are the same. This should also be consistent across processes and can be cached.
@@ -705,12 +814,9 @@ class ModuleFastSpec : IComparable {
   static hidden [string]Get_Name([PSObject]$i) { return $i._Name }
   hidden [guid]$_Guid
   static hidden [guid]Get_Guid([PSObject]$i) { return $i._Guid }
-  hidden [SemanticVersion]$_Min = [ModuleFastSpec]::MinVersion
-  static hidden [SemanticVersion]Get_Min([PSObject]$i) { return $i._Min }
-  hidden [SemanticVersion]$_Max = [ModuleFastSpec]::MaxVersion
-  static hidden [SemanticVersion]Get_Max([PSObject]$i) { return $i._Max }
-
-  static hidden [SemanticVersion]Get_Required([PSObject]$i) {
+  static hidden [NugetVersion]Get_Min([PSObject]$i) { return $i._VersionRange.MinVersion }
+  static hidden [NugetVersion]Get_Max([PSObject]$i) { return $i._VersionRange.MaxVersion }
+  static hidden [NugetVersion]Get_Required([PSObject]$i) {
     if ($i.Min -eq $i.Max) {
       return $i.Min
     } else {
@@ -719,9 +825,9 @@ class ModuleFastSpec : IComparable {
   }
 
   #ModuleSpecification Compatible Getters
-  static hidden [Version]Get_RequiredVersion([PSObject]$i) { return [ModuleFastSpec]::ParseSemanticVersion($i.Required) }
-  static hidden [Version]Get_Version([PSObject]$i) { return [ModuleFastSpec]::ParseSemanticVersion($i.Min) }
-  static hidden [Version]Get_MaximumVersion([PSObject]$i) { return [ModuleFastSpec]::ParseSemanticVersion($i.Max) }
+  static hidden [Version]Get_RequiredVersion([PSObject]$i) { return $i.Required.Version }
+  static hidden [Version]Get_Version([PSObject]$i) { return $i.Min.Version }
+  static hidden [Version]Get_MaximumVersion([PSObject]$i) { return $i.Max.Version }
 
   #Constructors
 
@@ -1117,6 +1223,15 @@ class NugetRange {
     }
     throw [ArgumentOutOfRangeException]'Unexpected Increment Scenario Occurred, this should never happen and is a bug in ModuleFastSpec'
   }
+}
+
+
+#The supported hashtable types
+enum HashtableType {
+  ModuleSpecification
+  PSDepend
+  RequiredModule
+  NugetRange
 }
 
 #endRegion Classes
