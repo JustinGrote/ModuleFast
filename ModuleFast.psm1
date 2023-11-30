@@ -241,7 +241,7 @@ function Get-ModuleFastPlan {
       foreach ($moduleSpec in $ModulesToResolve) {
         [LocalModule]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
         if ($localMatch) {
-          Write-Verbose "Found local module $localMatch that satisfies $moduleSpec. Skipping..."
+          Write-Verbose "FOUND local module at $($localMatch.ManifestPath) that satisfies $moduleSpec. Skipping..."
           #TODO: Capture this somewhere that we can use it to report in the deploy plan
           continue
         }
@@ -336,8 +336,8 @@ function Get-ModuleFastPlan {
           # TODO: Should probably typesafe and validate this using classes
 
           $pages = $response.items | Where-Object {
-            [SemanticVersion]$upper = [ModuleFastSpec]::ParseVersionString($PSItem.Upper)
-            [SemanticVersion]$lower = [ModuleFastSpec]::ParseVersionString($PSItem.Lower)
+            [System.Management.Automation.SemanticVersion]$upper = [ModuleFastSpec]::ParseVersionString($PSItem.Upper)
+            [System.Management.Automation.SemanticVersion]$lower = [ModuleFastSpec]::ParseVersionString($PSItem.Lower)
             if ($currentModuleSpec.Required) {
               if ($currentModuleSpec.Required -le $upper -and $currentModuleSpec.Required -ge $lower ) {
                 return $true
@@ -727,9 +727,14 @@ class ModuleFastSpec: IComparable {
   }
 
   #region Methods
+  [bool] SatisfiedBy([version]$Version) {
+    return $this.SatisfiedBy([NuGetVersion]::new($Version))
+  }
+
   [bool] SatisfiedBy([NugetVersion]$Version) {
     return $this._VersionRange.Satisfies($Version)
   }
+
 
   #endregion Methods
 
@@ -834,8 +839,8 @@ class OldModuleFastSpec : IComparable {
 
 	It is somewhat non-null that can be used to compare modules but it should really be immutable. I really should make a C# version for this.
 	#>
-  static [SemanticVersion]$MinVersion = 0
-  static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
+  static [System.Management.Automation.SemanticVersion]$MinVersion = 0
+  static [System.Management.Automation.SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
   #Special string we use to translate between Version and SemanticVersion since SemanticVersion doesnt support Semver 2.0 properly and doesnt allow + only
   #Someone actually using this string may cause a conflict, it's not foolproof but it's better than nothing
   hidden static [string]$SYSTEM_VERSION_LABEL = 'SYSTEMVERSION'
@@ -899,26 +904,26 @@ class OldModuleFastSpec : IComparable {
     $this.Initialize($Name, $null, $null, $null, $null)
   }
   ModuleFastSpec([string]$Name, [string]$Required) {
-    [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+    [System.Management.Automation.SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
     $this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
   }
   ModuleFastSpec([string]$Name, [String]$Required, [Guid]$Guid) {
-    [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+    [System.Management.Automation.SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
     $this.Initialize($Name, $requiredVersion, $requiredVersion, $Guid, $null)
   }
   ModuleFastSpec([string]$Name, [String]$Required, [Uri]$DownloadLink) {
-    [SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
+    [System.Management.Automation.SemanticVersion]$requiredVersion = [ModuleFastSpec]::ParseVersionString($Required)
     $this.Initialize($Name, $requiredVersion, $requiredVersion, $null, $null)
     $this._DownloadLink = [uri]$DownloadLink
   }
   ModuleFastSpec([string]$Name, [string]$Min, [string]$Max) {
-    [SemanticVersion]$minVer = $min ? [ModuleFastSpec]::ParseVersionString($min) : $null
-    [SemanticVersion]$maxVer = $max ? [ModuleFastSpec]::ParseVersionString($max) : $null
+    [System.Management.Automation.SemanticVersion]$minVer = $min ? [ModuleFastSpec]::ParseVersionString($min) : $null
+    [System.Management.Automation.SemanticVersion]$maxVer = $max ? [ModuleFastSpec]::ParseVersionString($max) : $null
     $this.Initialize($Name, $minVer, $maxVer, $null, $null)
   }
 
   # These can be used for performance to avoid parsing to string and back. Probably makes little difference
-  ModuleFastSpec([string]$Name, [SemanticVersion]$Required) {
+  ModuleFastSpec([string]$Name, [System.Management.Automation.SemanticVersion]$Required) {
     $this.Initialize($Name, $Required, $Required, $null, $null)
   }
   ModuleFastSpec([string]$Name, [NugetRange]$Range) {
@@ -940,7 +945,7 @@ class OldModuleFastSpec : IComparable {
 
   ### Version Helper Methods
   #Determines if a version is within range of the spec.
-  [bool] Matches([SemanticVersion]$Version) {
+  [bool] Matches([System.Management.Automation.SemanticVersion]$Version) {
     if ($null -eq $Version) { return $false }
     if ($Version -ge $this.Min -and $Version -le $this.Max) { return $true }
     return $false
@@ -964,7 +969,7 @@ class OldModuleFastSpec : IComparable {
   }
 
   # Parses either a assembly version or semver to a semver string
-  static [SemanticVersion] ParseVersionString([string]$Version) {
+  static [System.Management.Automation.SemanticVersion] ParseVersionString([string]$Version) {
     if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
     if ($Version -as [Version]) {
       return [ModuleFastSpec]::ParseVersion($Version)
@@ -976,7 +981,7 @@ class OldModuleFastSpec : IComparable {
   # We treat "revision" as "build" and "build" as patch for purposes of translation
   # Needed because SemVer can't parse builds correctly
   #https://github.com/PowerShell/PowerShell/issues/14605
-  static [SemanticVersion] ParseVersion([Version]$Version) {
+  static [System.Management.Automation.SemanticVersion] ParseVersion([Version]$Version) {
     if (-not $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
 
     [list[string]]$buildLabels = @()
@@ -987,7 +992,7 @@ class OldModuleFastSpec : IComparable {
     }
     if ($buildLabels.count -eq 0) {
       #This version maps directly to semantic version and we can return early
-      return [SemanticVersion]::new($Version.Major, $Version.Minor, $Version.Build)
+      return [System.Management.Automation.SemanticVersion]::new($Version.Major, $Version.Minor, $Version.Build)
     }
 
     #Otherwise we need to explicitly note this came from a system version for when we parse it back
@@ -1002,11 +1007,11 @@ class OldModuleFastSpec : IComparable {
     $buildLabels.Reverse()
     [string]$buildLabel = $buildLabels -join '.'
     #Nulls will return as 0, which we want. Major and Minor cannot be -1
-    return [SemanticVersion]::new($Version.Major, $Version.Minor, $buildVersion, $preReleaseLabel, $buildLabel)
+    return [System.Management.Automation.SemanticVersion]::new($Version.Major, $Version.Minor, $buildVersion, $preReleaseLabel, $buildLabel)
   }
 
   # A way to go back from SemanticVersion, the anticedent to ParseVersion
-  static [Version] ParseSemanticVersion([SemanticVersion]$Version) {
+  static [Version] ParseSemanticVersion([System.Management.Automation.SemanticVersion]$Version) {
     if ($null -eq $Version) { throw [NotSupportedException]'Null or empty strings are not supported' }
 
     #If this only has a build "version" but no Prerelease tag, we can translate that to the revision
@@ -1059,7 +1064,7 @@ class OldModuleFastSpec : IComparable {
   }
 
   #Converts a stored version to a string representation. This handles cases where the value was originally a System.Version
-  static [string] VersionToString([SemanticVersion]$version) {
+  static [string] VersionToString([System.Management.Automation.SemanticVersion]$version) {
     if ($null -eq $version) { return $null }
     if ($Version.BuildLabel -split '\.' -contains 'HASREVISION') {
       #This is a system version, we need to convert it back to a system version
@@ -1085,7 +1090,7 @@ class OldModuleFastSpec : IComparable {
 						([ModuleSpecification]) { return $this.Equals([ModuleFastSpec]$obj) }
 
       #When comparing a version, we want to return equal if the version is within the range of the spec
-						([SemanticVersion]) { return $this.CompareTo($obj) -eq 0 }
+						([System.Management.Automation.SemanticVersion]) { return $this.CompareTo($obj) -eq 0 }
 						([string]) { return $this.Equals([ModuleFastSpec]::ParseVersionString($obj)) }
 						([Version]) { return $this.Equals([ModuleFastSpec]::ParseVersion($obj)) }
       default {
@@ -1108,7 +1113,7 @@ class OldModuleFastSpec : IComparable {
     #This is somewhat analagous to C# Pattern Matching: https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/functional/pattern-matching#compare-discrete-values
     switch ($obj.GetType()) {
       #We determine greater than or less than if the version is within the range of the spec or not
-						([SemanticVersion]) {
+						([System.Management.Automation.SemanticVersion]) {
         if ($obj -ge $this.Min -and $obj -le $this.Max) { return 0 }
         if ($obj -lt $this.Min) { return 1 }
         if ($obj -gt $this.Max) { return -1 }
@@ -1169,13 +1174,13 @@ class OldModuleFastSpec : IComparable {
 #This is a helper function that processes nuget ranges.
 #Reference: https://github.com/NuGet/NuGet.Client/blob/035850255a15b60437d22f9178c4206bafe0b6a9/src/NuGet.Core/NuGet.Versioning/VersionRangeFactory.cs#L91-L265
 class NugetRange {
-  [SemanticVersion]$Min
-  [SemanticVersion]$Max
+  [System.Management.Automation.SemanticVersion]$Min
+  [System.Management.Automation.SemanticVersion]$Max
   [boolean]$MinInclusive = $true
   [boolean]$MaxInclusive = $true
 
-  static [SemanticVersion]$MinVersion = 0
-  static [SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
+  static [System.Management.Automation.SemanticVersion]$MinVersion = 0
+  static [System.Management.Automation.SemanticVersion]$MaxVersion = '{0}.{0}.{0}' -f [int32]::MaxValue
 
   NugetRange([string]$string) {
     # Use a regex to parse a semantic version range inclusive
@@ -1189,7 +1194,7 @@ class NugetRange {
       return
     }
 
-    if ($string -as [SemanticVersion]) {
+    if ($string -as [System.Management.Automation.SemanticVersion]) {
       $this.Min = $string
       $this.Max = $string
       return
@@ -1216,43 +1221,43 @@ class NugetRange {
     if (-not [String]::IsNullOrWhiteSpace($maxString)) { $this.Max = [ModuleFastSpec]::ParseVersionString($maxString) }
   }
 
-  static [SemanticVersion] Decrement([SemanticVersion]$version) {
+  static [System.Management.Automation.SemanticVersion] Decrement([System.Management.Automation.SemanticVersion]$version) {
     if ($version.BuildLabel -or $version.PreReleaseLabel) {
       Write-Warning 'Decrementing a version with a build or prerelease label is not supported as the Powershell Semantic Version class cannot compare them anyways. We will decrement the patch version instead and strip the prerelease headers. Do not rely on this behavior, it will change. https://github.com/PowerShell/PowerShell/issues/18489'
     }
     if ($version.Patch -gt 0) {
-      return [SemanticVersion]::new($version.Major, $version.Minor, $version.Patch - 1)
+      return [System.Management.Automation.SemanticVersion]::new($version.Major, $version.Minor, $version.Patch - 1)
     }
     if ($version.Minor -gt 0) {
       if ($version.Patch -eq 0) {
-        return [SemanticVersion]::new($version.Major, $version.Minor - 1, [int]::MaxValue)
+        return [System.Management.Automation.SemanticVersion]::new($version.Major, $version.Minor - 1, [int]::MaxValue)
       }
-      return [SemanticVersion]::new($version.Major, $version.Minor - 1, $version.Patch)
+      return [System.Management.Automation.SemanticVersion]::new($version.Major, $version.Minor - 1, $version.Patch)
     }
     if ($version.Major -gt 0) {
       if ($version.Minor -eq 0 -and $version.Patch -eq 0) {
-        return [SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
+        return [System.Management.Automation.SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
       }
     }
     throw [ArgumentOutOfRangeException]'Unexpected Decrement Scenario Occurred, this should never happen and is a bug in ModuleFastSpec'
   }
 
-  static [SemanticVersion] Increment([SemanticVersion]$version) {
+  static [System.Management.Automation.SemanticVersion] Increment([System.Management.Automation.SemanticVersion]$version) {
     if ($version.BuildLabel -or $version.PreReleaseLabel) {
       Write-Warning 'Incrementing a version with a build or prerelease label is not supported as the Powershell Semantic Version class cannot compare them anyways. We will decrement the patch version instead and strip the prerelease headers. Do not rely on this behavior, it will change. https://github.com/PowerShell/PowerShell/issues/18489'
     }
     if ($version.Patch -le [int]::MaxValue) {
-      return [SemanticVersion]::new($version.Major, $version.Minor, $version.Patch + 1)
+      return [System.Management.Automation.SemanticVersion]::new($version.Major, $version.Minor, $version.Patch + 1)
     }
     if ($version.Minor -gt 0) {
       if ($version.Patch -eq [int]::MaxValue) {
-        return [SemanticVersion]::new($version.Major, $version.Minor + 1, 0)
+        return [System.Management.Automation.SemanticVersion]::new($version.Major, $version.Minor + 1, 0)
       }
-      return [SemanticVersion]::new($version.Major, $version.Minor + 1, $version.Patch)
+      return [System.Management.Automation.SemanticVersion]::new($version.Major, $version.Minor + 1, $version.Patch)
     }
     if ($version.Major -gt 0) {
       if ($version.Minor -eq 0 -and $version.Patch -eq 0) {
-        return [SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
+        return [System.Management.Automation.SemanticVersion]::new($version.Major - 1, [int]::MaxValue, [int]::MaxValue)
       }
     }
     throw [ArgumentOutOfRangeException]'Unexpected Increment Scenario Occurred, this should never happen and is a bug in ModuleFastSpec'
@@ -1423,7 +1428,7 @@ function Find-LocalModule {
 
   #First property is the manifest path, second property is the actual version (may be different from the folder version as prerelease versions go in the same location)
 
-  [List[[Tuple[string, Version]]]]$candidateModules = foreach ($modulePath in $modulePaths) {
+  [List[[Tuple[Version, string]]]]$candidateModules = foreach ($modulePath in $modulePaths) {
     if (-not [Directory]::Exists($modulePath)) {
       Write-Debug "PSModulePath $modulePath is configured but does not exist, skipping..."
       continue
@@ -1509,7 +1514,7 @@ function Find-LocalModule {
   # TODO: Filter to likely candidates first
   #NOTE: We use the sort rather than FindBestMatch because we want the highest compatible version, due to auto assembly redirect in PSCore
   foreach ($moduleInfo in ($candidateModules | Sort-Object Item1 -Descending)) {
-    [version]$version = $moduleInfo.Item1
+    [NugetVersion]$version = [NugetVersion]::new($moduleInfo.Item1)
     [string]$manifestPath = $moduleInfo.Item2
 
     #The ModuleSpec.Max.Version check is to support an edge case where the module prerelease version is actually less than the prerelease constraint but we haven't read the manifest yet to determine that.
@@ -1519,20 +1524,16 @@ function Find-LocalModule {
     }
 
     $manifestData = Import-PowerShellDataFile -Path $manifestPath -ErrorAction stop
-    if ($manifestData.Name -notmatch $ModuleSpec.Name) {
-      Write-Warning "Found a manifest at $manifestPath but the name $($manifestData.Name) in the manifest information does not match the module spec name $($ModuleSpec.Name). This is probably an invalid or corrupt manifest since it should match the name of the manifest .psd1 file"
-      continue
-    }
 
-    [Version]$version = $null
-    if (-not [Version]::TryParse($manifestData.ModuleVersion, [ref]$version)) {
+    [Version]$manifestVersionData = $null
+    if (-not [Version]::TryParse($manifestData.ModuleVersion, [ref]$manifestVersionData)) {
       Write-Warning "Found a manifest at $manifestPath but the version $($manifestData.ModuleVersion) in the manifest information is not a valid version. This is probably an invalid or corrupt manifest"
       continue
     }
 
     [string]$prerelease = $manifestData.PreRelease
 
-    [NuGetVersion]$manifestVersion = [NuGetVersion]::new($version, $prerelease, $null)
+    [NuGetVersion]$manifestVersion = [NuGetVersion]::new($manifestVersionData, $prerelease, $null)
 
     #Re-Test against the manifest loaded version to be sure
     if (-not $ModuleSpec.SatisfiedBy($manifestVersion)) {
@@ -1551,7 +1552,7 @@ function Find-LocalModule {
     }
 
     #If we pass all sanity checks, we can return this module as meeting the criteria and skip checking all lower modules.
-    return [LocalModule]::new($manifestData.Name, $manifestVersion, $manifestPath)
+    return [LocalModule]::new($ModuleSpec.Name, $manifestVersion, $manifestPath)
   }
 }
 
@@ -1578,7 +1579,7 @@ function Limit-ModuleFastSpecVersions {
     [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
   )
   $candidates = $Versions | Where-Object {
-    $ModuleSpec.Matches($PSItem)
+    $ModuleSpec.SatisfiedBy([NugetVersion]::new($PSItem))
   }
   -not $Highest ? $candidates : $candidates | Sort-Object -Descending | Select-Object -First 1
 }
@@ -1589,7 +1590,7 @@ function Limit-ModuleFastSpecSemanticVersions {
   param(
     [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
     #Versions that are potential candidates to satisfy the modulespec
-    [Parameter(Mandatory)][HashSet[SemanticVersion]]$Versions,
+    [Parameter(Mandatory)][HashSet[System.Management.Automation.SemanticVersion]]$Versions,
     #Only return the highest version that satisfies the spec
     [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
   )
