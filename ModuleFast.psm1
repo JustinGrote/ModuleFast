@@ -227,7 +227,7 @@ function Get-ModuleFastPlan {
   }
   END {
     # A deduplicated list of modules to install
-    [HashSet[ModuleFastSpec]]$modulesToInstall = @{}
+    [HashSet[ModuleFastInfo]]$modulesToInstall = @{}
 
     # We use this as a fast lookup table for the context of the request
     [Dictionary[Task[String], ModuleFastSpec]]$resolveTasks = @{}
@@ -239,9 +239,9 @@ function Get-ModuleFastPlan {
     #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
     try {
       foreach ($moduleSpec in $ModulesToResolve) {
-        [LocalModule]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
+        [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
         if ($localMatch) {
-          Write-Verbose "FOUND local module at $($localMatch.ManifestPath) that satisfies $moduleSpec. Skipping..."
+          Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Path) that satisfies $moduleSpec. Skipping..."
           #TODO: Capture this somewhere that we can use it to report in the deploy plan
           continue
         }
@@ -411,15 +411,15 @@ function Get-ModuleFastPlan {
         }
 
         if (-not $selectedEntry.packageContent) { throw "No package content found for $($selectedEntry.packageContent). This should never happen and is a bug" }
-        [ModuleFastSpec]$moduleInfo = [ModuleFastSpec]::new(
+        [ModuleFastInfo]$moduleInfo = [ModuleFastInfo]::new(
           $selectedEntry.id,
           $selectedEntry.version,
-          [uri]$selectedEntry.packageContent
+          $selectedEntry.packageContent
         )
 
         #Check if we have already processed this item and move on if we have
         if (-not $modulesToInstall.Add($moduleInfo)) {
-          Write-Debug "$moduleInfo ModulesToInstall already exists. Skipping..."
+          Write-Debug "$moduleInfo ModulesToInstall already exists in the install plan. Skipping..."
           #TODO: Fix the flow so this isn't stated twice
           [void]$resolveTasks.Remove($completedTask)
           [void]$currentTasks.Remove($completedTask)
@@ -439,46 +439,35 @@ function Get-ModuleFastPlan {
           # I need to add it to the ComparableModuleSpec class
           Write-Debug "$currentModuleSpec`: Processing dependencies"
           [List[ModuleFastSpec]]$dependencies = $dependencyInfo | ForEach-Object {
-            [ModuleFastSpec]::new($PSItem.id, [NuGetRange]$PSItem.range)
+            [ModuleFastSpec]::new($PSItem.id, [VersionRange]$PSItem.range)
           }
           Write-Debug "$currentModuleSpec has $($dependencies.count) dependencies"
 
           # TODO: Where loop filter maybe
           [ModuleFastSpec[]]$dependenciesToResolve = $dependencies | Where-Object {
+            $dependency = $PSItem
             # TODO: This dependency resolution logic should be a separate function
             # Maybe ModulesToInstall should be nested/grouped by Module Name then version to speed this up, as it currently
             # enumerates every time which shouldn't be a big deal for small dependency trees but might be a
             # meaninful performance difference on a whole-system upgrade.
             [HashSet[string]]$moduleNames = $modulesToInstall.Name
-            if ($PSItem.Name -notin $ModuleNames) {
-              Write-Debug "$PSItem not already in ModulesToInstall. Resolving..."
+            if ($dependency.Name -notin $ModuleNames) {
+              Write-Debug "No modules with name $($dependency.Name) currently exist in the install plan. Resolving dependency..."
               return $true
             }
 
             $plannedVersions = $modulesToInstall
-            | Where-Object Name -EQ $PSItem.Name
-            | Sort-Object RequiredVersion -Descending
-
-            # TODO: Consolidate with Get-HighestSatisfiesVersion function
-            $highestPlannedVersion = $plannedVersions[0].RequiredVersion
-
-            if ($PSItem.Version -and ($PSItem.Version -gt $highestPlannedVersion)) {
-              Write-Debug "$($PSItem.Name): Minimum Version $($PSItem.Version) not satisfied by highest existing match $highestPlannedVersion. Performing Lookup."
-              return $true
+            | Where-Object Name -EQ $dependency.Name
+            | Sort-Object ModuleVersion -Descending
+            | ForEach-Object {
+              if ($dependency.SatisfiedBy($PSItem.ModuleVersion)) {
+                Write-Debug "Dependency $dependency satisfied by existing planned install item $PSItem"
+                return $false
+              }
             }
 
-            if ($PSItem.MaximumVersion -and ($PSItem.MaximumVersion -lt $highestPlannedVersion)) {
-              Write-Debug "$($PSItem.Name): $highestPlannedVersion is higher than Maximum Version $($PSItem.MaximumVersion). Performing Lookup"
-              return $true
-            }
-
-            if ($PSItem.RequiredVersion -and ($PSItem.RequiredVersion -notin $plannedVersions.RequiredVersion)) {
-              Write-Debug "$($PSItem.Name): Explicity Required Version $($PSItem.RequiredVersion) is not within existing planned versions ($($plannedVersions.RequiredVersion -join ',')). Performing Lookup"
-              return $true
-            }
-
-            #If it didn't match, skip it
-            Write-Debug "$($PSItem.Name) dependency satisfied by $highestPlannedVersion already in the plan"
+            Write-Debug "Dependency $($dependency.Name) is not satisfied by any existing planned install items. Resolving dependency..."
+            return $true
           }
 
           if (-not $dependenciesToResolve) {
@@ -491,9 +480,9 @@ function Get-ModuleFastPlan {
           # We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
           # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
           foreach ($dependencySpec in $dependenciesToResolve) {
-            [string]$localMatch = Find-LocalModule $dependencySpec
-            if ($localMatch -and -not $Update) {
-              Write-Verbose "Found local module $localMatch that satisfies dependency $dependencySpec. Skipping..."
+            [ModuleFastInfo]$localMatch = Find-LocalModule $dependencySpec -Update:$Update
+            if ($localMatch) {
+              Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Location.AbsolutePath) that satisfies $moduleSpec. Skipping..."
               #TODO: Capture this somewhere that we can use it to report in the deploy plan
               continue
             } else {
@@ -641,6 +630,48 @@ function Add-Getters ([Parameter(Mandatory, ValueFromPipeline)][Type]$Type) {
   }
 }
 
+#Information about a module, whether local or remote
+class ModuleFastInfo {
+  [string]$Name
+  #Sometimes the module version is not the same as the folder version, such as in the case of prerelease versions
+  [NuGetVersion]$ModuleVersion
+  #Path to the module, either local or remote
+  [uri]$Location
+  #TODO: This should be a getter
+  [boolean]$IsLocal
+
+  ModuleFastInfo([string]$Name, [NuGetVersion]$ModuleVersion, [Uri]$Location) {
+    $this.Name = $Name
+    $this.ModuleVersion = $ModuleVersion
+    $this.Location = $Location
+    $this.IsLocal = $Location.IsFile
+  }
+
+  # Implement an op_implicit convert to modulespecification
+  static [ModuleSpecification]op_Implicit([ModuleFastInfo]$moduleFastInfo) {
+    return [ModuleSpecification]::new(@{
+        ModuleName      = $moduleFastInfo.Name
+        RequiredVersion = $moduleFastInfo.ModuleVersion.Version
+      })
+  }
+
+  [string] ToString() {
+    return "$($this.Name)@$($this.ModuleVersion)"
+  }
+  [string] ToUniqueString() {
+    return "$($this.Name)-$($this.ModuleVersion)-$($this.Location)"
+  }
+
+  [int] GetHashCode() {
+    return $this.ToUniqueString().GetHashCode()
+  }
+
+  [bool] Equals($other) {
+    return $this.GetHashCode() -eq $other.GetHashCode()
+  }
+}
+Update-TypeData -TypeName ModuleFastInfo -DefaultDisplayPropertySet Name, ModuleVersion -Force
+
 class ModuleFastSpec: IComparable {
   #These properties are effectively read only thanks to some getter wizardy
 
@@ -673,24 +704,21 @@ class ModuleFastSpec: IComparable {
   static hidden [Version]Get_Version([PSObject]$i) { return $i.Min.Version }
   static hidden [Version]Get_MaximumVersion([PSObject]$i) { return $i.Max.Version }
 
-  #Download Link to where the nuget package zip of the module is located
-  [uri]$DownloadLink
-
   #Constructors
   ModuleFastSpec([string]$Name) {
-    $this.Initialize($Name, $null, $null, [guid]::Empty)
+    $this.Initialize($Name, $null, [guid]::Empty)
   }
 
   ModuleFastSpec([string]$Name, [string]$RequiredVersion) {
-    $this.Initialize($Name, "[$RequiredVersion]", $null, [guid]::Empty)
+    $this.Initialize($Name, "[$RequiredVersion]", [guid]::Empty)
   }
 
   ModuleFastSpec([string]$Name, [string]$RequiredVersion, [string]$Guid) {
-    $this.Initialize($Name, "[$RequiredVersion]", $Guid, [guid]::Empty)
+    $this.Initialize($Name, "[$RequiredVersion]", $Guid)
   }
 
   ModuleFastSpec([string]$Name, [VersionRange]$RequiredVersion) {
-    $this.Initialize($Name, $RequiredVersion, $null, [guid]::Empty)
+    $this.Initialize($Name, $RequiredVersion, [guid]::Empty)
   }
 
   ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
@@ -706,20 +734,19 @@ class ModuleFastSpec: IComparable {
       "ModuleSpecification: $ModuleSpec"
     )
 
-    $this.Initialize($ModuleSpec.Name, $range, $null, $guid)
+    $this.Initialize($ModuleSpec.Name, $range, $guid)
   }
 
   #TODO: Generic Hashtable/IDictionary constructor for common types
 
   #HACK: A helper because we can't do constructor chaining in PowerShell
   #https://stackoverflow.com/questions/44413206/constructor-chaining-in-powershell-call-other-constructors-in-the-same-class
-  hidden Initialize([string]$Name, [VersionRange]$Range, [uri]$DownloadLink, [guid]$Guid) {
+  hidden Initialize([string]$Name, [VersionRange]$Range, [guid]$Guid) {
     #HACK: The nulls here are just to satisfy the ternary operator, they go off into the ether and arent returned or used
     if (-not $Name) { throw 'Name is required' }
     $this._Name = $Name
     $this._VersionRange = $Range ?? [VersionRange]::new()
     $this._Guid = $Guid ?? [Guid]::Empty
-    $this.DownloadLink = $DownloadLink
     # TODO: Fix this check logic
     # if ($this.Guid -ne [Guid]::Empty -and -not $this.Required) {
     #   throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
@@ -744,26 +771,20 @@ class ModuleFastSpec: IComparable {
   #BUG: We cannot implement IEquatable directly because we need to self-reference ModuleFastSpec before it exists.
   #We can however just add Equals() method
 
-  #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals
-  [bool]Equals($other) {
-    return try {
-      #Guid Comparison only matters for equals
-      if ($other -is [ModuleFastSpec]) {
-        if ($this._Guid -ne $other._Guid) {
-          return $false
-        }
-        if ($this._Name -ne $other._Name) {
-          return $false
-        }
-        if ($this._VersionRange -ne $other._VersionRange) {
-          return $false
-        }
-      }
-    } catch [NotSupportedException] {
-      $false
-    }
-  }
 
+
+  #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals
+
+  [string] ToString() {
+    $guid = $this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : ''
+    return "$($this._Name)$guid $($this._VersionRange)"
+  }
+  [int] GetHashCode() {
+    return $this.ToString().GetHashCode()
+  }
+  [bool]Equals($other) {
+    return $this.GetHashCode() -eq $other.GetHashCode()
+  }
   #end IEquatable
 
   #IComparable
@@ -847,8 +868,6 @@ class OldModuleFastSpec : IComparable {
   hidden static [string]$SYSTEM_VERSION_REGEX = '^(?<major>\d+)\.(?<minor>\d+)\.(?<build>\d+)\.(?<revision>\d+)$'
 
   #These properties are effectively read only thanks to some getter wizardy
-  hidden [uri]$_DownloadLink
-  static hidden [uri]Get_DownloadLink([PSObject]$i) { return $i._DownloadLink }
   hidden [string]$_Name
   static hidden [string]Get_Name([PSObject]$i) { return $i._Name }
   hidden [guid]$_Guid
@@ -1391,22 +1410,10 @@ function Add-DestinationToPSModulePath {
   }
 }
 
-class LocalModule {
-  [string]$Name
-  #Sometimes the module version is not the same as the folder version
-  [NuGetVersion]$ModuleVersion
-  #The module folder can be derived as the base of the manifest path
-  [string]$ManifestPath
 
-  LocalModule([string]$Name, [NuGetVersion]$ModuleVersion, [String]$ManifestPath) {
-    $this.Name = $Name
-    $this.ModuleVersion = $ModuleVersion
-    $this.ManifestPath = $ManifestPath
-  }
-}
 
 function Find-LocalModule {
-  [OutputType([LocalModule])]
+  [OutputType([ModuleFastInfo])]
   <#
 	.SYNOPSIS
 	Searches local PSModulePath repositories for the first module that satisfies the ModuleSpec criteria
@@ -1505,7 +1512,7 @@ function Find-LocalModule {
     }
 
     #If we get this far, we didn't find a manifest in this module path
-    Write-Verbose "$moduleSpec`: module folder exists at $moduleBaseDir but no modules found that match the version spec."
+    Write-Debug "$moduleSpec`: module folder exists at $moduleBaseDir but no modules found that match the version spec."
   }
 
   if ($candidateModules.count -eq 0) { return $null }
@@ -1552,7 +1559,7 @@ function Find-LocalModule {
     }
 
     #If we pass all sanity checks, we can return this module as meeting the criteria and skip checking all lower modules.
-    return [LocalModule]::new($ModuleSpec.Name, $manifestVersion, $manifestPath)
+    return [ModuleFastInfo]::new($ModuleSpec.Name, $manifestVersion, $manifestPath)
   }
 }
 
