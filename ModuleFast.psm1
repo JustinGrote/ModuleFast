@@ -191,6 +191,8 @@ function New-ModuleFastClient {
 }
 
 function Get-ModuleFastPlan {
+  [CmdletBinding()]
+  [OutputType([ModuleFastInfo])]
   param(
     #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
     [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
@@ -239,6 +241,7 @@ function Get-ModuleFastPlan {
     #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
     try {
       foreach ($moduleSpec in $ModulesToResolve) {
+        Write-Verbose "Resolving Module Specification: $moduleSpec"
         [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
         if ($localMatch) {
           Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Path) that satisfies $moduleSpec. Skipping..."
@@ -297,7 +300,6 @@ function Get-ModuleFastPlan {
         #If what we are looking for exists in the response, we can stop looking
         #TODO: Type the responses and check on the type, not the existence of a property.
 
-        #HACK: Add the download URI to the catalog entry, this makes life easier.
         #TODO: This needs to be moved to a function so it isn't duplicated down in the "else" section below
         $pageLeaves = $response.items.items
         $pageLeaves | ForEach-Object {
@@ -309,127 +311,98 @@ function Get-ModuleFastPlan {
 
         $entries = $pageLeaves.catalogEntry
 
-        [NuGetVersion]$versionMatch = if ($entries) {
-          [NuGetVersion[]]$inlinedVersions = $entries.version
-          $inlinedVersions | Sort-Object -Descending | ForEach-Object {
+        #Get the highest version that satisfies the requirement in the inlined index, if possible
+        [Object]$selectedEntry = if ($entries) {
+          [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
+          $inlinedVersions.Reverse() | ForEach-Object {
             if ($currentModuleSpec.SatisfiedBy($PSItem)) {
-              return $PSItem
+              Write-Debug "$currentModuleSpec`: Found satisfying version $PSItem in the inlined index."
+              [object]$matchingEntry = $entries | Where-Object version -EQ $PSItem
+              if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
+              return $matchingEntry
             }
           }
         }
 
-        $selectedEntry = if ($versionMatch) {
-          Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in the inlined index."
-
-          #Output
-          $entries | Where-Object version -EQ $versionMatch
-        } else {
-          #TODO: This should maybe be a separate function
-
-          #Do a more detailed resolution
+        #Search additional pages if we didn't find it in the inlined ones
+        $selectedEntry ??= $(
           Write-Debug "$currentModuleSpec`: not found in inlined index. Determining appropriate page(s) to query"
+
           #If not inlined, we need to find what page(s) might have the candidate info we are looking for.
           #While this may seem inefficient, all pages but latest are static and have a long lifetime so we trade a
           #longer cold start to a nearly infinite requery, which will handle all subsequent dependency lookups.
           #stats show most modules have a few common dependencies, so caching all versions of those dependencies is
           #very helpful for fast performance
-
-          # HACK: Need to add @type to make this more discriminate between a direct version query and an individual item
-          # TODO: Should probably typesafe and validate this using classes
-
           $pages = $response.items | Where-Object {
-            [System.Management.Automation.SemanticVersion]$upper = [ModuleFastSpec]::ParseVersionString($PSItem.Upper)
-            [System.Management.Automation.SemanticVersion]$lower = [ModuleFastSpec]::ParseVersionString($PSItem.Lower)
-            if ($currentModuleSpec.Required) {
-              if ($currentModuleSpec.Required -le $upper -and $currentModuleSpec.Required -ge $lower ) {
-                return $true
-              }
-            } else {
-              [Version]$min = $currentModuleSpec.Version ?? '0.0.0'
-              [version]$max = $currentModuleSpec.MaximumVersion ?? '{0}.{0}.{0}.{0}' -f [Int32]::MaxValue
-              #Min and Max are outside the range (meaning the range is inside the min and max)
-              if ($min -le $lower -and $max -ge $upper) {
-                return $true
-              }
-              #Min or max is in range (partial worth exploring)
-              if ($min -ge $lower -and $min -le $upper) {
-                return $true
-              }
-              #Max is in range (partial worth exploring)
-              if ($max -ge $lower -and $max -le $upper) {
-                return $true
-              }
-              #Otherwise there is no match
-            }
+            [VersionRange]$pageRange = [VersionRange]::new($PSItem.Lower, $true, $PSItem.Upper, $true, $null, $null)
+            return $currentModuleSpec.Overlap($pageRange)
           }
-
           if (-not $pages) {
             throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. If this happens during dependency lookup, it is a bug in ModuleFast."
           }
+
           Write-Debug "$currentModuleSpec`: Found $(@($pages).Count) additional pages that might match the query: $($pages.'@id' -join ',')"
 
           #TODO: This is relatively slow and blocking, but we would need complicated logic to process it in the main task handler loop.
           #I really should make a pipeline that breaks off tasks based on the type of the response.
           #This should be a relatively rare query that only happens when the latest package isn't being resolved.
-          [Task[string][]]$tasks = foreach ($page in $pages) {
+          [Task[string][]]$getPagesTasks = foreach ($page in $pages) {
             Get-ModuleInfoAsync @httpContext -Uri $page.'@id'
-            #Used to track progress as tasks can get removed
-            #This loop is here to support ctrl-c cancellation again
           }
-          while ($false -in $tasks.IsCompleted) {
-            [void][Task]::WaitAll($tasks, 500)
-          }
-          $response = $tasks.GetAwaiter().GetResult() | ConvertFrom-Json
-          $items = $response.items
 
-          $pageLeaves = $items
-          $pageLeaves | ForEach-Object {
+          #This timeout loop enables ctrl-c to still function while waiting for the results
+          while ($false -in $getPagesTasks.IsCompleted) {
+            [void][Task]::WaitAll($getPagesTasks, 500)
+          }
+
+          $response = $getPagesTasks.GetAwaiter().GetResult() | ConvertFrom-Json
+
+          $pageLeaves = $response.items | ForEach-Object {
             if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
               $PSItem.catalogEntry
               | Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
             }
+            $PSItem
           }
 
           $entries = $pageLeaves.catalogEntry
 
-          # TODO: Dedupe this logic with the above
-          [HashSet[Version]]$inlinedVersions = $entries.version
-          | Where-Object {
-            $PSItem -and !$PSItem.contains('-')
+          #TODO: Dedupe as a function with above
+          if ($entries) {
+            [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
+            $inlinedVersions.Reverse() | ForEach-Object {
+              if ($currentModuleSpec.SatisfiedBy($PSItem)) {
+                Write-Debug "$currentModuleSpec`: Found satisfying version $PSItem in the additional pages."
+                [object]$matchingEntry = $entries | Where-Object version -EQ $PSItem
+                if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
+
+                return $matchingEntry
+              }
+            }
           }
+        )
 
-          [Version]$versionMatch = Limit-ModuleFastSpecVersions -ModuleSpec $currentModuleSpec -Versions $inlinedVersions -Highest
-          if ($versionMatch) {
-            Write-Debug "$currentModuleSpec`: Found satisfying version $versionMatch in one of the additional pages."
-
-            #Output
-            $entries | Where-Object version -EQ $versionMatch
-            #TODO: Resolve dependencies in separate function
-          }
+        if (-not $selectedEntry) {
+          throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. If this happens during dependency lookup, it is a bug in ModuleFast."
         }
+        if (-not $selectedEntry.PackageContent) { throw "No package location found for $($selectedEntry.PackageContent). This should never happen and is a bug" }
 
-        if ($selectedEntry.count -ne 1) {
-          throw 'Something other than exactly 1 selectedModule was specified. This should never happen and is a bug'
-        }
-
-        if (-not $selectedEntry.packageContent) { throw "No package content found for $($selectedEntry.packageContent). This should never happen and is a bug" }
-        [ModuleFastInfo]$moduleInfo = [ModuleFastInfo]::new(
+        [ModuleFastInfo]$selectedModule = [ModuleFastInfo]::new(
           $selectedEntry.id,
           $selectedEntry.version,
-          $selectedEntry.packageContent
+          $selectedEntry.PackageContent
         )
 
         #Check if we have already processed this item and move on if we have
-        if (-not $modulesToInstall.Add($moduleInfo)) {
-          Write-Debug "$moduleInfo ModulesToInstall already exists in the install plan. Skipping..."
+        if (-not $modulesToInstall.Add($selectedModule)) {
+          Write-Debug "$selectedModule already exists in the install plan. Skipping..."
           #TODO: Fix the flow so this isn't stated twice
           [void]$resolveTasks.Remove($completedTask)
           [void]$currentTasks.Remove($completedTask)
           $tasksCompleteCount++
           continue
         }
-
-        Write-Verbose "$moduleInfo`: Adding to install plan"
+        Write-Verbose "$selectedModule`: Added to install plan"
 
         # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
         # TODO: Should it? Should we check for the target framework and only install if it matches?
@@ -439,11 +412,10 @@ function Get-ModuleFastPlan {
         if ($dependencyInfo) {
           # HACK: I should be using the Id provided by the server, for now I'm just guessing because
           # I need to add it to the ComparableModuleSpec class
-          Write-Debug "$currentModuleSpec`: Processing dependencies"
           [List[ModuleFastSpec]]$dependencies = $dependencyInfo | ForEach-Object {
             [ModuleFastSpec]::new($PSItem.id, [VersionRange]$PSItem.range)
           }
-          Write-Debug "$currentModuleSpec has $($dependencies.count) dependencies"
+          Write-Debug "$currentModuleSpec`: has $($dependencies.count) additional dependencies."
 
           # TODO: Where loop filter maybe
           [ModuleFastSpec[]]$dependenciesToResolve = $dependencies | Where-Object {
@@ -458,10 +430,10 @@ function Get-ModuleFastPlan {
               return $true
             }
 
-            $plannedVersions = $modulesToInstall
-            | Where-Object Name -EQ $dependency.Name
-            | Sort-Object ModuleVersion -Descending
-            | ForEach-Object {
+            $modulesToInstall
+          | Where-Object Name -EQ $dependency.Name
+          | Sort-Object ModuleVersion -Descending
+          | ForEach-Object {
               if ($dependency.SatisfiedBy($PSItem.ModuleVersion)) {
                 Write-Debug "Dependency $dependency satisfied by existing planned install item $PSItem"
                 return $false
@@ -503,6 +475,8 @@ function Get-ModuleFastPlan {
             $currentTasks.Add($task)
           }
         }
+
+        #Putting .NET methods in a try/catch makes errors in them terminating
         try {
           [void]$resolveTasks.Remove($completedTask)
           [void]$currentTasks.Remove($completedTask)
@@ -510,8 +484,8 @@ function Get-ModuleFastPlan {
         } catch {
           throw
         }
-        Write-Debug "Remaining Tasks: $($currentTasks.count)"
       }
+      return $modulesToInstall
     } finally {
       #This gets called even if ctrl-c occured during the process
       #Should cancel any outstanding requests
@@ -521,17 +495,17 @@ function Get-ModuleFastPlan {
 
       $cancelToken.Dispose()
     }
-    return $modulesToInstall
   }
 }
 
 #endregion Public
 
 #region Private
+
 function Install-ModuleFastHelper {
   [CmdletBinding()]
   param(
-    [ModuleFastSpec[]]$ModuleToInstall,
+    [ModuleFastInfo[]]$ModuleToInstall,
     [string]$Destination,
     [CancellationToken]$CancellationToken,
     [HttpClient]$HttpClient,
@@ -547,7 +521,9 @@ function Install-ModuleFastHelper {
       Module = $module
     }
 
-    $installPath = Join-Path $Destination $context.Module.Name $context.Module.Version
+    $installPath = Join-Path $Destination $context.Module.Name $context.ModuleVersion.Split('+-')[0]
+
+    #TODO: Do a get-localmodule check here
     if (Test-Path $installPath) {
       #TODO: Check for a corrupted module
       #TODO: Prerelease checking
@@ -561,11 +537,11 @@ function Install-ModuleFastHelper {
 
     $context.InstallPath = $installPath
 
-    Write-Verbose "$module`: Starting Download for $($module.DownloadLink)"
-    if (-not $module.DownloadLink) {
+    Write-Verbose "$module`: Starting Download for $($module.Location)"
+    if (-not $module.Location) {
       throw "$module`: No Download Link found. This is a bug"
     }
-    $fetchTask = $httpClient.GetStreamAsync($module.DownloadLink, $CancellationToken)
+    $fetchTask = $httpClient.GetStreamAsync($module.Location, $CancellationToken)
     $taskMap.Add($fetchTask, $context)
     $fetchTask
   }
@@ -672,7 +648,16 @@ class ModuleFastInfo {
     return $this.GetHashCode() -eq $other.GetHashCode()
   }
 }
-Update-TypeData -TypeName ModuleFastInfo -DefaultDisplayPropertySet Name, ModuleVersion -Force
+
+$ModuleFastInfoTypeData = @{
+  DefaultDisplayPropertySet = 'Name', 'ModuleVersion'
+  DefaultKeyPropertySet     = 'Name', 'ModuleVersion'
+  SerializationMethod       = 'SpecificProperties'
+  PropertySerializationSet  = 'Name', 'ModuleVersion', 'Location'
+  SerializationDepth        = 0
+}
+Update-TypeData -TypeName ModuleFastInfo @ModuleFastInfoTypeData -Force
+Update-TypeData -TypeName Nuget.Versioning.NugetVersion -SerializationMethod String -Force
 
 class ModuleFastSpec: IComparable {
   #These properties are effectively read only thanks to some getter wizardy
@@ -708,8 +693,41 @@ class ModuleFastSpec: IComparable {
 
   #Constructors
   ModuleFastSpec([string]$Name) {
-    #TODO: Parse out special version conventions
-    $this.Initialize($Name, $null, [guid]::Empty)
+    switch ($true) {
+      ($Name.contains('=')) {
+        $moduleName, $exactVersion = $Name.Split('=')
+        $this.Initialize($moduleName, [VersionRange]::Parse("[$exactVersion]"), [guid]::Empty)
+        break
+      }
+      ($Name.contains('@')) {
+        $moduleName, $range = $Name.Split('@')
+        $this.Initialize($moduleName, [VersionRange]::Parse($range), [guid]::Empty)
+        break
+      }
+      ($Name.contains('>=')) {
+        $moduleName, [NugetVersion]$lower = $Name.Split('>=')
+        $this.Initialize($moduleName, $lower, [guid]::Empty)
+        break
+      }
+      ($Name.contains('>')) {
+        $moduleName, [NugetVersion]$lowerExclusive = $Name.Split('>')
+        $this.Initialize($moduleName, [VersionRange]::Parse("($lowerExclusive,]"), [guid]::Empty)
+        break
+      }
+      ($Name.contains('<=')) {
+        $moduleName, [NugetVersion]$upper = $Name.Split('<=')
+        $this.Initialize($moduleName, [VersionRange]::Parse("(,$upper]"), [guid]::Empty)
+        break
+      }
+      ($Name.contains('<')) {
+        $moduleName, [NugetVersion]$upperExclusive = $Name.Split('<')
+        $this.Initialize($moduleName, [VersionRange]::Parse("(,$upperExclusive)"), [guid]::Empty)
+        break
+      }
+      default {
+        $this.Initialize($Name, $null, [guid]::Empty)
+      }
+    }
   }
 
   ModuleFastSpec([string]$Name, [string]$RequiredVersion) {
@@ -763,6 +781,17 @@ class ModuleFastSpec: IComparable {
 
   [bool] SatisfiedBy([NugetVersion]$Version) {
     return $this._VersionRange.Satisfies($Version)
+  }
+
+  [bool] Overlap([ModuleFastSpec]$other) {
+    return $this.Overlap($other._VersionRange)
+  }
+
+  [bool] Overlap([VersionRange]$other) {
+    [List[VersionRange]]$ranges = @($this._VersionRange, $other)
+    $subset = [versionrange]::CommonSubset($ranges)
+    #If the subset has an explicit version of 0.0.0, this means there was no overlap.
+    return '(0.0.0, 0.0.0)' -ne $subset
   }
 
 
@@ -895,13 +924,13 @@ function Get-ModuleInfoAsync {
     }
 
     $registrationBase = $SCRIPT:__registrationIndex
-		| ConvertFrom-Json
-		| Select-Object -ExpandProperty Resources
-		| Where-Object {
+    | ConvertFrom-Json
+    | Select-Object -ExpandProperty Resources
+    | Where-Object {
       $_.'@type' -match 'RegistrationsBaseUrl'
     }
-		| Sort-Object -Property '@type' -Descending
-		| Select-Object -ExpandProperty '@id' -First 1
+    | Sort-Object -Property '@type' -Descending
+    | Select-Object -ExpandProperty '@id' -First 1
 
     $uri = "$registrationBase/$($ModuleId.ToLower())/$Path"
   }
@@ -1133,72 +1162,13 @@ function Find-LocalModule {
   }
 }
 
-# Find all normalized versions of a version, for example 1.0.1.0 also is 1.0.1
-function Get-NormalizedVersions ([Version]$Version) {
-  $versions = @()
-  if ($Version.Revision -eq 0) { $versions += [Version]::new($Version.Major, $Version.Minor, $Version.Build) }
-  if ($Version.Build -eq 0) { $versions += [Version]::new($Version.Major, $Version.Minor) }
-  if ($Version.Minor -ne 0) { $versions += [Version]::new($Version.Major) }
-  return $versions
-}
-
-<#
-Given an array of versions, find the ones that satisfy the module spec. Returns $false if no match is found.
-#>
-function Limit-ModuleFastSpecVersions {
-  [OutputType([Version[]])]
-  [OutputType([Version], ParameterSetName = 'Highest')]
-  param(
-    [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-    #Versions that are potential candidates to satisfy the modulespec
-    [Parameter(Mandatory)][HashSet[Version]]$Versions,
-    #Only return the highest version that satisfies the spec
-    [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
-  )
-  $candidates = $Versions | Where-Object {
-    $ModuleSpec.SatisfiedBy([NugetVersion]::new($PSItem))
-  }
-  -not $Highest ? $candidates : $candidates | Sort-Object -Descending | Select-Object -First 1
-}
-
-function Limit-ModuleFastSpecSemanticVersions {
-  [OutputType([SemanticVersion[]])]
-  [OutputType([Version], ParameterSetName = 'Highest')]
-  param(
-    [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-    #Versions that are potential candidates to satisfy the modulespec
-    [Parameter(Mandatory)][HashSet[System.Management.Automation.SemanticVersion]]$Versions,
-    #Only return the highest version that satisfies the spec
-    [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
-  )
-  $Versions | Where-Object {
-    $ModuleSpec.Matches($PSItem)
-  }
-  -not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
-}
-function Limit-ModuleFastSpecs {
-  [OutputType([ModuleFastSpec[]])]
-  [OutputType([Version], ParameterSetName = 'Highest')]
-  param(
-    [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-    #Versions that are potential candidates to satisfy the modulespec
-    [Parameter(Mandatory)][HashSet[ModuleFastSpec]]$ModuleSpecs,
-    #Only return the highest version that satisfies the spec
-    [Parameter(ParameterSetName = 'Highest')][Switch]$Highest
-  )
-  $ModuleSpecs | Where-Object {
-    $ModuleSpec.Matches($PSItem)
-  }
-  -not $Highest ? $Versions : @($Versions | Sort-Object -Descending | Select-Object -First 1)
-}
-
 function ConvertTo-AuthenticationHeaderValue ([PSCredential]$Credential) {
-	$basicCredential = [Convert]::ToBase64String(
-		[Encoding]::UTF8.GetBytes(
-						($Credential.UserName, $Credential.GetNetworkCredential().Password -join ':')
-		)
-	)
-	return [Net.Http.Headers.AuthenticationHeaderValue]::New('Basic', $basicCredential)
+  $basicCredential = [Convert]::ToBase64String(
+    [Encoding]::UTF8.GetBytes(
+			($Credential.UserName, $Credential.GetNetworkCredential().Password -join ':')
+    )
+  )
+  return [Net.Http.Headers.AuthenticationHeaderValue]::New('Basic', $basicCredential)
 }
 
 #Get the hash of a string
