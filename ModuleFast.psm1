@@ -37,10 +37,13 @@ $plan = Install-ModuleFast 'Az','VMWare.PowerCLI' -WhatIf
 $plan | Install-ModuleFast
 #>
 function Install-ModuleFast {
-  [CmdletBinding(SupportsShouldProcess)]
+  [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Specification')]
   param(
     #The module(s) to install. This can be a string, a ModuleSpecification, a hashtable with nuget version style (e.g. @{Name='test';Version='1.0'}), a hashtable with ModuleSpecification style (e.g. @{Name='test';RequiredVersion='1.0'}),
-    [Parameter(Position = 0, Mandatory, ValueFromPipeline)][ModuleFastSpec]$ModuleToInstall,
+    [Alias('Name')]
+    [Alias('ModuleToInstall')]
+    [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastInfo[]]$Specification,
+
     #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
@@ -51,8 +54,9 @@ function Install-ModuleFast {
     [Switch]$NoPSModulePathUpdate,
     #Setting this won't add the default destination to your powershell.config.json. This really only matters on Windows.
     [Switch]$NoProfileUpdate,
-    #Setting this will check remote if the module spec has a higher bound than any currently installed local packages.
-    [Switch]$Update
+    #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range.
+    [Switch]$Update,
+    [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo
   )
   begin {
     # Setup the Destination repository
@@ -99,19 +103,39 @@ function Install-ModuleFast {
       }
     }
     $httpClient = $SCRIPT:__ModuleFastHttpClient
-    [List[Object]]$ModulesToInstall = @()
   }
 
   process {
-    $ModulesToInstall.Add($ModuleToInstall)
+    #We initialize and type the container list here because there is a bug where the ParameterSet is not correct in the begin block if the pipeline is used. Null conditional keeps it from being reinitialized
+    switch ($PSCmdlet.ParameterSetName) {
+      'Specification' {
+        [List[ModuleFastSpec]]$ModulesToInstall ??= @()
+        foreach ($ModuleToInstall in $Specification) {
+          $ModulesToInstall.Add($ModuleToInstall)
+        }
+        break
+      }
+      'ModuleFastInfo' {
+        [List[ModuleFastInfo]]$ModulesToInstall ??= @()
+        foreach ($ModuleToInstall in $ModuleFastInfo) {
+          $ModulesToInstall.Add($ModuleToInstall)
+        }
+        break
+      }
+    }
   }
 
   end {
-    $plan = if ($ModulesToInstall -is [ModuleFastSpec] -or $ModulesToInstall -is [ModuleFastSpec[]]) {
-      $ModulesToInstall
-    } else {
-      Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-      Get-ModuleFastPlan $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
+    #If we do not have an explicit implementation plan, fetch it
+    #This is done so that Get-ModuleFastPlan | Install-ModuleFastPlan and Install-ModuleFastPlan have the same flow.
+    [ModuleFastInfo[]]$plan = switch ($PSCmdlet.ParameterSetName) {
+      'Specification' {
+        Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
+        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
+      }
+      'ModuleFastInfo' {
+        $ModulesToInstall.ToArray()
+      }
     }
 
     $WhatIfPreference = $currentWhatIfPreference
@@ -194,8 +218,9 @@ function Get-ModuleFastPlan {
   [CmdletBinding()]
   [OutputType([ModuleFastInfo])]
   param(
-    #A list of modules to install, specified either as strings or as hashtables with nuget version style (e.g. @{Name='test';Version='1.0'})
-    [Parameter(Mandatory, ValueFromPipeline)][Object]$Name,
+    #The module(s) to install. This can be a string, a ModuleSpecification, a hashtable with nuget version style (e.g. @{Name='test';Version='1.0'}), a hashtable with ModuleSpecification style (e.g. @{Name='test';RequiredVersion='1.0'}),
+    [Alias('Name')]
+    [Parameter(Position = 0, Mandatory, ValueFromPipeline)][ModuleFastSpec[]]$Specification,
     #The repository to scan for modules. TODO: Multi-repo support
     [string]$Source = 'https://pwsh.gallery/index.json',
     #Whether to include prerelease modules in the request
@@ -221,7 +246,7 @@ function Get-ModuleFastPlan {
     }
   }
   PROCESS {
-    foreach ($spec in $Name) {
+    foreach ($spec in $Specification) {
       if (-not $ModulesToResolve.Add($spec)) {
         Write-Warning "$spec was specified twice, skipping duplicate"
       }
@@ -328,17 +353,18 @@ function Get-ModuleFastPlan {
         $selectedEntry ??= $(
           Write-Debug "$currentModuleSpec`: not found in inlined index. Determining appropriate page(s) to query"
 
-          #If not inlined, we need to find what page(s) might have the candidate info we are looking for.
-          #While this may seem inefficient, all pages but latest are static and have a long lifetime so we trade a
-          #longer cold start to a nearly infinite requery, which will handle all subsequent dependency lookups.
-          #stats show most modules have a few common dependencies, so caching all versions of those dependencies is
-          #very helpful for fast performance
-          $pages = $response.items | Where-Object {
+          #If not inlined, we need to find what page(s) might have the candidate info we are looking for, starting with the highest numbered page first
+
+          $pages = $response.items
+          | Where-Object { -not $PSItem.items } #Get non-inlined pages
+          | Where-Object {
             [VersionRange]$pageRange = [VersionRange]::new($PSItem.Lower, $true, $PSItem.Upper, $true, $null, $null)
             return $currentModuleSpec.Overlap($pageRange)
           }
+          | Sort-Object -Descending { [NuGetVersion]$PSItem.Upper }
+
           if (-not $pages) {
-            throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. If this happens during dependency lookup, it is a bug in ModuleFast."
+            throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the requested version constraints."
           }
 
           Write-Debug "$currentModuleSpec`: Found $(@($pages).Count) additional pages that might match the query: $($pages.'@id' -join ',')"
@@ -346,37 +372,39 @@ function Get-ModuleFastPlan {
           #TODO: This is relatively slow and blocking, but we would need complicated logic to process it in the main task handler loop.
           #I really should make a pipeline that breaks off tasks based on the type of the response.
           #This should be a relatively rare query that only happens when the latest package isn't being resolved.
-          [Task[string][]]$getPagesTasks = foreach ($page in $pages) {
-            Get-ModuleInfoAsync @httpContext -Uri $page.'@id'
-          }
 
-          #This timeout loop enables ctrl-c to still function while waiting for the results
-          while ($false -in $getPagesTasks.IsCompleted) {
-            [void][Task]::WaitAll($getPagesTasks, 500)
-          }
+          #Start with the highest potentially matching page and work our way down until we find a match.
+          foreach ($page in $pages) {
+            [Task[string][]]$getPagesTasks = Get-ModuleInfoAsync @httpContext -Uri $page.'@id'
 
-          $response = $getPagesTasks.GetAwaiter().GetResult() | ConvertFrom-Json
-
-          $pageLeaves = $response.items | ForEach-Object {
-            if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
-              $PSItem.catalogEntry
-              | Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
+            #This timeout loop enables ctrl-c to still function while waiting for the results
+            while ($false -in $getPagesTasks.IsCompleted) {
+              [void][Task]::WaitAll($getPagesTasks, 500)
             }
-            $PSItem
-          }
 
-          $entries = $pageLeaves.catalogEntry
+            $response = $getPagesTasks.GetAwaiter().GetResult() | ConvertFrom-Json
 
-          #TODO: Dedupe as a function with above
-          if ($entries) {
-            [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
-            $inlinedVersions.Reverse() | ForEach-Object {
-              if ($currentModuleSpec.SatisfiedBy($PSItem)) {
-                Write-Debug "$currentModuleSpec`: Found satisfying version $PSItem in the additional pages."
-                [object]$matchingEntry = $entries | Where-Object version -EQ $PSItem
-                if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
+            $pageLeaves = $response.items | ForEach-Object {
+              if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
+                $PSItem.catalogEntry
+                | Add-Member -NotePropertyName 'PackageContent' -NotePropertyValue $PSItem.packageContent
+              }
+              $PSItem
+            }
 
-                return $matchingEntry
+            $entries = $pageLeaves.catalogEntry
+
+            #TODO: Dedupe as a function with above
+            if ($entries) {
+              [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
+              $inlinedVersions.Reverse() | ForEach-Object {
+                if ($currentModuleSpec.SatisfiedBy($PSItem)) {
+                  Write-Debug "$currentModuleSpec`: Found satisfying version $PSItem in the additional pages."
+                  [object]$matchingEntry = $entries | Where-Object version -EQ $PSItem
+                  if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
+                  $matchingEntry
+                  break
+                }
               }
             }
           }
@@ -485,7 +513,7 @@ function Get-ModuleFastPlan {
           throw
         }
       }
-      return $modulesToInstall
+      if ($modulesToInstall) { return $modulesToInstall }
     } finally {
       #This gets called even if ctrl-c occured during the process
       #Should cancel any outstanding requests
@@ -691,44 +719,6 @@ class ModuleFastSpec: IComparable {
   static hidden [Version]Get_MaximumVersion([PSObject]$i) { return $i.Max.Version }
 
   #Constructors
-  ModuleFastSpec([string]$Name) {
-    switch ($true) {
-      ($Name.contains('=')) {
-        $moduleName, $exactVersion = $Name.Split('=')
-        $this.Initialize($moduleName, [VersionRange]::Parse("[$exactVersion]"), [guid]::Empty)
-        break
-      }
-      ($Name.contains('@')) {
-        $moduleName, $range = $Name.Split('@')
-        $this.Initialize($moduleName, [VersionRange]::Parse($range), [guid]::Empty)
-        break
-      }
-      ($Name.contains('>=')) {
-        $moduleName, [NugetVersion]$lower = $Name.Split('>=')
-        $this.Initialize($moduleName, $lower, [guid]::Empty)
-        break
-      }
-      ($Name.contains('>')) {
-        $moduleName, [NugetVersion]$lowerExclusive = $Name.Split('>')
-        $this.Initialize($moduleName, [VersionRange]::Parse("($lowerExclusive,]"), [guid]::Empty)
-        break
-      }
-      ($Name.contains('<=')) {
-        $moduleName, [NugetVersion]$upper = $Name.Split('<=')
-        $this.Initialize($moduleName, [VersionRange]::Parse("(,$upper]"), [guid]::Empty)
-        break
-      }
-      ($Name.contains('<')) {
-        $moduleName, [NugetVersion]$upperExclusive = $Name.Split('<')
-        $this.Initialize($moduleName, [VersionRange]::Parse("(,$upperExclusive)"), [guid]::Empty)
-        break
-      }
-      default {
-        $this.Initialize($Name, $null, [guid]::Empty)
-      }
-    }
-  }
-
   ModuleFastSpec([string]$Name, [string]$RequiredVersion) {
     $this.Initialize($Name, "[$RequiredVersion]", [guid]::Empty)
   }
@@ -742,20 +732,62 @@ class ModuleFastSpec: IComparable {
   }
 
   ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
-    [string]$Min = $ModuleSpec.RequiredVersion ?? $ModuleSpec.Version
-    [string]$Max = $ModuleSpec.RequiredVersion ?? $ModuleSpec.MaximumVersion
-    $guid = $ModuleSpec.Guid ?? [Guid]::Empty
-    $range = [VersionRange]::new(
-      [String]::IsNullOrEmpty($Min) ? $null : $Min,
-      $true, #Inclusive
-      [String]::IsNullOrEmpty($Max) ? $null : $Max,
-      $true, #Inclusive
-      $null,
-      "ModuleSpecification: $ModuleSpec"
-    )
-
-    $this.Initialize($ModuleSpec.Name, $range, $guid)
+    $this.Initialize($ModuleSpec)
   }
+
+  ModuleFastSpec([string]$Name) {
+    #Used as a reference handle for TryParse
+    [ModuleSpecification]$moduleSpec = $null
+
+    switch ($true) {
+      #Handles a string representation of a modulespecification hashtable
+      ([ModuleSpecification]::TryParse($Name, [ref]$moduleSpec)) {
+        $this.Initialize($moduleSpec)
+        break
+      }
+      ($Name.contains('>=')) {
+        $moduleName, [NugetVersion]$lower = $Name.Split('>=')
+        $this.Initialize($moduleName, $lower, [guid]::Empty)
+        break
+      }
+      ($Name.contains('<=')) {
+        $moduleName, [NugetVersion]$upper = $Name.Split('<=')
+        $this.Initialize($moduleName, [VersionRange]::Parse("(,$upper]"), [guid]::Empty)
+        break
+      }
+      ($Name.contains('=')) {
+        $moduleName, $exactVersion = $Name.Split('=')
+        $this.Initialize($moduleName, [VersionRange]::Parse("[$exactVersion]"), [guid]::Empty)
+        break
+      }
+      ($Name.contains('@')) {
+        $moduleName, $range = $Name.Split('@')
+        $this.Initialize($moduleName, [VersionRange]::Parse($range), [guid]::Empty)
+        break
+      }
+
+      ($Name.contains('>')) {
+        $moduleName, [NugetVersion]$lowerExclusive = $Name.Split('>')
+        $this.Initialize($moduleName, [VersionRange]::Parse("($lowerExclusive,]"), [guid]::Empty)
+        break
+      }
+      ($Name.contains('<')) {
+        $moduleName, [NugetVersion]$upperExclusive = $Name.Split('<')
+        $this.Initialize($moduleName, [VersionRange]::Parse("(,$upperExclusive)"), [guid]::Empty)
+        break
+      }
+      default {
+        $this.Initialize($Name, $null, [guid]::Empty)
+      }
+    }
+  }
+
+  ModuleFastSpec([System.Collections.IDictionary]$ModuleSpec) {
+    #TODO: Additional formats
+    [ModuleSpecification]$ModuleSpec = [ModuleSpecification]::new($ModuleSpec)
+    $this.Initialize($ModuleSpec)
+  }
+
 
   #TODO: Generic Hashtable/IDictionary constructor for common types
 
@@ -771,6 +803,22 @@ class ModuleFastSpec: IComparable {
     # if ($this.Guid -ne [Guid]::Empty -and -not $this.Required) {
     #   throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
     # }
+  }
+
+  hidden Initialize([ModuleSpecification]$ModuleSpec) {
+    [string]$Min = $ModuleSpec.RequiredVersion ?? $ModuleSpec.Version
+    [string]$Max = $ModuleSpec.RequiredVersion ?? $ModuleSpec.MaximumVersion
+    $guid = $ModuleSpec.Guid ?? [Guid]::Empty
+    $range = [VersionRange]::new(
+      [String]::IsNullOrEmpty($Min) ? $null : $Min,
+      $true, #Inclusive
+      [String]::IsNullOrEmpty($Max) ? $null : $Max,
+      $true, #Inclusive
+      $null,
+      "ModuleSpecification: $ModuleSpec"
+    )
+
+    $this.Initialize($ModuleSpec.Name, $range, $guid)
   }
 
   #region Methods
@@ -940,7 +988,6 @@ function Get-ModuleInfoAsync {
   return $HttpClient.GetStringAsync($uri, $CancellationToken)
 }
 
-
 function Add-DestinationToPSModulePath {
   <#
 	.SYNOPSIS
@@ -1043,7 +1090,7 @@ function Find-LocalModule {
     $moduleBaseDir = [Directory]::GetDirectories($modulePath, $moduleSpec.Name, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
     if ($moduleBaseDir.count -gt 1) { throw "$($moduleSpec.Name) folder is ambiguous, please delete one of these folders: $moduleBaseDir" }
     if (-not $moduleBaseDir) {
-      Write-Debug "PSModulePath $modulePath does not have a $($moduleSpec.Name) folder. Skipping..."
+      Write-Debug "$($moduleSpec.Name): PSModulePath $modulePath does not have this module. Skipping..."
       continue
     }
 
