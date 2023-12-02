@@ -42,7 +42,9 @@ function Install-ModuleFast {
     #The module(s) to install. This can be a string, a ModuleSpecification, a hashtable with nuget version style (e.g. @{Name='test';Version='1.0'}), a hashtable with ModuleSpecification style (e.g. @{Name='test';RequiredVersion='1.0'}),
     [Alias('Name')]
     [Alias('ModuleToInstall')]
-    [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastInfo[]]$Specification,
+    [AllowNull()]
+    [AllowEmptyCollection()]
+    [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastSpec[]]$Specification,
 
     #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
     [string]$Destination,
@@ -126,6 +128,15 @@ function Install-ModuleFast {
   }
 
   end {
+    if (-not $ModulesToInstall) {
+      if ($WhatIfPreference) {
+        Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
+      }
+      #TODO: Deduplicate this with the end into its own function
+      Write-Verbose "`u{2705} All required modules installed! Exiting."
+      return
+    }
+
     #If we do not have an explicit implementation plan, fetch it
     #This is done so that Get-ModuleFastPlan | Install-ModuleFastPlan and Install-ModuleFastPlan have the same flow.
     [ModuleFastInfo[]]$plan = switch ($PSCmdlet.ParameterSetName) {
@@ -559,7 +570,7 @@ function Install-ModuleFastHelper {
       }
     }
 
-    Write-Verbose "$module`: Starting Download for $($module.Location)"
+    Write-Verbose "${module}: Downloading to $($module.Location)"
     if (-not $module.Location) {
       throw "$module`: No Download Link found. This is a bug"
     }
@@ -584,7 +595,7 @@ function Install-ModuleFastHelper {
     $streamTasks.RemoveAt($thisTaskIndex)
 
     #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
-    Write-Verbose "$($context.Module): Starting Extract Job to $($context.installPath)"
+    Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
     # This is a sync process and we want to do it in parallel, hence the threadjob
     $installJob = Start-ThreadJob -ThrottleLimit 8 {
       param(
@@ -612,7 +623,7 @@ function Install-ModuleFastHelper {
     $completedJobContext = $completedJob | Receive-Job -Wait -AutoRemoveJob
     if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
     $installed++
-    Write-Verbose "$($completedJobContext.Module)`: Successfuly installed to $($completedJobContext.InstallPath)"
+    Write-Verbose "$($completedJobContext.Module)`: Installed to $($completedJobContext.InstallPath)"
     Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
   }
 }
