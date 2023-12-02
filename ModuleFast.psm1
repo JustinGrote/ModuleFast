@@ -517,31 +517,30 @@ function Install-ModuleFastHelper {
   [Dictionary[Task, hashtable]]$taskMap = @{}
 
   [List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
-    $context = @{
-      Module = $module
-    }
-
-    $installPath = Join-Path $Destination $context.Module.Name $context.ModuleVersion.Split('+-')[0]
+    $installPath = Join-Path $Destination $module.Name $module.ModuleVersion.ToString().Split('+-')[0]
 
     #TODO: Do a get-localmodule check here
     if (Test-Path $installPath) {
       #TODO: Check for a corrupted module
       #TODO: Prerelease checking
       if (-not $Update) {
-        throw "$($context.Module)`: Module already exists at $installPath and -Update wasn't specified. This is a bug"
+        throw "${module}: Module already exists at $installPath and -Update wasn't specified. This is a bug"
       } else {
-        Write-Verbose "$($context.Module)`: Module already exists at $installPath but -Update was specified. This can happen because we did in fact have the latest version. Skipping."
+        Write-Verbose "${module}: Module already exists at $installPath but -Update was specified. This can happen because we did in fact have the latest version. Skipping."
         continue
       }
     }
-
-    $context.InstallPath = $installPath
 
     Write-Verbose "$module`: Starting Download for $($module.Location)"
     if (-not $module.Location) {
       throw "$module`: No Download Link found. This is a bug"
     }
+
     $fetchTask = $httpClient.GetStreamAsync($module.Location, $CancellationToken)
+    $context = @{
+      Module      = $module
+      InstallPath = $installPath
+    }
     $taskMap.Add($fetchTask, $context)
     $fetchTask
   }
@@ -573,7 +572,7 @@ function Install-ModuleFastHelper {
       Remove-Item -Path $installPath -Include '_rels', 'package', '*.nuspec' -Recurse -Force
 			($zip).Dispose()
 			($stream).Dispose()
-      return ($context).Module
+      return $context
     }
     $installJob
   }
@@ -582,10 +581,10 @@ function Install-ModuleFastHelper {
   while ($installJobs.count -gt 0) {
     $ErrorActionPreference = 'Stop'
     $completedJob = $installJobs | Wait-Job -Any
-    $installedModule = $completedJob | Receive-Job -Wait -AutoRemoveJob
+    $completedJobContext = $completedJob | Receive-Job -Wait -AutoRemoveJob
     if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
     $installed++
-    Write-Verbose "$installedModule`: Successfuly installed to $installPath"
+    Write-Verbose "$($completedJobContext.Module)`: Successfuly installed to $($completedJobContext.InstallPath)"
     Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
   }
 }
