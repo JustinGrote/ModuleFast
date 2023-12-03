@@ -1,4 +1,5 @@
 using namespace System.Management.Automation
+using namespace Microsoft.PowerShell.Commands
 using namespace System.Collections.Generic
 using namespace System.Diagnostics.CodeAnalysis
 using namespace NuGet.Versioning
@@ -88,152 +89,266 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     $ProgressPreference = $SCRIPT:__existingProgressPreference
   }
 
-  #This is used for testcases
-  $SCRIPT:moduleName = 'Az.Accounts'
+  Context 'Parameter Binding' {
+    #This is used for testcases
+    $SCRIPT:moduleName = 'Az.Accounts'
 
-  It 'Gets Module by <Test>' {
-    $actual = Get-ModuleFastPlan $spec
-    $actual | Should -HaveCount 1
-    $actual.Name | Should -Be $spec
-    $actual.ModuleVersion -as [NuGetVersion] | Should -Not -BeNullOrEmpty
-  } -TestCases (
-    @{Test = 'Name'; Spec = $moduleName },
-		@{Test = 'MinimumVersion'; Spec = @{ ModuleName = $moduleName; ModuleVersion = '0.0.0' } },
-		@{Test = 'RequiredVersionNotLatest'; Spec = @{ ModuleName = $moduleName; RequiredVersion = '2.7.3' } }
-	)
-	It 'Gets Module with 1 dependency' {
-		Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
-	}
-	It 'Gets Module with lots of dependencies (Az)' {
+    It 'Gets Module by <Test>' {
+      $actual = Get-ModuleFastPlan $Spec
+      $actual | Should -HaveCount 1
+      $ModuleName | Should -Be $actual.Name
+      $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+      if ($Check) { . $Check }
+    } -TestCases (
+      @{
+        Test  = 'Name';
+        Spec  = $SCRIPT:moduleName;
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+        }
+      },
+      @{
+        Test  = 'ModuleSpecification Name';
+        Spec  = [ModuleSpecification]::new($SCRIPT:moduleName);
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+        }
+      },
+      @{
+        Test  = 'ModuleSpecification MinimumVersion';
+        Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; ModuleVersion = '0.0.0' })
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+        }
+      },
+      @{
+        Test  = 'ModuleSpecification RequiredVersion';
+        Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; RequiredVersion = '2.7.3' })
+        Check = {
+          $actual.ModuleVersion | Should -Be '2.7.3'
+        }
+      },
+      @{
+        Test  = 'ModuleSpecification MaximumVersion';
+        Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; MaximumVersion = '2.7.3' })
+        Check = {
+          $actual.ModuleVersion | Should -Be '2.7.3'
+        }
+      }
+    )
+
+    It 'Gets Module String: <Spec>' {
+      $actual = Get-ModuleFastPlan $Spec
+      $actual | Should -HaveCount 1
+      $ModuleName | Should -Be $actual.Name
+      $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+      if ($Check) { . $Check }
+    } -TestCases (
+      @{
+        Spec  = 'Az.Accounts'
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts@2.7.3'
+        Check = {
+          $actual.ModuleVersion | Should -Be '2.7.3'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts>2.7.3'
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts<2.7.3'
+        Check = {
+          $actual.ModuleVersion | Should -BeLessThan '2.7.3'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts<=2.7.3'
+        Check = {
+          $actual.ModuleVersion | Should -Be '2.7.3'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts>=2.7.3'
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts:2.7.3'
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3' -Because 'With NuGet syntax, a bare version is a minimum version, not a requiredversion'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts:[2.7.3]'
+        Check = {
+          $actual.ModuleVersion | Should -Be '2.7.3'
+        }
+      },
+      @{
+        Spec  = 'Az.Accounts:(,2.7.3)'
+        Check = {
+          $actual.ModuleVersion | Should -BeLessThan '2.7.3'
+        }
+      },
+      @{
+        Spec  = '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''}'
+        Check = {
+          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+        }
+      },
+      @{
+        Spec  = '@{ModuleName = ''Az.Accounts''; RequiredVersion = ''2.7.3''}'
+        Check = {
+          $actual.ModuleVersion | Should -Be '2.7.3'
+        }
+      }
+    )
+  }
+
+  It 'Errors on Unsupported Object instead of Stringifying' {
+    { Get-ModuleFastPlan [Tuple]::Create('Az.Accounts') -ErrorAction Stop }
+    | Should -Throw '*Cannot process argument transformation on parameter*'
+  }
+  It 'Gets Module with 1 dependency' {
+    Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
+  }
+  It 'Gets Module with lots of dependencies (Az)' {
     Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0' } | Should -HaveCount 86
   }
   It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
     Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
-
   }
   It 'Gets multiple modules' {
     Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0' }, @{ModuleName = 'VMWare.PowerCli'; ModuleVersion = '13.2' }
     | Should -HaveCount 168
-	}
+  }
 }
 
 Describe 'Install-ModuleFast' -Tag 'E2E' {
-	BeforeAll {
-		$SCRIPT:__existingPSModulePath = $env:PSModulePath
-		filter Limit-ModulePath {
-			param(
-				[string]$path,
+  BeforeAll {
+    $SCRIPT:__existingPSModulePath = $env:PSModulePath
+    filter Limit-ModulePath {
+      param(
+        [string]$path,
 
-				[Parameter(ValueFromPipeline)]
-				[Management.Automation.PSModuleInfo]$InputObject
-			)
-			if ($PSItem.Path.StartsWith($path)) {
-				return $PSItem
-			}
-		}
-	}
-	BeforeEach {
-		#Remove all PSModulePath to not affect existing environment
-		$installTempPath = Join-Path $testdrive $(New-Guid)
-		New-Item -ItemType Directory -Path $installTempPath -ErrorAction stop
-		$env:PSModulePath = $installTempPath
+        [Parameter(ValueFromPipeline)]
+        [Management.Automation.PSModuleInfo]$InputObject
+      )
+      if ($PSItem.Path.StartsWith($path)) {
+        return $PSItem
+      }
+    }
+  }
+  BeforeEach {
+    #Remove all PSModulePath to not affect existing environment
+    $installTempPath = Join-Path $testdrive $(New-Guid)
+    New-Item -ItemType Directory -Path $installTempPath -ErrorAction stop
+    $env:PSModulePath = $installTempPath
 
-		[SuppressMessageAttribute(
-			<#Category#>'PSUseDeclaredVarsMoreThanAssignments',
-			<#CheckId#>$null,
-			Justification = 'PSScriptAnalyzer doesnt see the connection between beforeeach and Describe/It'
-		)]
-		$imfParams = @{
-			Destination          = $installTempPath
-			NoProfileUpdate      = $true
-			NoPSModulePathUpdate = $true
-			Confirm              = $false
-		}
-	}
-	AfterAll {
-		$env:PSModulePath = $SCRIPT:__existingPSModulePath
-	}
-	It 'Installs Module' {
-		#HACK: The testdrive mount is not available in the threadjob runspaces so we need to translate it
-		Install-ModuleFast @imfParams 'Az.Accounts'
-		Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
-	}
-	It '4 section version numbers (VMware.PowerCLI)' {
-		Install-ModuleFast @imfParams 'VMware.VimAutomation.Common'
-		Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
-			$moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
-			Import-PowerShellDataFile -Path $_.FullName | ForEach-Object ModuleVersion | Should -Be $moduleFolderVersion
-		}
-		Get-Module VMWare* -ListAvailable
+    [SuppressMessageAttribute(
+      <#Category#>'PSUseDeclaredVarsMoreThanAssignments',
+      <#CheckId#>$null,
+      Justification = 'PSScriptAnalyzer doesnt see the connection between beforeeach and Describe/It'
+    )]
+    $imfParams = @{
+      Destination          = $installTempPath
+      NoProfileUpdate      = $true
+      NoPSModulePathUpdate = $true
+      Confirm              = $false
+    }
+  }
+  AfterAll {
+    $env:PSModulePath = $SCRIPT:__existingPSModulePath
+  }
+  It 'Installs Module' {
+    #HACK: The testdrive mount is not available in the threadjob runspaces so we need to translate it
+    Install-ModuleFast @imfParams 'Az.Accounts'
+    Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
+  }
+  It '4 section version numbers (VMware.PowerCLI)' {
+    Install-ModuleFast @imfParams 'VMware.VimAutomation.Common'
+    Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
+      $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
+      Import-PowerShellDataFile -Path $_.FullName | ForEach-Object ModuleVersion | Should -Be $moduleFolderVersion
+    }
+    Get-Module VMWare* -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Should -HaveCount 2
-	}
-	It 'lots of dependencies (Az)' {
-		Install-ModuleFast @imfParams 'Az'
+  }
+  It 'lots of dependencies (Az)' {
+    Install-ModuleFast @imfParams 'Az'
 		(Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
-	}
-	It 'specific requiredVersion' {
-		Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
-		Get-Module Az.Accounts -ListAvailable
+  }
+  It 'specific requiredVersion' {
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
 		| Should -Be '2.7.4'
-	}
-	It 'specific requiredVersion when newer version is present' {
-		Install-ModuleFast @imfParams 'Az.Accounts'
-		Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
-		$installedVersions = Get-Module Az.Accounts -ListAvailable
+  }
+  It 'specific requiredVersion when newer version is present' {
+    Install-ModuleFast @imfParams 'Az.Accounts'
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    $installedVersions = Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
 
-		$installedVersions | Should -HaveCount 2
-		$installedVersions | Should -Contain '2.7.4'
-	}
-	It 'Installs when Maximumversion is lower than currently installed' {
-		Install-ModuleFast @imfParams 'Az.Accounts'
-		Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
-		Get-Module Az.Accounts -ListAvailable
+    $installedVersions | Should -HaveCount 2
+    $installedVersions | Should -Contain '2.7.4'
+  }
+  It 'Installs when Maximumversion is lower than currently installed' {
+    Install-ModuleFast @imfParams 'Az.Accounts'
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
+    Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
 		| Should -Contain '2.7.3'
-	}
-	It 'Only installs once when Update is specified and latest has not changed' {
-		Install-ModuleFast @imfParams 'Az.Accounts' -Update
-		#This will error if the file already exists
-		Install-ModuleFast @imfParams 'Az.Accounts' -Update
-	}
+  }
+  It 'Only installs once when Update is specified and latest has not changed' {
+    Install-ModuleFast @imfParams 'Az.Accounts' -Update
+    #This will error if the file already exists
+    Install-ModuleFast @imfParams 'Az.Accounts' -Update
+  }
 
-	It 'Updates only dependent module that requires update' {
-		Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
-		Install-ModuleFast @imfParams	@{ ModuleName = 'Az.Compute'; RequiredVersion = '5.0.0' }
-		Get-Module Az.Accounts -ListAvailable
+  It 'Updates only dependent module that requires update' {
+    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
+    Install-ModuleFast @imfParams	@{ ModuleName = 'Az.Compute'; RequiredVersion = '5.0.0' }
+    Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
 		| Sort-Object Version -Descending
 		| Select-Object -First 1
 		| Should -Be '2.10.2'
 
-		Install-ModuleFast @imfParams 'Az.Compute', 'Az.Accounts' #Should not update
-		Get-Module Az.Accounts -ListAvailable
+    Install-ModuleFast @imfParams 'Az.Compute', 'Az.Accounts' #Should not update
+    Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
 		| Sort-Object Version -Descending
 		| Select-Object -First 1
 		| Should -Be '2.10.2'
 
-		Install-ModuleFast @imfParams 'Az.Compute' -Update #Should disregard local install and update latest Az.Accounts
-		Get-Module Az.Accounts -ListAvailable
+    Install-ModuleFast @imfParams 'Az.Compute' -Update #Should disregard local install and update latest Az.Accounts
+    Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
 		| Sort-Object Version -Descending
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'2.10.2')
 
-		Get-Module Az.Compute -ListAvailable
+    Get-Module Az.Compute -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
 		| Sort-Object Version -Descending
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'5.0.0')
-	}
+  }
 }

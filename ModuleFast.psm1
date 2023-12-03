@@ -280,7 +280,7 @@ function Get-ModuleFastPlan {
         Write-Verbose "Resolving Module Specification: $moduleSpec"
         [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
         if ($localMatch) {
-          Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Path) that satisfies $moduleSpec. Skipping..."
+          Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Location) that satisfies $moduleSpec. Skipping..."
           #TODO: Capture this somewhere that we can use it to report in the deploy plan
           continue
         }
@@ -766,13 +766,14 @@ class ModuleFastSpec: IComparable {
         $this.Initialize($moduleName, [VersionRange]::Parse("(,$upper]"), [guid]::Empty)
         break
       }
-      ($Name.contains('=')) {
-        $moduleName, $exactVersion = $Name.Split('=')
+      ($Name.contains('@')) {
+        $moduleName, $exactVersion = $Name.Split('@')
         $this.Initialize($moduleName, [VersionRange]::Parse("[$exactVersion]"), [guid]::Empty)
         break
       }
-      ($Name.contains('@')) {
-        $moduleName, $range = $Name.Split('@')
+      #NuGet Version Syntax for this one
+      ($Name.contains(':')) {
+        $moduleName, $range = $Name.Split(':')
         $this.Initialize($moduleName, [VersionRange]::Parse($range), [guid]::Empty)
         break
       }
@@ -797,6 +798,11 @@ class ModuleFastSpec: IComparable {
     #TODO: Additional formats
     [ModuleSpecification]$ModuleSpec = [ModuleSpecification]::new($ModuleSpec)
     $this.Initialize($ModuleSpec)
+  }
+
+  # This is our fallback case when an object is supplied
+  ModuleFast([object]$UnsupportedObject) {
+    throw [NotSupportedException]"Cannot convert $($UnsupportedObject.GetType().FullName) to a ModuleFastSpec, please ensure you provided the correct type of object"
   }
 
 
@@ -1039,10 +1045,10 @@ function Add-DestinationToPSModulePath {
 
   #Prepare a relative destination if possible using Path.GetRelativePath
   foreach ($basePath in [environment]::GetFolderPath('LocalApplicationData'), $Home) {
-    $relativeDestination = [IO.Path]::GetRelativePath($basePath, $Destination)
+    $relativeDestination = [Path]::GetRelativePath($basePath, $Destination)
     if ($relativeDestination -ne $Destination) {
       [string]$newDestination = '$([environment]::GetFolderPath(''LocalApplicationData''))' +
-      [IO.Path]::DirectorySeparatorChar +
+      [Path]::DirectorySeparatorChar +
       $relativeDestination
       Write-Verbose "Using relative path $newDestination instead of '$Destination' in profile"
       $Destination = $newDestination
@@ -1051,7 +1057,7 @@ function Add-DestinationToPSModulePath {
   }
   Write-Verbose 'Checked for relative destination'
 
-  [string]$profileLine = { if ('##DESTINATION##' -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) { $env:PSModulePath = '##DESTINATION##' + $([IO.Path]::PathSeparator + $env:PSModulePath) } <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
+  [string]$profileLine = { if ('##DESTINATION##' -notin ($env:PSModulePath.split([Path]::PathSeparator))) { $env:PSModulePath = '##DESTINATION##' + $([Path]::PathSeparator + $env:PSModulePath) } <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
 
   #We can't use string formatting because of the braces already present
   $profileLine = $profileLine -replace '##DESTINATION##', $Destination
