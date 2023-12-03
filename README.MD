@@ -15,6 +15,8 @@ iwr bit.ly/modulefast | iex
 Install-ModuleFast ImportExcel
 ```
 
+The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
+
 ### Single Line Installation (good for CI/CD)
 
 Adding args to the bootstrap passes them to Install-ModuleFast automatically, so you can one-line install modules as needed.
@@ -22,6 +24,12 @@ This passes thru all arguments to ModuleFast.
 
 ```powershell
 & ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) ImportExcel
+```
+
+The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
+
+```powershell
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release '1.0' ImportExcel
 ```
 
 ### ModuleSpecification Install
