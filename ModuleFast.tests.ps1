@@ -93,124 +93,147 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     #This is used for testcases
     $SCRIPT:moduleName = 'Az.Accounts'
 
-    It 'Gets Module by <Test>' {
-      $actual = Get-ModuleFastPlan $Spec
-      $actual | Should -HaveCount 1
-      $ModuleName | Should -Be $actual.Name
-      $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
-      if ($Check) { . $Check }
-    } -TestCases (
-      @{
-        Test  = 'Name';
-        Spec  = $SCRIPT:moduleName;
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+    Context 'ModuleFastSpec' {
+      $moduleSpecTestCases = (
+        @{
+          Test  = 'Name';
+          Spec  = $SCRIPT:moduleName;
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+          }
+        },
+        @{
+          Test  = 'ModuleSpecification Name';
+          Spec  = [ModuleSpecification]::new($SCRIPT:moduleName);
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+          }
+        },
+        @{
+          Test  = 'ModuleSpecification MinimumVersion';
+          Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; ModuleVersion = '0.0.0' })
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+          }
+        },
+        @{
+          Test  = 'ModuleSpecification RequiredVersion';
+          Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; RequiredVersion = '2.7.3' })
+          Check = {
+            $actual.ModuleVersion | Should -Be '2.7.3'
+          }
+        },
+        @{
+          Test  = 'ModuleSpecification MaximumVersion';
+          Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; MaximumVersion = '2.7.3' })
+          Check = {
+            $actual.ModuleVersion | Should -Be '2.7.3'
+          }
         }
-      },
-      @{
-        Test  = 'ModuleSpecification Name';
-        Spec  = [ModuleSpecification]::new($SCRIPT:moduleName);
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
-        }
-      },
-      @{
-        Test  = 'ModuleSpecification MinimumVersion';
-        Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; ModuleVersion = '0.0.0' })
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
-        }
-      },
-      @{
-        Test  = 'ModuleSpecification RequiredVersion';
-        Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; RequiredVersion = '2.7.3' })
-        Check = {
-          $actual.ModuleVersion | Should -Be '2.7.3'
-        }
-      },
-      @{
-        Test  = 'ModuleSpecification MaximumVersion';
-        Spec  = [ModuleSpecification]::new(@{ ModuleName = $SCRIPT:moduleName; MaximumVersion = '2.7.3' })
-        Check = {
-          $actual.ModuleVersion | Should -Be '2.7.3'
-        }
-      }
-    )
+      )
 
-    It 'Gets Module String: <Spec>' {
-      $actual = Get-ModuleFastPlan $Spec
-      $actual | Should -HaveCount 1
-      $ModuleName | Should -Be $actual.Name
-      $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
-      if ($Check) { . $Check }
-    } -TestCases (
-      @{
-        Spec  = 'Az.Accounts'
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+      It 'Gets Module with Parameter: <Test>' {
+        $actual = Get-ModuleFastPlan $Spec
+        $actual | Should -HaveCount 1
+        $ModuleName | Should -Be $actual.Name
+        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        if ($Check) { . $Check }
+      } -TestCases $moduleSpecTestCases
+
+      It 'Gets Module with Pipeline: <Test>' {
+        $actual = $Spec | Get-ModuleFastPlan
+        $actual | Should -HaveCount 1
+        $ModuleName | Should -Be $actual.Name
+        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        if ($Check) { . $Check }
+      } -TestCases $moduleSpecTestCases
+    }
+
+    Context 'ModuleFastSpec String' {
+      $stringTestCases = (
+        @{
+          Spec  = 'Az.Accounts'
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts@2.7.3'
+          Check = {
+            $actual.ModuleVersion | Should -Be '2.7.3'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts>2.7.3'
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts<2.7.3'
+          Check = {
+            $actual.ModuleVersion | Should -BeLessThan '2.7.3'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts<=2.7.3'
+          Check = {
+            $actual.ModuleVersion | Should -Be '2.7.3'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts>=2.7.3'
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts:2.7.3'
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3' -Because 'With NuGet syntax, a bare version is a minimum version, not a requiredversion'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts:[2.7.3]'
+          Check = {
+            $actual.ModuleVersion | Should -Be '2.7.3'
+          }
+        },
+        @{
+          Spec  = 'Az.Accounts:(,2.7.3)'
+          Check = {
+            $actual.ModuleVersion | Should -BeLessThan '2.7.3'
+          }
+        },
+        @{
+          Spec  = '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''}'
+          Check = {
+            $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
+          }
+        },
+        @{
+          Spec  = '@{ModuleName = ''Az.Accounts''; RequiredVersion = ''2.7.3''}'
+          Check = {
+            $actual.ModuleVersion | Should -Be '2.7.3'
+          }
         }
-      },
-      @{
-        Spec  = 'Az.Accounts@2.7.3'
-        Check = {
-          $actual.ModuleVersion | Should -Be '2.7.3'
-        }
-      },
-      @{
-        Spec  = 'Az.Accounts>2.7.3'
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
-        }
-      },
-      @{
-        Spec  = 'Az.Accounts<2.7.3'
-        Check = {
-          $actual.ModuleVersion | Should -BeLessThan '2.7.3'
-        }
-      },
-      @{
-        Spec  = 'Az.Accounts<=2.7.3'
-        Check = {
-          $actual.ModuleVersion | Should -Be '2.7.3'
-        }
-      },
-      @{
-        Spec  = 'Az.Accounts>=2.7.3'
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
-        }
-      },
-      @{
-        Spec  = 'Az.Accounts:2.7.3'
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3' -Because 'With NuGet syntax, a bare version is a minimum version, not a requiredversion'
-        }
-      },
-      @{
-        Spec  = 'Az.Accounts:[2.7.3]'
-        Check = {
-          $actual.ModuleVersion | Should -Be '2.7.3'
-        }
-      },
-      @{
-        Spec  = 'Az.Accounts:(,2.7.3)'
-        Check = {
-          $actual.ModuleVersion | Should -BeLessThan '2.7.3'
-        }
-      },
-      @{
-        Spec  = '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''}'
-        Check = {
-          $actual.ModuleVersion | Should -BeGreaterThan '2.7.3'
-        }
-      },
-      @{
-        Spec  = '@{ModuleName = ''Az.Accounts''; RequiredVersion = ''2.7.3''}'
-        Check = {
-          $actual.ModuleVersion | Should -Be '2.7.3'
-        }
-      }
-    )
+      )
+      It 'Gets Module with String Parameter: <Spec>' {
+        $actual = Get-ModuleFastPlan $Spec
+        $actual | Should -HaveCount 1
+        $ModuleName | Should -Be $actual.Name
+        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        if ($Check) { . $Check }
+      } -TestCases $stringTestCases
+
+      It 'Gets Module with String Pipeline: <Spec>' {
+        $actual = $Spec | Get-ModuleFastPlan
+        $actual | Should -HaveCount 1
+        $ModuleName | Should -Be $actual.Name
+        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        if ($Check) { . $Check }
+      } -TestCases $stringTestCases
+    }
   }
 
   It 'Errors on Unsupported Object instead of Stringifying' {
