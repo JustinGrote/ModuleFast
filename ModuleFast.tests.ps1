@@ -253,6 +253,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0' }, @{ModuleName = 'VMWare.PowerCli'; ModuleVersion = '13.2' }
     | Should -HaveCount 168
   }
+
+  It 'Casts to ModuleSpecification' {
+    $actual = (Get-ModuleFastPlan 'Az.Accounts') -as [Microsoft.PowerShell.Commands.ModuleSpecification]
+    $actual | Should -BeOfType [Microsoft.PowerShell.Commands.ModuleSpecification]
+    $actual.Name | Should -Be 'Az.Accounts'
+    $actual.RequiredVersion | Should -BeGreaterThan '2.7.3'
+  }
 }
 
 Describe 'Install-ModuleFast' -Tag 'E2E' {
