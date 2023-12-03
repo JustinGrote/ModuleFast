@@ -234,6 +234,41 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         if ($Check) { . $Check }
       } -TestCases $stringTestCases
     }
+
+    Context 'ModuleFastSpec Combinations' {
+      It 'Strings as Parameter' {
+        $actual = Get-ModuleFastPlan 'Az.Accounts', 'Az.Compute', 'ImportExcel'
+        $actual | Should -HaveCount 3
+        $actual | ForEach-Object {
+          $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
+          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+        }
+      }
+      It 'Strings as Pipeline' {
+        $actual = 'Az.Accounts', 'Az.Compute', 'ImportExcel' | Get-ModuleFastPlan
+        $actual | Should -HaveCount 3
+        $actual | ForEach-Object {
+          $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
+          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+        }
+      }
+      It 'ModuleSpecs as Parameter' {
+        $actual = Get-ModuleFastPlan 'Az.Accounts', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel'))
+        $actual | Should -HaveCount 3
+        $actual | ForEach-Object {
+          $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
+          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+        }
+      }
+      It 'ModuleSpecs as Pipeline' {
+        $actual = 'Az.Accounts>1', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) | Get-ModuleFastPlan
+        $actual | Should -HaveCount 3
+        $actual | ForEach-Object {
+          $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
+          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+        }
+      }
+    }
   }
 
   It 'Errors on Unsupported Object instead of Stringifying' {
@@ -307,7 +342,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'VMware.VimAutomation.Common'
     Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
-      Import-PowerShellDataFile -Path $_.FullName | ForEach-Object ModuleVersion | Should -Be $moduleFolderVersion
+      Import-PowerShellDataFile -Path $_.FullName | Select-Object -ExpandProperty ModuleVersion | Should -Be $moduleFolderVersion
     }
     Get-Module VMWare* -ListAvailable
 		| Limit-ModulePath $installTempPath
