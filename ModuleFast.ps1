@@ -28,6 +28,7 @@ param (
 	#All additional arguments passed to this script will be passed to Install-ModuleFast
 	[Parameter(ValueFromRemainingArguments)]$installArgs,
 	#Used for testing
+  [Parameter(DontShow)]
 	[switch]$ImportNugetVersioning
 )
 $ErrorActionPreference = 'Stop'

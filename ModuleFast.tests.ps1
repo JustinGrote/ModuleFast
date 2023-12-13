@@ -295,6 +295,20 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     $actual.Name | Should -Be 'Az.Accounts'
     $actual.RequiredVersion | Should -BeGreaterThan '2.7.3'
   }
+
+  It 'Filters Prerelease Modules by Default' {
+    $actual = Get-ModuleFastPlan 'PrereleaseTest'
+    $actual.ModuleVersion | Should -Be '0.0.1'
+  }
+  It 'Shows Prerelease Modules if Prerelease is specified' {
+    $actual = Get-ModuleFastPlan 'PrereleaseTest' -PreRelease
+    $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+  }
+  It 'Detects Prerelease even if Prerelease not specified' {
+    $actual = Get-ModuleFastPlan 'PrereleaseTest@0.0.2-newerversion'
+    $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+  }
+
 }
 
 Describe 'Install-ModuleFast' -Tag 'E2E' {
