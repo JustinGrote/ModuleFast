@@ -58,6 +58,8 @@ function Install-ModuleFast {
     [Switch]$NoProfileUpdate,
     #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range.
     [Switch]$Update,
+    #Consider prerelease packages in the evaluation. Note that if a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting.
+    [Switch]$PreRelease,
     [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo
   )
   begin {
@@ -142,7 +144,7 @@ function Install-ModuleFast {
     [ModuleFastInfo[]]$plan = switch ($PSCmdlet.ParameterSetName) {
       'Specification' {
         Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update
+        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$PreRelease.IsPresent
       }
       'ModuleFastInfo' {
         $ModulesToInstall.ToArray()
@@ -348,18 +350,24 @@ function Get-ModuleFastPlan {
         $entries = $pageLeaves.catalogEntry
 
         #Get the highest version that satisfies the requirement in the inlined index, if possible
-        [Object]$selectedEntry = if ($entries) {
+        $selectedEntry = if ($entries) {
           [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
-          $inlinedVersions.Reverse() | ForEach-Object {
-            if ($currentModuleSpec.SatisfiedBy($PSItem)) {
-              Write-Debug "$currentModuleSpec`: Found satisfying version $PSItem in the inlined index."
-              [object]$matchingEntry = $entries | Where-Object version -EQ $PSItem
-              if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
-              return $matchingEntry
+
+          foreach ($candidate in $inlinedVersions.Reverse()) {
+            #Skip Prereleases unless explicitly requested
+            if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $PreRelease) { continue }
+
+            if ($currentModuleSpec.SatisfiedBy($candidate)) {
+              Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the inlined index."
+              $matchingEntry = $entries | Where-Object version -EQ $candidate
+              if ($matchingEntry.count -gt 1) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
+              $matchingEntry
+              break
             }
           }
         }
 
+        if ($selectedEntry.count -gt 1) { throw 'Multiple Entries Selected. This is a bug.' }
         #Search additional pages if we didn't find it in the inlined ones
         $selectedEntry ??= $(
           Write-Debug "$currentModuleSpec`: not found in inlined index. Determining appropriate page(s) to query"
@@ -386,14 +394,7 @@ function Get-ModuleFastPlan {
 
           #Start with the highest potentially matching page and work our way down until we find a match.
           foreach ($page in $pages) {
-            [Task[string][]]$getPagesTasks = Get-ModuleInfoAsync @httpContext -Uri $page.'@id'
-
-            #This timeout loop enables ctrl-c to still function while waiting for the results
-            while ($false -in $getPagesTasks.IsCompleted) {
-              [void][Task]::WaitAll($getPagesTasks, 500)
-            }
-
-            $response = $getPagesTasks.GetAwaiter().GetResult() | ConvertFrom-Json
+            $response = (Get-ModuleInfoAsync @httpContext -Uri $page.'@id').GetAwaiter().GetResult() | ConvertFrom-Json
 
             $pageLeaves = $response.items | ForEach-Object {
               if ($PSItem.packageContent -and -not $PSItem.catalogEntry.packagecontent) {
@@ -408,16 +409,22 @@ function Get-ModuleFastPlan {
             #TODO: Dedupe as a function with above
             if ($entries) {
               [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
-              $inlinedVersions.Reverse() | ForEach-Object {
-                if ($currentModuleSpec.SatisfiedBy($PSItem)) {
-                  Write-Debug "$currentModuleSpec`: Found satisfying version $PSItem in the additional pages."
-                  [object]$matchingEntry = $entries | Where-Object version -EQ $PSItem
+
+              foreach ($candidate in $inlinedVersions.Reverse()) {
+                #Skip Prereleases unless explicitly requested
+                if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $PreRelease) { continue }
+                if ($currentModuleSpec.SatisfiedBy($candidate)) {
+                  Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the additional pages."
+                  $matchingEntry = $entries | Where-Object version -EQ $candidate
                   if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
                   $matchingEntry
                   break
                 }
               }
             }
+
+            #Candidate found, no need to process additional pages
+            if ($matchingEntry) { break }
           }
         )
 
@@ -685,6 +692,10 @@ class ModuleFastInfo {
   [bool] Equals($other) {
     return $this.GetHashCode() -eq $other.GetHashCode()
   }
+
+  static hidden [Version]Get_Prerelease([bool]$i) {
+    return $i.ModuleVersion.IsPrerelease -or $i.ModuleVersion.HasMetadata
+  }
 }
 
 $ModuleFastInfoTypeData = @{
@@ -694,6 +705,7 @@ $ModuleFastInfoTypeData = @{
   PropertySerializationSet  = 'Name', 'ModuleVersion', 'Location'
   SerializationDepth        = 0
 }
+[ModuleFastInfo] | Add-Getters
 Update-TypeData -TypeName ModuleFastInfo @ModuleFastInfoTypeData -Force
 Update-TypeData -TypeName Nuget.Versioning.NugetVersion -SerializationMethod String -Force
 
@@ -989,7 +1001,7 @@ function Get-ModuleInfoAsync {
 
     $registrationBase = $SCRIPT:__registrationIndex
     | ConvertFrom-Json
-    | Select-Object -ExpandProperty Resources
+    | Select-Object -ExpandProperty resources
     | Where-Object {
       $_.'@type' -match 'RegistrationsBaseUrl'
     }
@@ -1099,7 +1111,8 @@ function Find-LocalModule {
 
   [List[[Tuple[Version, string]]]]$candidateModules = foreach ($modulePath in $modulePaths) {
     if (-not [Directory]::Exists($modulePath)) {
-      Write-Debug "PSModulePath $modulePath is configured but does not exist, skipping..."
+      Write-Debug "$($ModuleSpec.Name): PSModulePath $modulePath is configured but does not exist, skipping..."
+      $modulePaths = $modulePaths | Where-Object { $_ -ne $modulePath }
       continue
     }
 
@@ -1238,6 +1251,8 @@ function ConvertTo-AuthenticationHeaderValue ([PSCredential]$Credential) {
 function Get-StringHash ([string]$String, [string]$Algorithm = 'SHA256') {
 	(Get-FileHash -InputStream ([MemoryStream]::new([Encoding]::UTF8.GetBytes($String))) -Algorithm $algorithm).Hash
 }
+
+
 #endregion Helpers
 
 ### ISSUES
