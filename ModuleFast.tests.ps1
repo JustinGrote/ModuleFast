@@ -304,6 +304,11 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     $actual = Get-ModuleFastPlan 'PrereleaseTest' -PreRelease
     $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
   }
+  It 'Detects Prerelease even if Prerelease not specified' {
+    $actual = Get-ModuleFastPlan 'PrereleaseTest@0.0.2-newerversion'
+    $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+  }
+
 }
 
 Describe 'Install-ModuleFast' -Tag 'E2E' {

@@ -59,7 +59,7 @@ function Install-ModuleFast {
     #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range.
     [Switch]$Update,
     #Consider prerelease packages in the evaluation. Note that if a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting.
-    [Switch]$PreRelease,
+    [Switch]$Prerelease,
     [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo
   )
   begin {
@@ -144,7 +144,7 @@ function Install-ModuleFast {
     [ModuleFastInfo[]]$plan = switch ($PSCmdlet.ParameterSetName) {
       'Specification' {
         Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$PreRelease.IsPresent
+        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent
       }
       'ModuleFastInfo' {
         $ModulesToInstall.ToArray()
@@ -237,7 +237,7 @@ function Get-ModuleFastPlan {
     #The repository to scan for modules. TODO: Multi-repo support
     [string]$Source = 'https://pwsh.gallery/index.json',
     #Whether to include prerelease modules in the request
-    [Switch]$PreRelease,
+    [Switch]$Prerelease,
     #By default we use in-place modules if they satisfy the version requirements. This switch will force a search for all latest modules
     [Switch]$Update,
     [PSCredential]$Credential,
@@ -266,6 +266,14 @@ function Get-ModuleFastPlan {
     }
   }
   END {
+    foreach ($version in $modulesToResolve.VersionRange.MinVersion, $modulesToResolve.VersionRange.MaxVersion) {
+      if ($version.IsPreRelease -or $version.HasMetadata) {
+        Write-Warning 'A specification with a prerelease version was detected, forcing -Prerelease switch. Specify -Prerelease in the future to avoid this warning.'
+        $Prerelease = $true
+        break
+      }
+    }
+
     # A deduplicated list of modules to install
     [HashSet[ModuleFastInfo]]$modulesToInstall = @{}
 
@@ -355,7 +363,7 @@ function Get-ModuleFastPlan {
 
           foreach ($candidate in $inlinedVersions.Reverse()) {
             #Skip Prereleases unless explicitly requested
-            if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $PreRelease) { continue }
+            if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $Prerelease) { continue }
 
             if ($currentModuleSpec.SatisfiedBy($candidate)) {
               Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the inlined index."
@@ -412,7 +420,7 @@ function Get-ModuleFastPlan {
 
               foreach ($candidate in $inlinedVersions.Reverse()) {
                 #Skip Prereleases unless explicitly requested
-                if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $PreRelease) { continue }
+                if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $Prerelease) { continue }
                 if ($currentModuleSpec.SatisfiedBy($candidate)) {
                   Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the additional pages."
                   $matchingEntry = $entries | Where-Object version -EQ $candidate
@@ -1213,9 +1221,9 @@ function Find-LocalModule {
       continue
     }
 
-    [string]$prerelease = $manifestData.PreRelease
+    [string]$prereleaseData = $manifestData.PreRelease
 
-    [NuGetVersion]$manifestVersion = [NuGetVersion]::new($manifestVersionData, $prerelease, $null)
+    [NuGetVersion]$manifestVersion = [NuGetVersion]::new($manifestVersionData, $prereleaseData, $null)
 
     #Re-Test against the manifest loaded version to be sure
     if (-not $ModuleSpec.SatisfiedBy($manifestVersion)) {
