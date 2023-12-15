@@ -662,7 +662,7 @@ function Add-Getters ([Parameter(Mandatory, ValueFromPipeline)][Type]$Type) {
 }
 
 #Information about a module, whether local or remote
-class ModuleFastInfo {
+class ModuleFastInfo: IComparable {
   [string]$Name
   #Sometimes the module version is not the same as the folder version, such as in the case of prerelease versions
   [NuGetVersion]$ModuleVersion
@@ -678,6 +678,11 @@ class ModuleFastInfo {
     $this.IsLocal = $Location.IsFile
   }
 
+  static hidden [Version]Get_Prerelease([bool]$i) {
+    return $i.ModuleVersion.IsPrerelease -or $i.ModuleVersion.HasMetadata
+  }
+
+  #region ImplicitBehaviors
   # Implement an op_implicit convert to modulespecification
   static [ModuleSpecification]op_Implicit([ModuleFastInfo]$moduleFastInfo) {
     return [ModuleSpecification]::new(@{
@@ -701,9 +706,20 @@ class ModuleFastInfo {
     return $this.GetHashCode() -eq $other.GetHashCode()
   }
 
-  static hidden [Version]Get_Prerelease([bool]$i) {
-    return $i.ModuleVersion.IsPrerelease -or $i.ModuleVersion.HasMetadata
+  [int] CompareTo($other) {
+    return $(switch ($true) {
+      ($other -isnot 'ModuleFastInfo') {
+        $this.ToUniqueString().CompareTo([string]$other); break
+      }
+      ($this -eq $other) { 0; break }
+      ($this.Name -ne $other.Name) { $this.Name.CompareTo($other.Name); break }
+      default {
+        $this.ModuleVersion.CompareTo($other.ModuleVersion)
+      }
+    })
   }
+
+  #endregion ImplicitBehaviors
 }
 
 $ModuleFastInfoTypeData = @{
@@ -717,7 +733,7 @@ $ModuleFastInfoTypeData = @{
 Update-TypeData -TypeName ModuleFastInfo @ModuleFastInfoTypeData -Force
 Update-TypeData -TypeName Nuget.Versioning.NugetVersion -SerializationMethod String -Force
 
-class ModuleFastSpec: IComparable {
+class ModuleFastSpec {
   #These properties are effectively read only thanks to some getter wizardy
 
   #Name of the Module to Download
