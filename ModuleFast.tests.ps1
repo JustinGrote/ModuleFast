@@ -216,8 +216,42 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           Check = {
             $actual.ModuleVersion | Should -Be '2.7.3'
           }
+        },
+        @{
+          Spec       = 'PrereleaseTest'
+          Check      = {
+            $actual.Name | Should -Be 'PrereleaseTest'
+            $actual.ModuleVersion | Should -Be '0.0.1'
+          }
+          ModuleName = 'PrereleaseTest'
+        },
+        @{
+          Spec       = 'PrereleaseTest!'
+          Check      = {
+            $actual.Name | Should -Be 'PrereleaseTest'
+            $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+          }
+          ModuleName = 'PrereleaseTest'
+        },
+        @{
+          Spec       = '!PrereleaseTest'
+          Check      = {
+            $actual.Name | Should -Be 'PrereleaseTest'
+            $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+          }
+          ModuleName = 'PrereleaseTest'
+        },
+        @{
+          Spec       = 'PrereleaseTest!<0.0.1'
+          Check      = {
+            $actual.Name | Should -Be 'PrereleaseTest'
+            $actual.ModuleVersion | Should -Be '0.0.1-newerversion'
+          }
+          ModuleName = 'PrereleaseTest'
         }
+
       )
+
       It 'Gets Module with String Parameter: <Spec>' {
         $actual = Get-ModuleFastPlan $Spec
         $actual | Should -HaveCount 1
@@ -266,6 +300,23 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
           $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+        }
+      }
+
+      It 'Prerelease does not affect non-prerelease' {
+        #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan
+        $actual | Should -HaveCount 2
+        $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
+          $PSItem.ModuleVersion | Should -Be '0.0.1'
+        }
+      }
+      It '-Prerelease overrides even if prerelease is not specified' {
+        #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan -PreRelease
+        $actual | Should -HaveCount 2
+        $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
+          $PSItem.ModuleVersion | Should -Be '0.0.2-newerversion'
         }
       }
     }
