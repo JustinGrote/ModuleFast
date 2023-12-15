@@ -266,14 +266,6 @@ function Get-ModuleFastPlan {
     }
   }
   END {
-    foreach ($version in $modulesToResolve.VersionRange.MinVersion, $modulesToResolve.VersionRange.MaxVersion) {
-      if ($version.IsPreRelease -or $version.HasMetadata) {
-        Write-Warning 'A specification with a prerelease version was detected, forcing -Prerelease switch. Specify -Prerelease in the future to avoid this warning.'
-        $Prerelease = $true
-        break
-      }
-    }
-
     # A deduplicated list of modules to install
     [HashSet[ModuleFastInfo]]$modulesToInstall = @{}
 
@@ -363,7 +355,10 @@ function Get-ModuleFastPlan {
 
           foreach ($candidate in $inlinedVersions.Reverse()) {
             #Skip Prereleases unless explicitly requested
-            if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $Prerelease) { continue }
+            if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not ($currentModuleSpec.PreRelease -or $Prerelease)) {
+              Write-Debug "Skipping candidate $candidate because it is a prerelease and prerelease was not specified either with the -Prerelease parameter or with a ! on the module name."
+              continue
+            }
 
             if ($currentModuleSpec.SatisfiedBy($candidate)) {
               Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the inlined index."
@@ -707,16 +702,22 @@ class ModuleFastInfo: IComparable {
   }
 
   [int] CompareTo($other) {
-    return $(switch ($true) {
+    return $(
+      switch ($true) {
       ($other -isnot 'ModuleFastInfo') {
-        $this.ToUniqueString().CompareTo([string]$other); break
-      }
+          $this.ToUniqueString().CompareTo([string]$other); break
+        }
       ($this -eq $other) { 0; break }
       ($this.Name -ne $other.Name) { $this.Name.CompareTo($other.Name); break }
-      default {
-        $this.ModuleVersion.CompareTo($other.ModuleVersion)
+        default {
+          $this.ModuleVersion.CompareTo($other.ModuleVersion)
+        }
       }
-    })
+    )
+  }
+
+  static hidden [bool]Get_Prerelease([PSObject]$i) {
+    return $i.ModuleVersion.IsPrerelease -or $i.ModuleVersion.HasMetadata
   }
 
   #endregion ImplicitBehaviors
@@ -747,6 +748,16 @@ class ModuleFastSpec {
   #NuGet Version Range that specifies what Versions are acceptable. This can be specified as Nuget Version Syntax string
   hidden [VersionRange]$_VersionRange
   static hidden [VersionRange]Get_VersionRange([PSObject]$i) { return $i._VersionRange }
+
+  #A flag to indicate if prerelease should be included if the name had ! specified (this is done in the constructor)
+  hidden [bool]$_PreReleaseName
+  static hidden [bool]Get_PreRelease([PSObject]$i) {
+    return $i._VersionRange.MinVersion.IsPrerelease -or
+    $i._VersionRange.MaxVersion.IsPrerelease -or
+    $i._VersionRange.MinVersion.HasMetadata -or
+    $i._VersionRange.MaxVersion.HasMetadata -or
+    $i._PreReleaseName
+  }
 
   static hidden [NugetVersion]Get_Min([PSObject]$i) { return $i._VersionRange.MinVersion }
   static hidden [NugetVersion]Get_Max([PSObject]$i) { return $i._VersionRange.MaxVersion }
@@ -849,7 +860,14 @@ class ModuleFastSpec {
   hidden Initialize([string]$Name, [VersionRange]$Range, [guid]$Guid) {
     #HACK: The nulls here are just to satisfy the ternary operator, they go off into the ether and arent returned or used
     if (-not $Name) { throw 'Name is required' }
-    $this._Name = $Name
+    # Strip ! from the beginning or end of the name
+    $TrimmedName = $Name.Trim('!')
+    if ($TrimmedName -ne $Name) {
+      Write-Debug "ModuleSpec $TrimmedName had prerelease identifier ! specified. Will include Prerelease modules"
+      $this._PreReleaseName = $true
+    }
+
+    $this._Name = $TrimmedName
     $this._VersionRange = $Range ?? [VersionRange]::new()
     $this._Guid = $Guid ?? [Guid]::Empty
     # TODO: Fix this check logic
@@ -1122,7 +1140,6 @@ function Find-LocalModule {
     [Switch]$Update
   )
   $ErrorActionPreference = 'Stop'
-  # BUG: Prerelease Module paths are still not recognized by internal PS commands and can break things
 
   # Search all psmodulepaths for the module
   $modulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
