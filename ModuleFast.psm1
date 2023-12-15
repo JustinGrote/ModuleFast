@@ -100,7 +100,7 @@ function Install-ModuleFast {
 
     #We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
     #it is still a best practice.
-    if (-not $SCRIPT:__ModuleFastHttpClient) {
+    if (-not $SCRIPT:__ModuleFastHttpClient -or $Source -ne $SCRIPT:__ModuleFastHttpClient.BaseAddress) {
       $SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential
       if (-not $SCRIPT:__ModuleFastHttpClient) {
         throw 'Failed to create ModuleFast HTTPClient. This is a bug'
