@@ -242,14 +242,6 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           ModuleName = 'PrereleaseTest'
         },
         @{
-          Spec       = '!PrereleaseTest'
-          Check      = {
-            $actual.Name | Should -Be 'PrereleaseTest'
-            $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
-          }
-          ModuleName = 'PrereleaseTest'
-        },
-        @{
           Spec       = 'PrereleaseTest!<0.0.1'
           Check      = {
             $actual.Name | Should -Be 'PrereleaseTest'
@@ -317,6 +309,14 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual | Should -HaveCount 2
         $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
           $PSItem.ModuleVersion | Should -Be '0.0.1'
+        }
+      }
+      It '-Prerelease overrides even if prerelease is not specified' {
+        #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan -PreRelease
+        $actual | Should -HaveCount 2
+        $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
+          $PSItem.ModuleVersion | Should -Be '0.0.2-newerversion'
         }
       }
     }
