@@ -65,9 +65,7 @@ if (Get-Module $ModuleName) {
 Write-Debug "Fetching $ModuleName from $Uri"
 $ProgressPreference = 'SilentlyContinue'
 try {
-	$httpClient = [HttpClient]::new()
-	$httpClient.DefaultRequestHeaders.AcceptEncoding.Add('gzip')
-	$response = $httpClient.GetStringAsync($Uri).GetAwaiter().GetResult()
+  $response = (Invoke-WebRequest $uri).Content
 } catch {
 	$PSItem.ErrorDetails = "Failed to fetch $ModuleName from $Uri`: $PSItem"
 	$PSCmdlet.ThrowTerminatingError($PSItem)

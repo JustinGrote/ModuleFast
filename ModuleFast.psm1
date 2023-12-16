@@ -411,11 +411,15 @@ function Get-ModuleFastPlan {
 
             #TODO: Dedupe as a function with above
             if ($entries) {
-              [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
+              [SortedSet[NuGetVersion]]$pageVersions = $entries.version
 
-              foreach ($candidate in $inlinedVersions.Reverse()) {
+              foreach ($candidate in $pageVersions.Reverse()) {
                 #Skip Prereleases unless explicitly requested
-                if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $Prerelease) { continue }
+                if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not ($currentModuleSpec.PreRelease -or $Prerelease)) {
+                  Write-Debug "Skipping candidate $candidate because it is a prerelease and prerelease was not specified either with the -Prerelease parameter or with a ! on the module name."
+                  continue
+                }
+
                 if ($currentModuleSpec.SatisfiedBy($candidate)) {
                   Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the additional pages."
                   $matchingEntry = $entries | Where-Object version -EQ $candidate
@@ -566,34 +570,58 @@ function Install-ModuleFastHelper {
   [Dictionary[Task, hashtable]]$taskMap = @{}
 
   [List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
-    $installPath = Join-Path $Destination $module.Name $module.ModuleVersion.ToString().Split('+-')[0]
+
+    $installPath = Join-Path $Destination $module.Name (Resolve-FolderVersion $module.ModuleVersion)
 
     #TODO: Do a get-localmodule check here
     if (Test-Path $installPath) {
-      #TODO: Check for a corrupted module
-      #TODO: Prerelease checking
-      if (-not $Update) {
-        throw "${module}: Module already exists at $installPath and -Update wasn't specified. This is a bug"
+      $existingManifestPath = try {
+        Resolve-Path (Join-Path $installPath "$($module.Name).psd1") -ErrorAction Stop
+      } catch [ActionPreferenceStopException] {
+        throw "$module`: Existing module folder found at $installPath but the manifest could not be found. This is likely a corrupted or missing module and should be fixed manually."
+      }
+
+      #TODO: Dedupe all import-powershelldatafile operations to a function ideally
+      $existingModuleMetadata = Import-PowerShellDataFile $existingManifestPath
+      $existingVersion = [NugetVersion]::new(
+        $existingModuleMetadata.ModuleVersion,
+        $existingModuleMetadata.privatedata.psdata.prerelease
+      )
+
+      #Do a prerelease evaluation
+      if ($module.ModuleVersion -eq $existingVersion) {
+        if ($Update) {
+          Write-Verbose "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module."
+          continue
+        } else {
+          throw [System.NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection. Use -Update to override..."
+        }
+      }
+      if ($module.ModuleVersion -lt $existingVersion) {
+        #TODO: Add force to override
+        throw [NotSupportedException]"${module}: Existing module found at $installPath and its version $existingVersion is newer than the requested prerelease version $($module.ModuleVersion). If you wish to continue, please remove the existing module folder or modify your specification and try again."
       } else {
-        Write-Verbose "${module}: Module already exists at $installPath but -Update was specified. This can happen because we did in fact have the latest version. Skipping."
-        continue
+        Write-Warning "${module}: Planned version $($module.ModuleVersion) is newer than existing prerelease version $existingVersion so we will overwrite."
+        Remove-Item $installPath -Force -Recurse
       }
     }
 
-    Write-Verbose "${module}: Downloading to $($module.Location)"
+    Write-Verbose "${module}: Downloading from $($module.Location)"
     if (-not $module.Location) {
       throw "$module`: No Download Link found. This is a bug"
     }
 
-    $fetchTask = $httpClient.GetStreamAsync($module.Location, $CancellationToken)
+    $streamTask = $httpClient.GetStreamAsync($module.Location, $CancellationToken)
     $context = @{
       Module      = $module
       InstallPath = $installPath
     }
-    $taskMap.Add($fetchTask, $context)
-    $fetchTask
+    $taskMap.Add($streamTask, $context)
+    $streamTask
   }
 
+  #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
+  Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
   [List[Job2]]$installJobs = while ($streamTasks.count -gt 0) {
     $noTasksYetCompleted = -1
     [int]$thisTaskIndex = [Task]::WaitAny($streamTasks, 500)
@@ -604,8 +632,6 @@ function Install-ModuleFastHelper {
     $context.fetchStream = $stream
     $streamTasks.RemoveAt($thisTaskIndex)
 
-    #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
-    Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
     # This is a sync process and we want to do it in parallel, hence the threadjob
     $installJob = Start-ThreadJob -ThrottleLimit 8 {
       param(
@@ -614,11 +640,16 @@ function Install-ModuleFastHelper {
       )
       $installPath = $context.InstallPath
       #TODO: Add a ".incomplete" marker file to the folder and remove it when done. This will allow us to detect failed installations
+
       $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
       [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
-      Write-Verbose "Cleanup Nuget Files in $installPath"
+      #FIXME: Output inside a threadjob is not surfaced to the user.
+      Write-Debug "Cleanup Nuget Files in $installPath"
       if (-not $installPath) { throw 'ModuleDestination was not set. This is a bug, report it' }
-      Remove-Item -Path $installPath -Include '_rels', 'package', '*.nuspec' -Recurse -Force
+      Get-ChildItem -Path $installPath | Where-Object {
+        $_.Name -in '_rels', 'package', '[Content_Types].xml' -or
+        $_.Name.EndsWith('.nuspec')
+      } | Remove-Item -Force -Recurse
 			($zip).Dispose()
 			($stream).Dispose()
       return $context
@@ -1126,8 +1157,6 @@ function Add-DestinationToPSModulePath {
   }
 }
 
-
-
 function Find-LocalModule {
   [OutputType([ModuleFastInfo])]
   <#
@@ -1168,10 +1197,12 @@ function Find-LocalModule {
     $manifestName = "$($ModuleSpec.Name).psd1"
 
     #We can attempt a fast-search for modules if the ModuleSpec is for a specific version
-    if ($ModuleSpec.Required) {
-      #TODO: Split this off into Find-RequiredLocalModule
+    $required = $ModuleSpec.Required
+    if ($required) {
 
-      $moduleVersion = $ModuleSpec.Required.OriginalVersion
+      #If there is a prerelease, we will fetch the folder where the prerelease might live, and verify the manifest later.
+      [Version]$moduleVersion = Resolve-FolderVersion $required
+
       $moduleFolder = Join-Path $moduleBaseDir $moduleVersion
       $manifestPath = Join-Path $moduleFolder $manifestName
 
@@ -1254,13 +1285,14 @@ function Find-LocalModule {
       continue
     }
 
-    [string]$prereleaseData = $manifestData.PreRelease
-
-    [NuGetVersion]$manifestVersion = [NuGetVersion]::new($manifestVersionData, $prereleaseData, $null)
+    [NuGetVersion]$manifestVersion = [NuGetVersion]::new(
+      $manifestVersionData,
+      $manifestData.PrivateData.PSData.Prerelease
+    )
 
     #Re-Test against the manifest loaded version to be sure
     if (-not $ModuleSpec.SatisfiedBy($manifestVersion)) {
-      Write-Debug "$(ModuleSpec.Name): Found a module $($moduleInfo.Item2) that initially matched the name and version folder but after reading the manifest, the version label not satisfy the version spec $($ModuleSpec). This is an edge case and should only occur if you specified a prerelease upper bound that is less than the PreRelease label in the manifest. Skipping..."
+      Write-Debug "$($ModuleSpec.Name): Found a module $($moduleInfo.Item2) that initially matched the name and version folder but after reading the manifest, the version label not satisfy the version spec $($ModuleSpec). This is an edge case and should only occur if you specified a prerelease upper bound that is less than the PreRelease label in the manifest. Skipping..."
       continue
     }
 
@@ -1293,6 +1325,73 @@ function Get-StringHash ([string]$String, [string]$Algorithm = 'SHA256') {
 	(Get-FileHash -InputStream ([MemoryStream]::new([Encoding]::UTF8.GetBytes($String))) -Algorithm $algorithm).Hash
 }
 
+#Imports a powershell data file or json file for the required spec configuration.
+filter ConvertFrom-RequiredSpec {
+  [CmdletBinding(DefaultParameterSetName = 'File')]
+  [OutputType([ModuleFastSpec[]])]
+  param(
+    [Parameter(Mandatory, ParameterSetName = 'File')][string]$RequiredSpecPath,
+    [Parameter(Mandatory, ParameterSetName = 'Object')][object]$RequiredSpec
+  )
+  $ErrorActionPreference = 'Stop'
+
+  if ($RequiredSpecPath) {
+    $uri = $RequiredSpecPath -as [Uri]
+
+    $RequiredData = if ($uri.scheme -in 'http', 'https') {
+      [string]$content = (Invoke-WebRequest -Uri $uri).Content
+      if ($content.StartsWith('@{')) {
+        $tempFile = [io.path]::GetTempFileName()
+        $content > $tempFile
+        Import-PowerShellDataFile -Path $tempFile
+      } else {
+        ConvertFrom-Json $content -Depth 5
+      }
+    } else {
+      #Assume this is a local if a URL above didn't match
+      $resolvedPath = Resolve-Path $RequiredSpecPath
+      $extension = [Path]::GetExtension($resolvedPath)
+      if ($extension -eq '.psd1') {
+        Import-PowerShellDataFile -Path $resolvedPath
+      } elseif ($extension -in '.json', '.jsonc') {
+        Get-Content -Path $resolvedPath -Raw | ConvertFrom-Json -Depth 5
+      } else {
+        throw [NotSupportedException]'Only .psd1 and .json files are supported to import to this command'
+      }
+    }
+  }
+
+  if ($RequiredData -is [IDictionary]) {
+    foreach ($kv in $RequiredData.GetEnumerator()) {
+      if ($kv.Value -is [IDictionary]) {
+        throw [NotImplementedException]'TODO: PSResourceGet/PSDepend full syntax'
+      }
+      if ($kv.Value -isnot [string]) {
+        throw [NotSupportedException]'Only strings and hashtables are supported on the right hand side of the = operator.'
+      }
+      if ($kv.Value -eq 'latest') {
+        [ModuleFastSpec]"$($kv.Name)"
+        continue
+      }
+      if ($kv.Value -as [NuGetVersion]) {
+        [ModuleFastSpec]"$($kv.Name)@$($kv.Value)"
+        continue
+      }
+
+      #All other potential options (<=, @, :, etc.) are a direct merge
+      [ModuleFastSpec]"$($kv.Name)$($kv.Value)"
+    }
+  } else {
+    throw [NotImplementedException]'TODO: Support simple array based json strings'
+  }
+}
+
+filter Resolve-FolderVersion([NuGetVersion]$version) {
+  if ($version.IsLegacyVersion) {
+    return $version.version
+  }
+  [Version]::new($version.Major, $version.Minor, $version.Patch)
+}
 
 #endregion Helpers
 
