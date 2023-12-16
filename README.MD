@@ -99,3 +99,15 @@ This module uses a custom dependency resolution algorithm that selects the newes
 dependency criteria. If a version of a locally installed module satisfies the "latest" criteria of the dependency graph,
 it will be used rather than fetching what is newest on the gallery. This can be overriden with the `-Update` switch that
 will recheck whats available in the remote.
+
+### Testing Latest Master
+
+```powershell
+function Test-ModuleFast {
+  $mfbootstrap = [ScriptBlock]::Create((iwr 'https://raw.githubusercontent.com/JustinGrote/ModuleFast/main/ModuleFast.ps1').content)
+  $mfpsm1 = 'https://raw.githubusercontent.com/JustinGrote/ModuleFast/main/ModuleFast.psm1'
+  $mfbootstrap -Uri $mfpsm1
+}
+$PSDefaultParameterValues['*-ModuleFast:Source'] = 'https://preview.pwsh.gallery/index.json'
+Test-ModuleFast
+```
