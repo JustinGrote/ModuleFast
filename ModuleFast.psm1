@@ -411,11 +411,15 @@ function Get-ModuleFastPlan {
 
             #TODO: Dedupe as a function with above
             if ($entries) {
-              [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
+              [SortedSet[NuGetVersion]]$pageVersions = $entries.version
 
-              foreach ($candidate in $inlinedVersions.Reverse()) {
+              foreach ($candidate in $pageVersions.Reverse()) {
                 #Skip Prereleases unless explicitly requested
-                if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not $Prerelease) { continue }
+                if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not ($currentModuleSpec.PreRelease -or $Prerelease)) {
+                  Write-Debug "Skipping candidate $candidate because it is a prerelease and prerelease was not specified either with the -Prerelease parameter or with a ! on the module name."
+                  continue
+                }
+
                 if ($currentModuleSpec.SatisfiedBy($candidate)) {
                   Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the additional pages."
                   $matchingEntry = $entries | Where-Object version -EQ $candidate
@@ -567,17 +571,34 @@ function Install-ModuleFastHelper {
 
   [List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
 
-    $installPath = Join-Path $Destination $module.Name (ConvertTo-FolderVersion $module.ModuleVersion)
+    $installPath = Join-Path $Destination $module.Name (Resolve-FolderVersion $module.ModuleVersion)
 
     #TODO: Do a get-localmodule check here
     if (Test-Path $installPath) {
-      #TODO: Check for a corrupted module
-      #TODO: Prerelease checking
-      if (-not $Update) {
-        throw "${module}: Module already exists at $installPath and -Update wasn't specified. This is a bug"
+      $existingManifestPath = try {
+        Resolve-Path (Join-Path $installPath "$($module.Name).psd1") -ErrorAction Stop
+      } catch [ActionPreferenceStopException] {
+        throw "$module`: Existing module folder found at $installPath but the manifest could not be found. This is likely a corrupted or missing module and should be fixed manually."
+      }
+
+      #TODO: Dedupe all import-powershelldatafile operations to a function ideally
+      $existingModuleMetadata = Import-PowerShellDataFile $existingManifestPath
+      $existingVersion = [NugetVersion]::new(
+        $existingModuleMetadata.ModuleVersion,
+        $existingModuleMetadata.privatedata.psdata.prerelease
+      )
+
+      if (-not $existingVersion.IsPrerelease) {
+        throw [InvalidOperationException]"${module}: A non-prerelease module with version $existingVersion already exists at $installPath. This is a bug because the local module resolution should have already excluded this."
+      }
+
+      #Do a prerelease evaluation
+      if ($module.ModuleVersion -lt $existingVersion) {
+        #TODO: Add force to override
+        throw [NotSupportedException]"$module`: Existing module folder found at $installPath but the module is a prerelease and the existing version $existingVersion is newer than the requested version $($module.ModuleVersion). If you wish to continue, please remove the existing module folder or modify your specification and try again."
       } else {
-        Write-Verbose "${module}: Module already exists at $installPath but -Update was specified. This can happen because we did in fact have the latest version. Skipping."
-        continue
+        Write-Warning "$module`: Existing prerelease version $existingVersion is older than our planned version $($module.ModuleVersion) so we are replacing the existing module with this version."
+        Remove-Item $installPath -Force -Recurse
       }
     }
 
@@ -586,15 +607,17 @@ function Install-ModuleFastHelper {
       throw "$module`: No Download Link found. This is a bug"
     }
 
-    $fetchTask = $httpClient.GetStreamAsync($module.Location, $CancellationToken)
+    $streamTask = $httpClient.GetStreamAsync($module.Location, $CancellationToken)
     $context = @{
       Module      = $module
       InstallPath = $installPath
     }
-    $taskMap.Add($fetchTask, $context)
-    $fetchTask
+    $taskMap.Add($streamTask, $context)
+    $streamTask
   }
 
+  #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
+  Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
   [List[Job2]]$installJobs = while ($streamTasks.count -gt 0) {
     $noTasksYetCompleted = -1
     [int]$thisTaskIndex = [Task]::WaitAny($streamTasks, 500)
@@ -604,10 +627,6 @@ function Install-ModuleFastHelper {
     $context = $taskMap[$thisTask]
     $context.fetchStream = $stream
     $streamTasks.RemoveAt($thisTaskIndex)
-
-
-    #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
-    Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
 
     # This is a sync process and we want to do it in parallel, hence the threadjob
     $installJob = Start-ThreadJob -ThrottleLimit 8 {
@@ -1134,8 +1153,6 @@ function Add-DestinationToPSModulePath {
   }
 }
 
-
-
 function Find-LocalModule {
   [OutputType([ModuleFastInfo])]
   <#
@@ -1180,9 +1197,7 @@ function Find-LocalModule {
     if ($required) {
 
       #If there is a prerelease, we will fetch the folder where the prerelease might live, and verify the manifest later.
-      [Version]$moduleVersion = $ModuleSpec.Prerelease ?
-        (ConvertTo-FolderVersion $required) :
-      $required.OriginalVersion
+      [Version]$moduleVersion = Resolve-FolderVersion $required
 
       $moduleFolder = Join-Path $moduleBaseDir $moduleVersion
       $manifestPath = Join-Path $moduleFolder $manifestName
@@ -1341,8 +1356,6 @@ filter ConvertFrom-RequiredSpec {
     }
   }
 
-
-
   if ($RequiredData -is [IDictionary]) {
     foreach ($kv in $RequiredData.GetEnumerator()) {
       if ($kv.Value -is [IDictionary]) {
@@ -1368,6 +1381,12 @@ filter ConvertFrom-RequiredSpec {
   }
 }
 
+filter Resolve-FolderVersion([NuGetVersion]$version) {
+  if ($version.IsLegacyVersion) {
+    return $version.version
+  }
+  [Version]::new($version.Major, $version.Minor, $version.Patch)
+}
 
 #endregion Helpers
 

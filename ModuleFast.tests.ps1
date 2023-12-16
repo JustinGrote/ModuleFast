@@ -229,7 +229,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           Spec       = 'PrereleaseTest!'
           Check      = {
             $actual.Name | Should -Be 'PrereleaseTest'
-            $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+            $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
           }
           ModuleName = 'PrereleaseTest'
         },
@@ -237,7 +237,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           Spec       = '!PrereleaseTest'
           Check      = {
             $actual.Name | Should -Be 'PrereleaseTest'
-            $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+            $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
           }
           ModuleName = 'PrereleaseTest'
         },
@@ -245,7 +245,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           Spec       = 'PrereleaseTest!<0.0.1'
           Check      = {
             $actual.Name | Should -Be 'PrereleaseTest'
-            $actual.ModuleVersion | Should -Be '0.0.1-newerversion'
+            $actual.ModuleVersion | Should -Be '0.0.1-prerelease'
           }
           ModuleName = 'PrereleaseTest'
         }
@@ -316,7 +316,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan -PreRelease
         $actual | Should -HaveCount 2
         $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
-          $PSItem.ModuleVersion | Should -Be '0.0.2-newerversion'
+          $PSItem.ModuleVersion | Should -Be '0.0.2-prerelease'
         }
       }
     }
@@ -353,11 +353,11 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
   }
   It 'Shows Prerelease Modules if Prerelease is specified' {
     $actual = Get-ModuleFastPlan 'PrereleaseTest' -PreRelease
-    $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+    $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
   It 'Detects Prerelease even if Prerelease not specified' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest@0.0.2-newerversion'
-    $actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+    $actual = Get-ModuleFastPlan 'PrereleaseTest@0.0.2-prerelease'
+    $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
 
 }
@@ -404,7 +404,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
   It '4 section version numbers (VMware.PowerCLI)' {
-    Install-ModuleFast @imfParams 'VMware.VimAutomation.Common'
+    Install-ModuleFast @imfParams 'VMware.VimAutomation.Common@13.2.0.22643733'
     Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
       Import-PowerShellDataFile -Path $_.FullName | Select-Object -ExpandProperty ModuleVersion | Should -Be $moduleFolderVersion
@@ -480,5 +480,9 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
 		| Sort-Object Version -Descending
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'5.0.0')
+  }
+  It 'Errors trying to install prerelease over regular module' {
+    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1'
+    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease'
   }
 }
