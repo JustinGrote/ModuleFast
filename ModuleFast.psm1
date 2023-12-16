@@ -566,7 +566,8 @@ function Install-ModuleFastHelper {
   [Dictionary[Task, hashtable]]$taskMap = @{}
 
   [List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
-    $installPath = Join-Path $Destination $module.Name $module.ModuleVersion.ToString().Split('+-')[0]
+
+    $installPath = Join-Path $Destination $module.Name (ConvertTo-FolderVersion $module.ModuleVersion)
 
     #TODO: Do a get-localmodule check here
     if (Test-Path $installPath) {
@@ -580,7 +581,7 @@ function Install-ModuleFastHelper {
       }
     }
 
-    Write-Verbose "${module}: Downloading to $($module.Location)"
+    Write-Verbose "${module}: Downloading from $($module.Location)"
     if (-not $module.Location) {
       throw "$module`: No Download Link found. This is a bug"
     }
@@ -604,8 +605,10 @@ function Install-ModuleFastHelper {
     $context.fetchStream = $stream
     $streamTasks.RemoveAt($thisTaskIndex)
 
+
     #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
     Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
+
     # This is a sync process and we want to do it in parallel, hence the threadjob
     $installJob = Start-ThreadJob -ThrottleLimit 8 {
       param(
@@ -614,11 +617,16 @@ function Install-ModuleFastHelper {
       )
       $installPath = $context.InstallPath
       #TODO: Add a ".incomplete" marker file to the folder and remove it when done. This will allow us to detect failed installations
+
       $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
       [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
-      Write-Verbose "Cleanup Nuget Files in $installPath"
+      #FIXME: Output inside a threadjob is not surfaced to the user.
+      Write-Debug "Cleanup Nuget Files in $installPath"
       if (-not $installPath) { throw 'ModuleDestination was not set. This is a bug, report it' }
-      Remove-Item -Path $installPath -Include '_rels', 'package', '*.nuspec' -Recurse -Force
+      Get-ChildItem -Path $installPath | Where-Object {
+        $_.Name -in '_rels', 'package', '[Content_Types].xml' -or
+        $_.Name.EndsWith('.nuspec')
+      } | Remove-Item -Force -Recurse
 			($zip).Dispose()
 			($stream).Dispose()
       return $context
@@ -1168,10 +1176,14 @@ function Find-LocalModule {
     $manifestName = "$($ModuleSpec.Name).psd1"
 
     #We can attempt a fast-search for modules if the ModuleSpec is for a specific version
-    if ($ModuleSpec.Required) {
-      #TODO: Split this off into Find-RequiredLocalModule
+    $required = $ModuleSpec.Required
+    if ($required) {
 
-      $moduleVersion = $ModuleSpec.Required.OriginalVersion
+      #If there is a prerelease, we will fetch the folder where the prerelease might live, and verify the manifest later.
+      [Version]$moduleVersion = $ModuleSpec.Prerelease ?
+        (ConvertTo-FolderVersion $required) :
+      $required.OriginalVersion
+
       $moduleFolder = Join-Path $moduleBaseDir $moduleVersion
       $manifestPath = Join-Path $moduleFolder $manifestName
 
@@ -1291,6 +1303,69 @@ function ConvertTo-AuthenticationHeaderValue ([PSCredential]$Credential) {
 #Get the hash of a string
 function Get-StringHash ([string]$String, [string]$Algorithm = 'SHA256') {
 	(Get-FileHash -InputStream ([MemoryStream]::new([Encoding]::UTF8.GetBytes($String))) -Algorithm $algorithm).Hash
+}
+
+#Imports a powershell data file or json file for the required spec configuration.
+filter ConvertFrom-RequiredSpec {
+  [CmdletBinding(DefaultParameterSetName = 'File')]
+  [OutputType([ModuleFastSpec[]])]
+  param(
+    [Parameter(Mandatory, ParameterSetName = 'File')][string]$RequiredSpecPath,
+    [Parameter(Mandatory, ParameterSetName = 'Object')][object]$RequiredSpec
+  )
+  $ErrorActionPreference = 'Stop'
+
+  if ($RequiredSpecPath) {
+    $uri = $RequiredSpecPath -as [Uri]
+
+    $RequiredData = if ($uri.scheme -in 'http', 'https') {
+      [string]$content = (Invoke-WebRequest -Uri $uri).Content
+      if ($content.StartsWith('@{')) {
+        $tempFile = [io.path]::GetTempFileName()
+        $content > $tempFile
+        Import-PowerShellDataFile -Path $tempFile
+      } else {
+        ConvertFrom-Json $content -Depth 5
+      }
+    } else {
+      #Assume this is a local if a URL above didn't match
+      $resolvedPath = Resolve-Path $RequiredSpecPath
+      $extension = [Path]::GetExtension($resolvedPath)
+      if ($extension -eq '.psd1') {
+        Import-PowerShellDataFile -Path $resolvedPath
+      } elseif ($extension -in '.json', '.jsonc') {
+        Get-Content -Path $resolvedPath -Raw | ConvertFrom-Json -Depth 5
+      } else {
+        throw [NotSupportedException]'Only .psd1 and .json files are supported to import to this command'
+      }
+    }
+  }
+
+
+
+  if ($RequiredData -is [IDictionary]) {
+    foreach ($kv in $RequiredData.GetEnumerator()) {
+      if ($kv.Value -is [IDictionary]) {
+        throw [NotImplementedException]'TODO: PSResourceGet/PSDepend full syntax'
+      }
+      if ($kv.Value -isnot [string]) {
+        throw [NotSupportedException]'Only strings and hashtables are supported on the right hand side of the = operator.'
+      }
+      if ($kv.Value -eq 'latest') {
+        [ModuleFastSpec]"$($kv.Name)"
+        continue
+      }
+      if ($kv.Value -as [NuGetVersion]) {
+        [ModuleFastSpec]"$($kv.Name)@$($kv.Value)"
+        continue
+      }
+
+      #All other potential options (<=, @, :, etc.) are a direct merge
+      [ModuleFastSpec]"$($kv.Name)$($kv.Value)"
+    }
+  } else {
+    throw [NotImplementedException]'TODO: Support simple array based json strings'
+  }
 }
 
 
