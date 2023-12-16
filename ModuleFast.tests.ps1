@@ -483,6 +483,12 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Errors trying to install prerelease over regular module' {
     Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1'
+    { Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease' }
+    | Should -Throw '*is newer than the requested prerelease version*'
+  }
+  It 'Succeeds installing regular module over prerelease module' {
     Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease'
+    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1' -WarningVariable actual *>&1 | Out-Null
+    $actual | Should -Not -BeNullOrEmpty -Because 'it should warn about installing regular module over prerelease module but proceed anyways'
   }
 }

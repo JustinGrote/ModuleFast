@@ -588,16 +588,20 @@ function Install-ModuleFastHelper {
         $existingModuleMetadata.privatedata.psdata.prerelease
       )
 
-      if (-not $existingVersion.IsPrerelease) {
-        throw [InvalidOperationException]"${module}: A non-prerelease module with version $existingVersion already exists at $installPath. This is a bug because the local module resolution should have already excluded this."
-      }
-
       #Do a prerelease evaluation
+      if ($module.ModuleVersion -eq $existingVersion) {
+        if ($Update) {
+          Write-Verbose "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module."
+          continue
+        } else {
+          throw [System.NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection but we should probably allow this if -Update or -Force is specified..."
+        }
+      }
       if ($module.ModuleVersion -lt $existingVersion) {
         #TODO: Add force to override
-        throw [NotSupportedException]"$module`: Existing module folder found at $installPath but the module is a prerelease and the existing version $existingVersion is newer than the requested version $($module.ModuleVersion). If you wish to continue, please remove the existing module folder or modify your specification and try again."
+        throw [NotSupportedException]"${module}: Existing module found at $installPath and its version $existingVersion is newer than the requested prerelease version $($module.ModuleVersion). If you wish to continue, please remove the existing module folder or modify your specification and try again."
       } else {
-        Write-Warning "$module`: Existing prerelease version $existingVersion is older than our planned version $($module.ModuleVersion) so we are replacing the existing module with this version."
+        Write-Warning "${module}: Existing prerelease version $existingVersion is older than our planned version $($module.ModuleVersion) so we are replacing the existing module with this version."
         Remove-Item $installPath -Force -Recurse
       }
     }
