@@ -486,9 +486,19 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     { Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease' }
     | Should -Throw '*is newer than the requested prerelease version*'
   }
-  It 'Succeeds installing regular module over prerelease module' {
+  It 'Errors trying to install older prerelease over regular module' {
+    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1'
+    { Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease' }
+    | Should -Throw '*is newer than the requested prerelease version*'
+  }
+  It 'Installs regular module over prerelease module with warning' {
     Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease'
     Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1' -WarningVariable actual *>&1 | Out-Null
-    $actual | Should -Not -BeNullOrEmpty -Because 'it should warn about installing regular module over prerelease module but proceed anyways'
+    $actual | Should -BeLike '*is newer than existing prerelease version*'
+  }
+  It 'Installs newer prerelease with warning' {
+    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-aprerelease'
+    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
+    $actual | Should -BeLike '*is newer than existing prerelease version*'
   }
 }

@@ -594,14 +594,14 @@ function Install-ModuleFastHelper {
           Write-Verbose "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module."
           continue
         } else {
-          throw [System.NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection but we should probably allow this if -Update or -Force is specified..."
+          throw [System.NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection. Use -Update to override..."
         }
       }
       if ($module.ModuleVersion -lt $existingVersion) {
         #TODO: Add force to override
         throw [NotSupportedException]"${module}: Existing module found at $installPath and its version $existingVersion is newer than the requested prerelease version $($module.ModuleVersion). If you wish to continue, please remove the existing module folder or modify your specification and try again."
       } else {
-        Write-Warning "${module}: Existing prerelease version $existingVersion is older than our planned version $($module.ModuleVersion) so we are replacing the existing module with this version."
+        Write-Warning "${module}: Planned version $($module.ModuleVersion) is newer than existing prerelease version $existingVersion so we will overwrite."
         Remove-Item $installPath -Force -Recurse
       }
     }
@@ -1285,13 +1285,14 @@ function Find-LocalModule {
       continue
     }
 
-    [string]$prereleaseData = $manifestData.PreRelease
-
-    [NuGetVersion]$manifestVersion = [NuGetVersion]::new($manifestVersionData, $prereleaseData, $null)
+    [NuGetVersion]$manifestVersion = [NuGetVersion]::new(
+      $manifestVersionData,
+      $manifestData.PrivateData.PSData.Prerelease
+    )
 
     #Re-Test against the manifest loaded version to be sure
     if (-not $ModuleSpec.SatisfiedBy($manifestVersion)) {
-      Write-Debug "$(ModuleSpec.Name): Found a module $($moduleInfo.Item2) that initially matched the name and version folder but after reading the manifest, the version label not satisfy the version spec $($ModuleSpec). This is an edge case and should only occur if you specified a prerelease upper bound that is less than the PreRelease label in the manifest. Skipping..."
+      Write-Debug "$($ModuleSpec.Name): Found a module $($moduleInfo.Item2) that initially matched the name and version folder but after reading the manifest, the version label not satisfy the version spec $($ModuleSpec). This is an edge case and should only occur if you specified a prerelease upper bound that is less than the PreRelease label in the manifest. Skipping..."
       continue
     }
 
