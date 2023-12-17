@@ -106,7 +106,7 @@ will recheck whats available in the remote.
 function Test-ModuleFast {
   $mfbootstrap = [ScriptBlock]::Create((iwr 'https://raw.githubusercontent.com/JustinGrote/ModuleFast/main/ModuleFast.ps1').content)
   $mfpsm1 = 'https://raw.githubusercontent.com/JustinGrote/ModuleFast/main/ModuleFast.psm1'
-  $mfbootstrap -Uri $mfpsm1
+  & $mfbootstrap -Uri $mfpsm1
 }
 $PSDefaultParameterValues['*-ModuleFast:Source'] = 'https://preview.pwsh.gallery/index.json'
 Test-ModuleFast
