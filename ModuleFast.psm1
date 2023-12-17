@@ -1340,6 +1340,7 @@ filter ConvertFrom-RequiredSpec {
   )
   $ErrorActionPreference = 'Stop'
 
+  #Merge Required Data into spec path
   if ($RequiredSpecPath) {
     $uri = $RequiredSpecPath -as [Uri]
 
@@ -1366,7 +1367,24 @@ filter ConvertFrom-RequiredSpec {
     }
   }
 
-  if ($RequiredData -is [IDictionary]) {
+  if ($RequiredData -is [PSCustomObject] -and $RequiredData.psobject.baseobject -isnot [IDictionary]) {
+    Write-Debug 'PSCustomObject-based Spec detected, converting to hashtable'
+    $requireHT = @{}
+    $RequiredData.psobject.Properties
+    | ForEach-Object {
+      $requireHT.Add($_.Name, $_.Value)
+    }
+    $RequiredData = $requireHT
+  }
+
+  if ($RequiredData -is [Object[]] -and ($true -notin $RequiredData.GetEnumerator().Foreach{ $PSItem -isnot [string] })) {
+    Write-Debug 'RequiredData array detected and contains all string objects. Converting to string[]'
+    $requiredData = [string[]]$RequiredData
+  }
+
+  if ($RequiredData -is [string[]]) {
+    return [ModuleFastSpec[]]$RequiredData
+  } elseif ($RequiredData -is [IDictionary]) {
     foreach ($kv in $RequiredData.GetEnumerator()) {
       if ($kv.Value -is [IDictionary]) {
         throw [NotImplementedException]'TODO: PSResourceGet/PSDepend full syntax'

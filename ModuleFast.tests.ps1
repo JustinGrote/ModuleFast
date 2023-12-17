@@ -501,4 +501,24 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
     $actual | Should -BeLike '*is newer than existing prerelease version*'
   }
+
+
+  It 'Installs from <Name> SpecFile' {
+    $SCRIPT:Mocks = Resolve-Path "$PSScriptRoot/Test/Mocks"
+    $specFilePath = Join-Path $Mocks $File
+    Install-ModuleFast @imfParams -Path $specFilePath
+  } -TestCases @(
+    @{
+      Name = 'PowerShell Data File';
+      File = 'ModuleFast.requires.psd1'
+    },
+    @{
+      Name = 'JSON';
+      File = 'ModuleFast.requires.json'
+    },
+    @{
+      Name = 'JSONArray';
+      File = 'ModuleFastArray.requires.json'
+    }
+  )
 }
