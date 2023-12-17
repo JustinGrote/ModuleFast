@@ -43,6 +43,7 @@ function Install-ModuleFast {
     #The module(s) to install. This can be a string, a ModuleSpecification, a hashtable with nuget version style (e.g. @{Name='test';Version='1.0'}), a hashtable with ModuleSpecification style (e.g. @{Name='test';RequiredVersion='1.0'}),
     [Alias('Name')]
     [Alias('ModuleToInstall')]
+    [Alias('ModulesToInstall')]
     [AllowNull()]
     [AllowEmptyCollection()]
     [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastSpec[]]$Specification,
