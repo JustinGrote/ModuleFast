@@ -2,6 +2,7 @@
 using namespace Microsoft.PowerShell.Commands
 using namespace System.Management.Automation
 using namespace NuGet.Versioning
+using namespace System.Collections
 using namespace System.Collections.Concurrent
 using namespace System.Collections.Generic
 using namespace System.Collections.Specialized
@@ -46,6 +47,8 @@ function Install-ModuleFast {
     [AllowEmptyCollection()]
     [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastSpec[]]$Specification,
 
+    #Provide a required module specification path to install from. This can be a local psd1/json file, or a remote URL with a psd1/json file in supported manifest formats.
+    [Parameter(Mandatory, ParameterSetName = 'Path')][string]$Path,
     #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
@@ -111,6 +114,7 @@ function Install-ModuleFast {
 
   process {
     #We initialize and type the container list here because there is a bug where the ParameterSet is not correct in the begin block if the pipeline is used. Null conditional keeps it from being reinitialized
+    [List[ModuleFastSpec]]$ModulesToInstall = @()
     switch ($PSCmdlet.ParameterSetName) {
       'Specification' {
         [List[ModuleFastSpec]]$ModulesToInstall ??= @()
@@ -125,6 +129,10 @@ function Install-ModuleFast {
           $ModulesToInstall.Add($ModuleToInstall)
         }
         break
+
+      }
+      'Path' {
+        $ModulesToInstall = ConvertFrom-RequiredSpec -RequiredSpecPath $Path
       }
     }
   }
@@ -141,14 +149,11 @@ function Install-ModuleFast {
 
     #If we do not have an explicit implementation plan, fetch it
     #This is done so that Get-ModuleFastPlan | Install-ModuleFastPlan and Install-ModuleFastPlan have the same flow.
-    [ModuleFastInfo[]]$plan = switch ($PSCmdlet.ParameterSetName) {
-      'Specification' {
-        Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent
-      }
-      'ModuleFastInfo' {
-        $ModulesToInstall.ToArray()
-      }
+    [ModuleFastInfo[]]$plan = if ($PSCmdlet.ParameterSetName -eq 'ModuleFastInfo') {
+      $ModulesToInstall.ToArray()
+    } else {
+      Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
+      Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent
     }
 
     $WhatIfPreference = $currentWhatIfPreference
@@ -270,7 +275,7 @@ function Get-ModuleFastPlan {
     [HashSet[ModuleFastInfo]]$modulesToInstall = @{}
 
     # We use this as a fast lookup table for the context of the request
-    [Dictionary[Task[String], ModuleFastSpec]]$resolveTasks = @{}
+    [Dictionary[Task[String], ModuleFastSpec]]$taskSpecMap = @{}
 
     #We use this to track the tasks that are currently running
     #We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
@@ -288,7 +293,7 @@ function Get-ModuleFastPlan {
         }
 
         $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $moduleSpec.Name
-        $resolveTasks[$task] = $moduleSpec
+        $taskSpecMap[$task] = $moduleSpec
         $currentTasks.Add($task)
       }
 
@@ -309,7 +314,7 @@ function Get-ModuleFastPlan {
         #TODO: Perform a HEAD query to see if something has changed
 
         [Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
-        [ModuleFastSpec]$currentModuleSpec = $resolveTasks[$completedTask]
+        [ModuleFastSpec]$currentModuleSpec = $taskSpecMap[$completedTask]
 
         Write-Debug "$currentModuleSpec`: Processing Response"
         # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
@@ -450,7 +455,7 @@ function Get-ModuleFastPlan {
         if (-not $modulesToInstall.Add($selectedModule)) {
           Write-Debug "$selectedModule already exists in the install plan. Skipping..."
           #TODO: Fix the flow so this isn't stated twice
-          [void]$resolveTasks.Remove($completedTask)
+          [void]$taskSpecMap.Remove($completedTask)
           [void]$currentTasks.Remove($completedTask)
           $tasksCompleteCount++
           continue
@@ -521,7 +526,7 @@ function Get-ModuleFastPlan {
             Write-Debug "$currentModuleSpec`: Fetching dependency $dependencySpec"
             #TODO: Do a direct version lookup if the dependency is a required version
             $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $dependencySpec.Name
-            $resolveTasks[$task] = $dependencySpec
+            $taskSpecMap[$task] = $dependencySpec
             #Used to track progress as tasks can get removed
             $resolveTaskCount++
 
@@ -531,7 +536,7 @@ function Get-ModuleFastPlan {
 
         #Putting .NET methods in a try/catch makes errors in them terminating
         try {
-          [void]$resolveTasks.Remove($completedTask)
+          [void]$taskSpecMap.Remove($completedTask)
           [void]$currentTasks.Remove($completedTask)
           $tasksCompleteCount++
         } catch {
