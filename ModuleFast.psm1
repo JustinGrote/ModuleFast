@@ -1077,6 +1077,7 @@ function Get-ModuleInfoAsync {
     #This call should be cached by httpclient after first attempt to speed up future calls
     #TODO: Only select supported versions
     #TODO: Cache this index more centrally to be used for other services
+    Write-Debug ('{0}fetch registration index from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $Endpoint)
     if (-not $SCRIPT:__registrationIndex) {
       $SCRIPT:__registrationIndex = $HttpClient.GetStringAsync($Endpoint, $CancellationToken).GetAwaiter().GetResult()
     }
