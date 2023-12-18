@@ -502,7 +502,6 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     $actual | Should -BeLike '*is newer than existing prerelease version*'
   }
 
-
   It 'Installs from <Name> SpecFile' {
     $SCRIPT:Mocks = Resolve-Path "$PSScriptRoot/Test/Mocks"
     $specFilePath = Join-Path $Mocks $File

@@ -1189,6 +1189,8 @@ function Find-LocalModule {
 
   #First property is the manifest path, second property is the actual version (may be different from the folder version as prerelease versions go in the same location)
 
+
+
   [List[[Tuple[Version, string]]]]$candidateModules = foreach ($modulePath in $modulePaths) {
     if (-not [Directory]::Exists($modulePath)) {
       Write-Debug "$($ModuleSpec.Name): PSModulePath $modulePath is configured but does not exist, skipping..."
@@ -1258,8 +1260,9 @@ function Find-LocalModule {
 
     #Check for a "classic" module if no versioned folders were found
     if ($candidateModules.count -eq 0) {
-      $classicManifestPath = [Directory]::GetFiles($moduleBaseDir, $manifestName, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
-      if ($classicManifestPath.count -gt 1) { throw "$moduleBaseDir manifest is ambiguous, please delete one of these: $classicManifestPath" }
+      [string[]]$classicManifestPaths = [Directory]::GetFiles($moduleBaseDir, $manifestName, [EnumerationOptions]@{MatchCasing = 'CaseInsensitive' })
+      if ($classicManifestPaths.count -gt 1) { throw "$moduleBaseDir manifest is ambiguous, please delete one of these: $classicManifestPath" }
+      [string]$classicManifestPath = $classicManifestPaths[0]
       if ($classicManifestPath) {
         #TODO: Optimize this so that import-powershelldatafile is not called twice. This should be a rare occurance so it's not a big deal.
         [version]$classicVersion = (Import-PowerShellDataFile $classicManifestPath).ModuleVersion
