@@ -21,6 +21,9 @@ using namespace System.Threading.Tasks
 #Probably need to take into account inconsistent state, such as if a dependent module fails then the depending modules should be removed.
 $ErrorActionPreference = 'Stop'
 
+#Default Source is PWSH Gallery
+$SCRIPT:DefaultSource = 'https://pwsh.gallery/index.json'
+
 #region Public
 <#
 .SYNOPSIS
@@ -53,7 +56,7 @@ function Install-ModuleFast {
     #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
-    [string]$Source = 'https://pwsh.gallery/index.json',
+    [string]$Source = $SCRIPT:DefaultSource,
     #The credential to use to authenticate. Only basic auth is supported
     [PSCredential]$Credential,
     #By default will modify your PSModulePath to use the builtin destination if not present. Setting this implicitly skips profile update as well.
