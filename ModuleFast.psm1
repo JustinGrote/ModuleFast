@@ -360,6 +360,11 @@ function Get-ModuleFastPlan {
 
         #Get the highest version that satisfies the requirement in the inlined index, if possible
         $selectedEntry = if ($entries) {
+          #Sanity Check for Modules
+          if ('Script' -in $entries[0].tags) {
+            throw [NotImplementedException]"$currentModuleSpec`: Script installations are currently not supported."
+          }
+
           [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
 
           foreach ($candidate in $inlinedVersions.Reverse()) {
@@ -475,7 +480,12 @@ function Get-ModuleFastPlan {
           # HACK: I should be using the Id provided by the server, for now I'm just guessing because
           # I need to add it to the ComparableModuleSpec class
           [List[ModuleFastSpec]]$dependencies = $dependencyInfo | ForEach-Object {
-            [ModuleFastSpec]::new($PSItem.id, [VersionRange]$PSItem.range)
+            # Handle rare cases where range is not specified in the dependency
+            [VersionRange]$range = [string]::IsNullOrWhiteSpace($PSItem.range) ?
+            [VersionRange]::new() :
+            [VersionRange]::Parse($PSItem.range)
+
+            [ModuleFastSpec]::new($PSItem.id, $range)
           }
           Write-Debug "$currentModuleSpec`: has $($dependencies.count) additional dependencies."
 
