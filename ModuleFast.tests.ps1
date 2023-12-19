@@ -505,19 +505,48 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   It 'Installs from <Name> SpecFile' {
     $SCRIPT:Mocks = Resolve-Path "$PSScriptRoot/Test/Mocks"
     $specFilePath = Join-Path $Mocks $File
-    Install-ModuleFast @imfParams -Path $specFilePath
+    $modulesToInstall = Install-ModuleFast @imfParams -Path $specFilePath -WhatIf
+    #TODO: Verify individual modules and versions
+    $modulesToInstall | Should -Not -BeNullOrEmpty
   } -TestCases @(
     @{
-      Name = 'PowerShell Data File';
+      Name = 'PowerShell Data File'
       File = 'ModuleFast.requires.psd1'
     },
     @{
-      Name = 'JSON';
+      Name = 'JSON'
       File = 'ModuleFast.requires.json'
     },
     @{
-      Name = 'JSONArray';
+      Name = 'JSONArray'
       File = 'ModuleFastArray.requires.json'
+    },
+    @{
+      Name = 'ScriptRequires'
+      File = 'RequiresScript.ps1'
+    },
+    @{
+      Name = 'ScriptModule'
+      File = 'RequiresModule.psm1'
     }
   )
+
+  It 'Fails for script if #Requires is not Present' {
+    $scriptPath = Join-Path $testDrive 'norequires.ps1'
+    {
+      'There is no requires here!'
+    } | Out-File $scriptPath
+
+    { Install-ModuleFast @imfParams -Path $scriptPath }
+    | Should -Throw 'The script does not have a #Requires*'
+  }
+  It 'Fails for module if #Requires is not Present' {
+    $scriptPath = Join-Path $testDrive 'norequires.psm1'
+    {
+      'There is no requires here!'
+    } | Out-File $scriptPath
+
+    { Install-ModuleFast @imfParams -Path $scriptPath }
+    | Should -Throw 'The script does not have a #Requires*'
+  }
 }

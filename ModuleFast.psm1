@@ -1,6 +1,7 @@
 #requires -version 7.2
 using namespace Microsoft.PowerShell.Commands
 using namespace System.Management.Automation
+using namespace System.Management.Automation.Language
 using namespace NuGet.Versioning
 using namespace System.Collections
 using namespace System.Collections.Concurrent
@@ -51,7 +52,7 @@ function Install-ModuleFast {
     [AllowEmptyCollection()]
     [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastSpec[]]$Specification,
 
-    #Provide a required module specification path to install from. This can be a local psd1/json file, or a remote URL with a psd1/json file in supported manifest formats.
+    #Provide a required module specification path to install from. This can be a local psd1/json file, or a remote URL with a psd1/json file in supported manifest formats, or a .ps1/.psm1 file with a #Requires statement.
     [Parameter(Mandatory, ParameterSetName = 'Path')][string]$Path,
     #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
     [string]$Destination,
@@ -972,9 +973,11 @@ class ModuleFastSpec {
   #BUG: We cannot implement IEquatable directly because we need to self-reference ModuleFastSpec before it exists.
   #We can however just add Equals() method
 
-
-
   #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.iequatable-1.equals
+  [bool]Equals($other) {
+    return $this.GetHashCode() -eq $other.GetHashCode()
+  }
+  #end IEquatable
 
   [string] ToString() {
     $guid = $this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : ''
@@ -983,10 +986,6 @@ class ModuleFastSpec {
   [int] GetHashCode() {
     return $this.ToString().GetHashCode()
   }
-  [bool]Equals($other) {
-    return $this.GetHashCode() -eq $other.GetHashCode()
-  }
-  #end IEquatable
 
   #IComparable
   #Implementation of https://learn.microsoft.com/en-us/dotnet/api/system.icomparable-1.equals
@@ -1378,10 +1377,19 @@ filter ConvertFrom-RequiredSpec {
       $extension = [Path]::GetExtension($resolvedPath)
       if ($extension -eq '.psd1') {
         Import-PowerShellDataFile -Path $resolvedPath
+      } elseif ($extension -in '.ps1', '.psm1') {
+        Write-Debug 'PowerShell Script/Module file detected, checking for #Requires'
+        $ast = [Parser]::ParseFile($resolvedPath, [ref]$null, [ref]$null)
+        [ModuleSpecification[]]$requiredModules = $ast.ScriptRequirements.RequiredModules
+
+        if ($RequiredModules.count -eq 0) {
+          throw [NotSupportedException]'The script does not have a #Requires -Module statement so ModuleFast does not know what this module requires. See Get-Help about_requires for more.'
+        }
+        $requiredModules
       } elseif ($extension -in '.json', '.jsonc') {
         Get-Content -Path $resolvedPath -Raw | ConvertFrom-Json -Depth 5
       } else {
-        throw [NotSupportedException]'Only .psd1 and .json files are supported to import to this command'
+        throw [NotSupportedException]'Only .ps1, psm1, .psd1, and .json files are supported to import to this command'
       }
     }
   }
@@ -1401,7 +1409,9 @@ filter ConvertFrom-RequiredSpec {
     $requiredData = [string[]]$RequiredData
   }
 
-  if ($RequiredData -is [string[]]) {
+  if ($requiredData -is [ModuleSpecification[]] -or $requiredData -is [ModuleSpecification]) {
+    return $RequiredData
+  } elseif ($RequiredData -is [string[]]) {
     return [ModuleFastSpec[]]$RequiredData
   } elseif ($RequiredData -is [IDictionary]) {
     foreach ($kv in $RequiredData.GetEnumerator()) {
