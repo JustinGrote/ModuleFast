@@ -144,7 +144,7 @@ function Install-ModuleFast {
   end {
     if (-not $ModulesToInstall) {
       if ($WhatIfPreference) {
-        Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
+        Write-Host -fore DarkGreen "`u{2705} All module specifications have been satisfied by locally installed modules. If you want to look for newer versions, try -Update."
       }
       #TODO: Deduplicate this with the end into its own function
       Write-Verbose "`u{2705} All required modules installed! Exiting."
@@ -207,14 +207,15 @@ function New-ModuleFastClient {
   #We want more concurrent connections to improve our performance and fairly aggressive timeouts
   #The max connections are only in case we end up using HTTP/1.1 instead of HTTP/2 for whatever reason.
   $httpHandler = [SocketsHttpHandler]@{
-    MaxConnectionsPerServer        = 100
+    MaxConnectionsPerServer        = 10
     EnableMultipleHttp2Connections = $true
     AutomaticDecompression         = 'All'
-    # ConnectTimeout          = 1000
   }
 
   $httpClient = [HttpClient]::new($httpHandler)
   $httpClient.BaseAddress = $Source
+  #When in parallel some operations may take a significant amount of time to return
+  $httpClient.Timeout = [TimeSpan]::FromSeconds(30)
 
   #If a credential was provided, use it as a basic auth credential
   if ($Credential) {
@@ -288,7 +289,7 @@ function Get-ModuleFastPlan {
     #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
     try {
       foreach ($moduleSpec in $ModulesToResolve) {
-        Write-Verbose "Resolving Module Specification: $moduleSpec"
+        Write-Verbose "${moduleSpec}: Evaluating Module Specification"
         [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
         if ($localMatch) {
           Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Location) that satisfies $moduleSpec. Skipping..."
@@ -303,7 +304,7 @@ function Get-ModuleFastPlan {
 
       [int]$tasksCompleteCount = 1
       [int]$resolveTaskCount = $currentTasks.Count -as [Int]
-      while ($currentTasks.Count -gt 0) {
+      do {
         #The timeout here allow ctrl-C to continue working in PowerShell
         #-1 is returned by WaitAny if we hit the timeout before any tasks completed
         $noTasksYetCompleted = -1
@@ -361,7 +362,7 @@ function Get-ModuleFastPlan {
         #Get the highest version that satisfies the requirement in the inlined index, if possible
         $selectedEntry = if ($entries) {
           #Sanity Check for Modules
-          if ('Script' -in $entries[0].tags) {
+          if ('ItemType:Script' -in $entries[0].tags) {
             throw [NotImplementedException]"$currentModuleSpec`: Script installations are currently not supported."
           }
 
@@ -400,7 +401,7 @@ function Get-ModuleFastPlan {
           | Sort-Object -Descending { [NuGetVersion]$PSItem.Upper }
 
           if (-not $pages) {
-            throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the requested version constraints."
+            throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the requested version constraints. You may need to specify -PreRelease or adjust your version constraints."
           }
 
           Write-Debug "$currentModuleSpec`: Found $(@($pages).Count) additional pages that might match the query: $($pages.'@id' -join ',')"
@@ -450,7 +451,7 @@ function Get-ModuleFastPlan {
         )
 
         if (-not $selectedEntry) {
-          throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. If this happens during dependency lookup, it is a bug in ModuleFast."
+          throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints."
         }
         if (-not $selectedEntry.PackageContent) { throw "No package location found for $($selectedEntry.PackageContent). This should never happen and is a bug" }
 
@@ -556,7 +557,7 @@ function Get-ModuleFastPlan {
         } catch {
           throw
         }
-      }
+      } while ($currentTasks.count -gt 0)
       if ($modulesToInstall) { return $modulesToInstall }
     } finally {
       #This gets called even if ctrl-c occured during the process
