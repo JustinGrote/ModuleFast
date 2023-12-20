@@ -1354,67 +1354,38 @@ filter ConvertFrom-RequiredSpec {
   [OutputType([ModuleFastSpec[]])]
   param(
     [Parameter(Mandatory, ParameterSetName = 'File')][string]$RequiredSpecPath,
-    [Parameter(Mandatory, ParameterSetName = 'Object')][object]$RequiredSpec
+    [Parameter(Mandatory, ParameterSetName = 'Object')]$RequiredSpec
   )
   $ErrorActionPreference = 'Stop'
 
-  #Merge Required Data into spec path
+  #If a spec path was specified, resolve it into RequiredSpec
   if ($RequiredSpecPath) {
-    $uri = $RequiredSpecPath -as [Uri]
-
-    $RequiredData = if ($uri.scheme -in 'http', 'https') {
-      [string]$content = (Invoke-WebRequest -Uri $uri).Content
-      if ($content.StartsWith('@{')) {
-        $tempFile = [io.path]::GetTempFileName()
-        $content > $tempFile
-        Import-PowerShellDataFile -Path $tempFile
-      } else {
-        ConvertFrom-Json $content -Depth 5
-      }
-    } else {
-      #Assume this is a local if a URL above didn't match
-      $resolvedPath = Resolve-Path $RequiredSpecPath
-      $extension = [Path]::GetExtension($resolvedPath)
-      if ($extension -eq '.psd1') {
-        Import-PowerShellDataFile -Path $resolvedPath
-      } elseif ($extension -in '.ps1', '.psm1') {
-        Write-Debug 'PowerShell Script/Module file detected, checking for #Requires'
-        $ast = [Parser]::ParseFile($resolvedPath, [ref]$null, [ref]$null)
-        [ModuleSpecification[]]$requiredModules = $ast.ScriptRequirements.RequiredModules
-
-        if ($RequiredModules.count -eq 0) {
-          throw [NotSupportedException]'The script does not have a #Requires -Module statement so ModuleFast does not know what this module requires. See Get-Help about_requires for more.'
-        }
-        $requiredModules
-      } elseif ($extension -in '.json', '.jsonc') {
-        Get-Content -Path $resolvedPath -Raw | ConvertFrom-Json -Depth 5
-      } else {
-        throw [NotSupportedException]'Only .ps1, psm1, .psd1, and .json files are supported to import to this command'
-      }
-    }
+    $specFromUri = Read-RequiredSpecFile $RequiredSpecPath
+    $RequiredSpec = $specFromUri
   }
 
-  if ($RequiredData -is [PSCustomObject] -and $RequiredData.psobject.baseobject -isnot [IDictionary]) {
+  $PassThruTypes = [string],
+  [string[]],
+  [ModuleFastSpec],
+  [ModuleFastSpec[]],
+  [ModuleSpecification[]],
+  [ModuleSpecification]
+
+  if ($RequiredSpec.GetType() -in $PassThruTypes) { return [ModuleFastSpec[]]$requiredSpec }
+
+  if ($RequiredSpec -is [PSCustomObject] -and $RequiredSpec.psobject.baseobject -isnot [IDictionary]) {
     Write-Debug 'PSCustomObject-based Spec detected, converting to hashtable'
     $requireHT = @{}
-    $RequiredData.psobject.Properties
-    | ForEach-Object {
+    $RequiredSpec.psobject.Properties
+  | ForEach-Object {
       $requireHT.Add($_.Name, $_.Value)
     }
-    $RequiredData = $requireHT
+    #Will be process by IDictionary case below
+    $RequiredSpec = $requireHT
   }
 
-  if ($RequiredData -is [Object[]] -and ($true -notin $RequiredData.GetEnumerator().Foreach{ $PSItem -isnot [string] })) {
-    Write-Debug 'RequiredData array detected and contains all string objects. Converting to string[]'
-    $requiredData = [string[]]$RequiredData
-  }
-
-  if ($requiredData -is [ModuleSpecification[]] -or $requiredData -is [ModuleSpecification]) {
-    return $RequiredData
-  } elseif ($RequiredData -is [string[]]) {
-    return [ModuleFastSpec[]]$RequiredData
-  } elseif ($RequiredData -is [IDictionary]) {
-    foreach ($kv in $RequiredData.GetEnumerator()) {
+  if ($RequiredSpec -is [IDictionary]) {
+    foreach ($kv in $RequiredSpec.GetEnumerator()) {
       if ($kv.Value -is [IDictionary]) {
         throw [NotImplementedException]'TODO: PSResourceGet/PSDepend full syntax'
       }
@@ -1433,9 +1404,70 @@ filter ConvertFrom-RequiredSpec {
       #All other potential options (<=, @, :, etc.) are a direct merge
       [ModuleFastSpec]"$($kv.Name)$($kv.Value)"
     }
-  } else {
-    throw [NotImplementedException]'TODO: Support simple array based json strings'
+    return
   }
+
+  if ($RequiredSpec -is [Object[]] -and ($true -notin $RequiredSpec.GetEnumerator().Foreach{ $PSItem -isnot [string] })) {
+    Write-Debug 'RequiredData array detected and contains all string objects. Converting to string[]'
+    $RequiredSpec = [string[]]$RequiredSpec
+  }
+
+  throw [InvalidDataException]'Could not evaluate the Required Specification to a known format.'
+}
+
+function Read-RequiredSpecFile ($RequiredSpecPath) {
+  if ($uri.scheme -in 'http', 'https') {
+    [string]$content = (Invoke-WebRequest -Uri $uri).Content
+    if ($content.StartsWith('@{')) {
+      $tempFile = [io.path]::GetTempFileName()
+      $content > $tempFile
+      return Import-PowerShellDataFile -Path $tempFile
+    } else {
+      $json = ConvertFrom-Json $content -Depth 5
+      return $json
+    }
+  }
+
+  #Assume this is a local if a URL above didn't match
+  $resolvedPath = Resolve-Path $RequiredSpecPath
+  $extension = [Path]::GetExtension($resolvedPath)
+
+  if ($extension -eq '.psd1') {
+    $manifestData = Import-PowerShellDataFile -Path $resolvedPath
+    if ($manifestData.ModuleVersion) {
+      [ModuleSpecification[]]$requiredModules = $manifestData.RequiredModules
+      Write-Debug 'Detected a Module Manifest, evaluating RequiredModules'
+      if ($requiredModules.count -eq 0) {
+        throw [InvalidDataException]'The manifest does not have a RequiredModules key so ModuleFast does not know what this module requires. See Get-Help about_module_manifests for more.'
+      }
+      return , $requiredModules
+    } else {
+      Write-Debug 'Did not detect a module manifest, passing through as-is'
+      return $manifestData
+    }
+  }
+
+  if ($extension -in '.ps1', '.psm1') {
+    Write-Debug 'PowerShell Script/Module file detected, checking for #Requires'
+    $ast = [Parser]::ParseFile($resolvedPath, [ref]$null, [ref]$null)
+    [ModuleSpecification[]]$requiredModules = $ast.ScriptRequirements.RequiredModules
+
+    if ($RequiredModules.count -eq 0) {
+      throw [NotSupportedException]'The script does not have a #Requires -Module statement so ModuleFast does not know what this module requires. See Get-Help about_requires for more.'
+    }
+    return , $requiredModules
+  }
+
+  if ($extension -in '.json', '.jsonc') {
+    $json = Get-Content -Path $resolvedPath -Raw | ConvertFrom-Json -Depth 5
+    if ($json -is [Object[]] -and $false -notin $json.getenumerator().foreach{ $_ -is [string] }) {
+      Write-Debug 'Detected a JSON array of strings, converting to string[]'
+      return , [string[]]$json
+    }
+    return $json
+  }
+
+  throw [NotSupportedException]'Only .ps1, psm1, .psd1, and .json files are supported to import to this command'
 }
 
 filter Resolve-FolderVersion([NuGetVersion]$version) {

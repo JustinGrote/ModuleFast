@@ -549,4 +549,27 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     { Install-ModuleFast @imfParams -Path $scriptPath }
     | Should -Throw 'The script does not have a #Requires*'
   }
+  It 'Fails if Module Manifest and RequiredModules is missing' {
+    $scriptPath = Join-Path $testDrive 'testmanifestnorequires.psd1'
+    "@{
+      'ModuleVersion'   = '1.0.0'
+    }" | Out-File $scriptPath
+    { Install-ModuleFast @imfParams -Path $scriptPath }
+    | Should -Throw 'The manifest does not have a RequiredMOdules key*'
+  }
+  It 'Resolves Module Manifest RequiredModules' {
+    $scriptPath = Join-Path $testDrive 'testmanifest.psd1'
+    "@{
+      'ModuleVersion'   = '1.0.0'
+      'RequiredModules' = @(
+        'PreReleaseTest'
+        @{
+          ModuleName = 'Az.Accounts'
+          ModuleVersion = '2.7.0'
+        }
+      )
+    }" | Out-File $scriptPath
+    $modules = Install-ModuleFast @imfParams -Path $scriptPath -WhatIf
+    $modules.count | Should -Be 2
+  }
 }
