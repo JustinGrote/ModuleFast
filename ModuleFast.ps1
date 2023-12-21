@@ -51,6 +51,8 @@ function Import-NuGetVersioningAssembly {
       [CompressionMode]::Decompress
     ).CopyTo($assemblyStream)
 
+
+    Write-Debug 'Loading Inline NugetVersion'
     [void][Assembly]::Load($assemblyStream.ToArray())
     if (-not ('NuGet.Versioning.VersionRange' -as [Type])) {
       throw 'NuGet Versioning Assembly Failed to Load'
