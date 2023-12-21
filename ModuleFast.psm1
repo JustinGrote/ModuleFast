@@ -76,7 +76,9 @@ function Install-ModuleFast {
     [Switch]$CI,
     #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
     [string]$CILockFilePath = $(Join-Path $PWD 'requires.lock.json'),
-    [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo
+    [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo,
+    #This will output the resulting modules that were installed.
+    [Switch]$PassThru
   )
   begin {
     # Setup the Destination repository
@@ -604,6 +606,12 @@ function Get-ModuleFastPlan {
       }
 
       $cancelToken.Dispose()
+    }
+  }
+  CLEAN {
+    #If the cancellation token for the httpcontext was created, dispose it to stop all httpclient tasks
+    if ($httpContext.CancellationToken) {
+      $httpContext.CancellationToken.Dispose()
     }
   }
 }
