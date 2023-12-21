@@ -232,7 +232,7 @@ function Install-ModuleFast {
       | Out-File -FilePath $CILockFilePath -Encoding UTF8
     }
   }
-  clean {
+  CLEAN {
     $cancelSource.Dispose()
   }
 }
@@ -300,9 +300,10 @@ function Get-ModuleFastPlan {
     $ErrorActionPreference = 'Stop'
     [HashSet[ModuleFastSpec]]$modulesToResolve = @()
 
-    #We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient
-    $cancelTokenSource = [CancellationTokenSource]::new()
-    $CancellationToken ??= $cancelTokenSource.Token
+    #We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient.
+    #We get a child so that a cancellation here does not affect any upstream commands
+    $cancelTokenSource = $CancellationToken ? [CancellationTokenSource]::CreateLinkedTokenSource($CancellationToken) : [CancellationTokenSource]::new()
+    $CancellationToken = $cancelTokenSource.Token
 
     #We pass this splat to all our HTTP requests to cut down on boilerplate
     $httpContext = @{
@@ -621,6 +622,12 @@ function Install-ModuleFastHelper {
     [HttpClient]$HttpClient,
     [switch]$Update
   )
+  BEGIN {
+    #We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient.
+    #We get a child so that a cancellation here does not affect any upstream commands
+    $cancelTokenSource = $CancellationToken ? [CancellationTokenSource]::CreateLinkedTokenSource($CancellationToken) : [CancellationTokenSource]::new()
+    $CancellationToken = $cancelTokenSource.Token
+  }
   END {
     $ErrorActionPreference = 'Stop'
 
