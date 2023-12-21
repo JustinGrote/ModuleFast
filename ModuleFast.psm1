@@ -80,8 +80,9 @@ function Install-ModuleFast {
   )
   begin {
     # Setup the Destination repository
+    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
+
     if (-not $Destination) {
-      $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
       $Destination = $defaultRepoPath
     } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {
       $windowsDefaultDocumentsPath = Join-Path [environment]::GetFolderPath('MyDocuments') 'PowerShell/Modules'
@@ -1146,6 +1147,11 @@ function Get-ModuleInfoAsync {
 }
 
 function Add-DestinationToPSModulePath {
+  [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    <#Category#>'PSAvoidUsingDoubleQuotesForConstantString', <#CheckId#>$null, Scope = 'Function',
+    Justification = 'Using string replacement so some double quotes with a constant are deliberate'
+  )]
+
   <#
 	.SYNOPSIS
 	Adds an existing PowerShell Modules path to the current session as well as the profile
@@ -1197,7 +1203,7 @@ function Add-DestinationToPSModulePath {
   }
   Write-Verbose 'Checked for relative destination'
 
-  [string]$profileLine = { if ('##DESTINATION##' -notin ($env:PSModulePath.split([Path]::PathSeparator))) { $env:PSModulePath = '##DESTINATION##' + $([Path]::PathSeparator + $env:PSModulePath) } <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
+  [string]$profileLine = {if ("##DESTINATION##" -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) { $env:PSModulePath = "##DESTINATION##" + $([IO.Path]::PathSeparator + $env:PSModulePath) } <#Added by ModuleFast. DO NOT EDIT THIS LINE. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the default destination to your powershell.config.json or to your PSModulePath another way.#> }
 
   #We can't use string formatting because of the braces already present
   $profileLine = $profileLine -replace '##DESTINATION##', $Destination
