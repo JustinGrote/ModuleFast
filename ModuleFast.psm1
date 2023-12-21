@@ -900,6 +900,10 @@ class ModuleFastSpec {
         $this.Initialize($moduleSpec)
         break
       }
+      #There should be no more @{ after the string representation so end here if not parseable
+      ($Name.contains('@{')) {
+        throw [ArgumentException]"Cannot convert $Name to a ModuleFastSpec, it does not confirm to the ModuleSpecification syntax but has '@{' in the string."
+      }
       ($Name.contains('>=')) {
         $moduleName, [NugetVersion]$lower = $Name.Split('>=')
         $this.Initialize($moduleName, $lower, [guid]::Empty)
@@ -910,8 +914,8 @@ class ModuleFastSpec {
         $this.Initialize($moduleName, [VersionRange]::Parse("(,$upper]"), [guid]::Empty)
         break
       }
-      ($Name.contains('@')) {
-        $moduleName, $exactVersion = $Name.Split('@')
+      ($Name.contains('=')) {
+        $moduleName, $exactVersion = $Name.Split('=')
         $this.Initialize($moduleName, [VersionRange]::Parse("[$exactVersion]"), [guid]::Empty)
         break
       }

@@ -158,7 +158,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           }
         },
         @{
-          Spec  = 'Az.Accounts@2.7.3'
+          Spec  = 'Az.Accounts=2.7.3'
           Check = {
             $actual.ModuleVersion | Should -Be '2.7.3'
           }
