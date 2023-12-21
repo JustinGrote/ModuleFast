@@ -41,6 +41,26 @@ you can have only a very specific version to be installed, or only versions belo
 & ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) @{ModuleName='ImportExcel';MaximumVersion='7.7.0'}
 ```
 
+### Requires Spec Installation
+
+ModuleFast can read a variety of files for module specifications:
+
+1. .ps1 PowerShell Scripts with #Requires comment
+1. .psm1 PowerShell Modules with #Requires comment
+1. .psd1 Module Manifest with a RequiredModules property
+1. .psd1 file with module/version pairs
+1. .json file with module/version pairs
+1. .json file with array of Module Specification strings
+
+You can specify one of these files by using the `-Path parameter`. If you run `Install-ModuleFast` with no arguments, it will search for *.required.psd1|psm1|json|jsonc files in the current directory to install.
+
+### CI Lockfile
+
+You can specify the `-CI` parameter to create a lockfile in the current directory that will pin specific version specifications.
+If you commit this to a repository, others who run `Install-ModuleFast -CI` will get exactly the modules that were installed
+by your installation process, even if newer ones are available that meet the spec. This helps ensure proper
+reproducible builds, but ideally you will specify your versions appropriately instead.
+
 ### NOTE: Recommended PSModulePath Prerequisite
 
 ModuleFast installs modules to your `LocalAppData/powershell/Modules` folder.
@@ -87,7 +107,7 @@ It makes a lot of very bad assumptions, most of which are safe for PowerShell Ga
 
 1. Multipart $batch queries suck, they still only execute server-side in parallel. I wrote a full multipart implementation only to throw it away
 1. Fiddler and some proxies only supports HTTP/1.1 and can give false positives about how many connections are actually being made. Use wireshark to be sure when testing HTTP/2 and HTTP/3
-1. [Dictionary].keys is not a stable target at all for task iteration, best to maintain a separate list
+1. `[Dictionary].keys`` is not a stable target at all for task iteration, best to maintain a separate list
 1. PSGetv3 doesn't follow the nuget server v3 spec of optional params (stuff marked optional will cause psgetv3 to throw if not present)
 1. Initially the logic would fetch the main page and resolve dependencies by fetching individual versions. Turns out its only barely slower to return all versions of a module in single call, probably because the PSGallery server-side filtering doesnt cache, so we instead fetch all versions of a module in a reduced way from our Cloudflare worker and use that as a cache.
 1. Parallel dependency lookups (lots of Az dependencies require Az.Account) resulted in lots of duplicate calls for Az.Account. Since all task calls bottleneck through our main async loop logic, we can safely inspect existing dependency calls just before execution to determine if the existing call will satisfy it, and then add the context on to the existing object to prevent the duplicate calls.
