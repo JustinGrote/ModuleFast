@@ -28,10 +28,14 @@ $SCRIPT:DefaultSource = 'https://pwsh.gallery/index.json'
 #region Public
 <#
 .SYNOPSIS
-High Performance Powershell Module Installation
-.NOTES
-THIS IS NOT FOR PRODUCTION, it should be considered "Fragile" and has very little error handling and type safety
-It also doesn't generate the PowershellGet XML files currently, so PSGet v2 will see them as "External" modules (PSGetv3 doesn't care)
+High performance, declarative Powershell Module Installer
+.DESCRIPTION
+ModuleFast is a high performance, declarative PowerShell module installer. It is designed with no external dependencies and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by pnpm and other high performance declarative package managers.
+
+ModuleFast accepts a variety of familiar PowerShell syntaxes and objects for module specification as well as a custom shorthand syntax allowing complex version requirements to be defined in a single string.
+
+ModuleFast can also install the required modules specified in the #Requires line of a script, or in the RequiredModules section of a module manifest, by simplying providing the path to that file in the -Path parameter (which also accepts remote UNC, http, and https URLs).
+
 .EXAMPLE
 Install-ModuleFast 'Az'
 .EXAMPLE
@@ -50,11 +54,11 @@ function Install-ModuleFast {
     [Alias('ModulesToInstall')]
     [AllowNull()]
     [AllowEmptyCollection()]
-    [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastSpec[]]$Specification,
+    [Parameter(Position = 0, ValueFromPipeline, ParameterSetName = 'Specification')][ModuleFastSpec[]]$Specification,
 
     #Provide a required module specification path to install from. This can be a local psd1/json file, or a remote URL with a psd1/json file in supported manifest formats, or a .ps1/.psm1 file with a #Requires statement.
     [Parameter(Mandatory, ParameterSetName = 'Path')][string]$Path,
-    #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows.
+    #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows. You can also specify 'CurrentUser' to install to the Documents folder on Windows Only (this is not recommended)
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
     [string]$Source = $SCRIPT:DefaultSource,
@@ -68,13 +72,20 @@ function Install-ModuleFast {
     [Switch]$Update,
     #Consider prerelease packages in the evaluation. Note that if a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting.
     [Switch]$Prerelease,
+    #Using the CI switch will write a lockfile to the current folder. If this file is present and -CI is specified in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of software come out.
+    [Switch]$CI,
+    #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
+    [string]$CILockFilePath = $(Join-Path $PWD 'requires.lock.json'),
     [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo
   )
   begin {
     # Setup the Destination repository
-    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
     if (-not $Destination) {
+      $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
       $Destination = $defaultRepoPath
+    } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {
+      $windowsDefaultDocumentsPath = Join-Path [environment]::GetFolderPath('MyDocuments') 'PowerShell/Modules'
+      $Destination = $windowsDefaultDocumentsPath
     }
 
     # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
@@ -143,13 +154,22 @@ function Install-ModuleFast {
   }
 
   end {
-    if (-not $ModulesToInstall) {
-      if ($WhatIfPreference) {
-        Write-Host -fore DarkGreen "`u{2705} All module specifications have been satisfied by locally installed modules. If you want to look for newer versions, try -Update."
+
+    if ($ModulesToInstall.Count -eq 0 -and $PSCmdlet.ParameterSetName -eq 'Specification') {
+      Write-Verbose 'No modules specified to install. Beginning SpecFile detection...'
+      $modulesToInstall = if ($CI -and (Test-Path $CILockFilePath)) {
+        Write-Debug "Found lockfile at $CILockFilePath. Using for specification evaluation and ignoring all others."
+        ConvertFrom-RequiredSpec -RequiredSpecPath $CILockFilePath
+      } else {
+        $specFiles = Find-RequiredSpecFile $PWD -CILockFileHint $CILockFilePath
+        foreach ($specfile in $specFiles) {
+          ConvertFrom-RequiredSpec -RequiredSpecPath $Path
+        }
       }
-      #TODO: Deduplicate this with the end into its own function
-      Write-Verbose "`u{2705} All required modules installed! Exiting."
-      return
+    }
+
+    if (-not $ModulesToInstall) {
+      throw [InvalidDataException]'No modules specifications found to evaluate.'
     }
 
     #If we do not have an explicit implementation plan, fetch it
@@ -164,11 +184,12 @@ function Install-ModuleFast {
     $WhatIfPreference = $currentWhatIfPreference
 
     if ($plan.Count -eq 0) {
+      $planAlreadySatisfiedMessage = "`u{2705} $($ModulesToInstall.count) Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update"
       if ($WhatIfPreference) {
-        Write-Host -fore DarkGreen "`u{2705} No modules found to install or all modules are already installed."
+        Write-Host -fore DarkGreen $planAlreadySatisfiedMessage
       }
       #TODO: Deduplicate this with the end into its own function
-      Write-Verbose "`u{2705} All required modules installed! Exiting."
+      Write-Verbose $planAlreadySatisfiedMessage
       return
     }
 
@@ -194,6 +215,19 @@ function Install-ModuleFast {
     Install-ModuleFastHelper @installHelperParams
     Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
     Write-Verbose "`u{2705} All required modules installed! Exiting."
+    if ($CI) {
+      #FIXME: If a package was already installed, it doesn't show up in this lockfile.
+      Write-Verbose "Writing lockfile to $CILockFilePath"
+      [Dictionary[string, string]]$lockFile = @{}
+      $plan
+      | ForEach-Object {
+        $lockFile.Add($PSItem.Name, $PSItem.ModuleVersion)
+      }
+
+      $lockFile
+      | ConvertTo-Json -Depth 2
+      | Out-File -FilePath $CILockFilePath -Encoding UTF8
+    }
   }
 
 }
@@ -377,6 +411,7 @@ function Get-ModuleFastPlan {
             }
 
             if ($currentModuleSpec.SatisfiedBy($candidate)) {
+              #TODO: If the found version still matches an installed version, we should skip it
               Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the inlined index."
               $matchingEntry = $entries | Where-Object version -EQ $candidate
               if ($matchingEntry.count -gt 1) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
@@ -1415,6 +1450,22 @@ filter ConvertFrom-RequiredSpec {
   throw [InvalidDataException]'Could not evaluate the Required Specification to a known format.'
 }
 
+function Find-RequiredSpecFile ([string]$Path) {
+  Write-Debug "Attempting to find a Required Spec file at $Path"
+
+  $resolvedPath = Resolve-Path $Path
+
+  $requireFiles = Get-Item $resolvedPath/*.requires.* -ErrorAction SilentlyContinue
+  | Where-Object {
+    $extension = [Path]::GetExtension($_.FullName)
+    $extension -in '.psd1', '.ps1', '.psm1', '.json', '.jsonc'
+  }
+
+  if (-not $requireFiles) {
+    throw [NotSupportedException]"Could not find any required spec files in $Path. Verify the path is correct or specify Module Specifications either via -Path or -Specification"
+  }
+}
+
 function Read-RequiredSpecFile ($RequiredSpecPath) {
   if ($uri.scheme -in 'http', 'https') {
     [string]$content = (Invoke-WebRequest -Uri $uri).Content
@@ -1485,3 +1536,4 @@ filter Resolve-FolderVersion([NuGetVersion]$version) {
 # FIXME: DBops dependency version issue
 
 Export-ModuleMember -Function Get-ModuleFastPlan, Install-ModuleFast
+Set-Alias imf -Value Install-ModuleFast

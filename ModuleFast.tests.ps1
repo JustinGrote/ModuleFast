@@ -572,4 +572,27 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     $modules = Install-ModuleFast @imfParams -Path $scriptPath -WhatIf
     $modules.count | Should -Be 2
   }
+
+  It 'Writes a CI File' {
+    Set-Location $testDrive
+    Install-ModuleFast @imfParams -CI -Specification 'PreReleaseTest'
+    Get-Item 'requires.lock.json' | Should -Not -BeNullOrEmpty
+    #TODO: CI Content
+  }
+
+  It 'Installs from CI File and Installs CI Pinned Version' {
+    Set-Location $testDrive
+    Install-ModuleFast @imfParams -CI -Specification 'PreReleaseTest@0.0.1-prerelease'
+    Get-Item 'requires.lock.json' | Should -Not -BeNullOrEmpty
+
+    Remove-Item $imfParams.Destination -Recurse -Force
+    New-Item -ItemType Directory -Path $imfParams.Destination -ErrorAction stop
+    Install-ModuleFast @imfParams -CI
+    $PreReleaseManifest = "$($imfParams.Destination)\PreReleaseTest\0.0.1\PreReleaseTest.psd1"
+    Resolve-Path $PreReleaseManifest
+
+    (Import-PowerShellDataFile $PreReleaseManifest).PrivateData.PSData.Prerelease
+    | Should -Be 'prerelease' -Because 'CI lock file should have 0.1 prerelease even if 0.2 is available'
+    #TODO: CI Content
+  }
 }
