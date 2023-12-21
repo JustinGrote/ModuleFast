@@ -252,6 +252,11 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
       )
 
+      It 'Fails if hashtable-style string parameter is not a modulespec' {
+        { Get-ModuleFastPlan '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''; InvalidParameter = ''ThisShouldNotBeValid''}' -ErrorAction Stop }
+        | Should -Throw '*Cannot process argument transformation on parameter*'
+      }
+
       It 'Gets Module with String Parameter: <Spec>' {
         $actual = Get-ModuleFastPlan $Spec
         $actual | Should -HaveCount 1
