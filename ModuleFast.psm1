@@ -1031,7 +1031,8 @@ class ModuleFastSpec {
 
   [string] ToString() {
     $guid = $this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : ''
-    return "$($this._Name)$guid $($this._VersionRange)"
+    $versionRange = $this._VersionRange.ToString() -eq '(, )' ? '' : " $($this._VersionRange)"
+    return "$($this._Name)$guid$versionRange"
   }
   [int] GetHashCode() {
     return $this.ToString().GetHashCode()
