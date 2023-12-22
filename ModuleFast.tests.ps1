@@ -9,7 +9,7 @@ Import-Module $PSScriptRoot/ModuleFast.psm1 -Force
 
 BeforeAll {
   if ($env:MFURI) {
-    $PSDefaultParameterValues['Get-ModuleFastPlan:Source'] = $env:MFURI
+    $PSDefaultParameterValues['*-ModuleFast*:Source'] = $env:MFURI
   }
 }
 
@@ -361,7 +361,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
   It 'Detects Prerelease even if Prerelease not specified' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest@0.0.2-prerelease'
+    $actual = Get-ModuleFastPlan 'PrereleaseTest=0.0.2-prerelease'
     $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
 
@@ -409,7 +409,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
   It '4 section version numbers (VMware.PowerCLI)' {
-    Install-ModuleFast @imfParams 'VMware.VimAutomation.Common@13.2.0.22643733'
+    Install-ModuleFast @imfParams 'VMware.VimAutomation.Common=13.2.0.22643733'
     Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
       Import-PowerShellDataFile -Path $_.FullName | Select-Object -ExpandProperty ModuleVersion | Should -Be $moduleFolderVersion
@@ -487,23 +487,23 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
 		| Should -BeGreaterThan ([version]'5.0.0')
   }
   It 'Errors trying to install prerelease over regular module' {
-    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1'
-    { Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease' }
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+    { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }
     | Should -Throw '*is newer than the requested prerelease version*'
   }
   It 'Errors trying to install older prerelease over regular module' {
-    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1'
-    { Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease' }
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+    { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }
     | Should -Throw '*is newer than the requested prerelease version*'
   }
   It 'Installs regular module over prerelease module with warning' {
-    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-prerelease'
-    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1' -WarningVariable actual *>&1 | Out-Null
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -WarningVariable actual *>&1 | Out-Null
     $actual | Should -BeLike '*is newer than existing prerelease version*'
   }
   It 'Installs newer prerelease with warning' {
-    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-aprerelease'
-    Install-ModuleFast @imfParams 'PrereleaseTest@0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-aprerelease'
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
     $actual | Should -BeLike '*is newer than existing prerelease version*'
   }
 
@@ -587,7 +587,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
 
   It 'Installs from CI File and Installs CI Pinned Version' {
     Set-Location $testDrive
-    Install-ModuleFast @imfParams -CI -Specification 'PreReleaseTest@0.0.1-prerelease'
+    Install-ModuleFast @imfParams -CI -Specification 'PreReleaseTest=0.0.1-prerelease'
     Get-Item 'requires.lock.json' | Should -Not -BeNullOrEmpty
 
     Remove-Item $imfParams.Destination -Recurse -Force

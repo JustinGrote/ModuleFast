@@ -785,7 +785,7 @@ class ModuleFastInfo: IComparable {
   }
 
   [string] ToString() {
-    return "$($this.Name)@$($this.ModuleVersion)"
+    return "$($this.Name)($($this.ModuleVersion))"
   }
   [string] ToUniqueString() {
     return "$($this.Name)-$($this.ModuleVersion)-$($this.Location)"
@@ -1452,7 +1452,7 @@ filter ConvertFrom-RequiredSpec {
         continue
       }
       if ($kv.Value -as [NuGetVersion]) {
-        [ModuleFastSpec]"$($kv.Name)@$($kv.Value)"
+        [ModuleFastSpec]"$($kv.Name)=$($kv.Value)"
         continue
       }
 
@@ -1490,6 +1490,7 @@ function Read-RequiredSpecFile ($RequiredSpecPath) {
   if ($uri.scheme -in 'http', 'https') {
     [string]$content = (Invoke-WebRequest -Uri $uri).Content
     if ($content.StartsWith('@{')) {
+      #HACK: Cannot read PowerShell Data Files from a string, the interface is private, so we write to a temp file as a workaround.
       $tempFile = [io.path]::GetTempFileName()
       $content > $tempFile
       return Import-PowerShellDataFile -Path $tempFile
