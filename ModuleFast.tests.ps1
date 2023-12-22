@@ -459,7 +459,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -Be '2.10.2'
 
@@ -467,7 +467,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -Be '2.10.2'
 
@@ -475,14 +475,14 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'2.10.2')
 
     Get-Module Az.Compute -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'5.0.0')
   }
@@ -505,6 +505,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-aprerelease'
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
     $actual | Should -BeLike '*is newer than existing prerelease version*'
+  }
+  It 'Doesnt install prerelease if same-version Prerelease already installed' {
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'
+    $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' -WhatIf
+    $plan | Should -BeNullOrEmpty
   }
 
   It 'Installs from <Name> SpecFile' {
