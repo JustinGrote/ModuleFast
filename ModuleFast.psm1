@@ -249,7 +249,7 @@ function New-ModuleFastClient {
     #The max connections are only in case we end up using HTTP/1.1 instead of HTTP/2 for whatever reason. HTTP/2 will only use one connection (but multiple streams) per the spec unless EnableMultipleHttp2Connections is specified
     MaxConnectionsPerServer        = 10
     #Reduce the amount of round trip confirmations by setting window size to 64MB. ModuleFast should primarily be used on reliable fast connections. Dynamic scaling will reduce this if needed.
-    InitialHttp2StreamWindowSize   = 65535000
+    InitialHttp2StreamWindowSize   = 16777216
     AutomaticDecompression         = 'All'
   }
 
