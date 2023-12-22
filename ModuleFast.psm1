@@ -192,9 +192,9 @@ function Install-ModuleFast {
       $planAlreadySatisfiedMessage = "`u{2705} $($ModulesToInstall.count) Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update"
       if ($WhatIfPreference) {
         Write-Host -fore DarkGreen $planAlreadySatisfiedMessage
+      } else {
+        Write-Verbose $planAlreadySatisfiedMessage
       }
-      #TODO: Deduplicate this with the end into its own function
-      Write-Verbose $planAlreadySatisfiedMessage
       return
     }
 
@@ -335,10 +335,14 @@ function Get-ModuleFastPlan {
       Write-Verbose "${moduleSpec}: Evaluating Module Specification"
       [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
       if ($localMatch) {
-        Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Location) that satisfies $moduleSpec. Skipping..."
+        Write-Debug "${localMatch}: 🎯 FOUND satisfing version $($localMatch.ModuleVersion) at $($localMatch.Location). Skipping remote search."
         #TODO: Capture this somewhere that we can use it to report in the deploy plan
         continue
       }
+
+      #If we get this far, we didn't find a manifest in this module path
+      Write-Debug "${moduleSpec}: 🔍 No installed versions matched the spec. Will check remotely."
+
 
       $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $moduleSpec.Name
       $taskSpecMap[$task] = $moduleSpec
@@ -1032,6 +1036,9 @@ class ModuleFastSpec {
   [string] ToString() {
     $guid = $this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : ''
     $versionRange = $this._VersionRange.ToString() -eq '(, )' ? '' : " $($this._VersionRange)"
+    if ($this._VersionRange.MaxVersion -eq $this._VersionRange.MinVersion) {
+      $versionRange = "=$($this._VersionRange.MinVersion)"
+    }
     return "$($this._Name)$guid$versionRange"
   }
   [int] GetHashCode() {
@@ -1285,15 +1292,13 @@ function Find-LocalModule {
 
       if (Test-Path $ModuleFolder) {
         $candidatePaths.Add([Tuple]::Create($moduleVersion, $manifestPath))
-        #We don't need to look for further modules if we find a match this way.
-        continue
       }
     } else {
       #Check for versioned module folders next and sort by the folder versions to process them in descending order.
       [Directory]::GetDirectories($moduleBaseDir)
       | ForEach-Object {
         $folder = $PSItem
-        [Version]$version = $null
+        $version = $null
         $isVersion = [Version]::TryParse((Split-Path -Leaf $PSItem), [ref]$version)
         if (-not $isVersion) {
           Write-Debug "Could not parse $folder in $moduleBaseDir as a valid version. This is either a bad version directory or this folder is a classic module."
@@ -1307,9 +1312,14 @@ function Find-LocalModule {
         }
 
         #We can fast filter items that are below the lower bound, we dont need to read these manifests
-        if ($ModuleSpec.Min -and $version -lt $ModuleSpec.Min.Version) {
-          Write-Debug "${ModuleSpec}: Skipping $folder - below the lower bound"
-          return
+        if ($ModuleSpec.Min) {
+          #HACK: Nuget does not correctly convert major.minor.build versions.
+          [version]$originalBaseVersion = ($modulespec.Min.OriginalVersion -split '-')[0]
+          [Version]$minVersion = $originalBaseVersion.Revision -eq -1 ? $originalBaseVersion : $ModuleSpec.Min.Version
+          if ($minVersion -lt $ModuleSpec.Min.OriginalVersion) {
+            Write-Debug "${ModuleSpec}: Skipping $folder - below the lower bound"
+            return
+          }
         }
 
         $candidatePaths.Add([Tuple]::Create($version, $PSItem))
@@ -1351,22 +1361,19 @@ function Find-LocalModule {
 
       #Read the manifest so we can compare prerelease info. If this matches, we have a valid candidate and don't need to check anything further.
       $manifestCandidate = ConvertFrom-ModuleManifest $versionedManifestPath[0]
+      $candidateVersion = $manifestCandidate.ModuleVersion
 
-      if ($ModuleSpec.SatisfiedBy($manifestCandidate.ModuleVersion)) {
-        if ($Update -and ($ModuleSpec.Max -ne $manifestVersion)) {
-          Write-Debug "${ModuleSpec}: Skipping $($manifestCandidate.ModuleVersion) - The -Update was specified and the version does not exactly meet the upper bound of the spec, meaning there is a possible newer version remotely."
+      if ($ModuleSpec.SatisfiedBy($candidateVersion)) {
+        if ($Update -and ($ModuleSpec.Max -ne $candidateVersion)) {
+          Write-Debug "${ModuleSpec}: Skipping $candidateVersion - The -Update was specified and the version does not exactly meet the upper bound of the spec, meaning there is a possible newer version remotely."
           continue
         }
 
-        Write-Debug "${ModuleSpec}: 🎯Found satisfying installed version $($manifestCandidate.ModuleVersion) at $folder. Skipping remote search."
         #TODO: Collect InstalledButSatisfied Modules into an array so they can later be referenced in the lockfile and/or plan, right now the lockfile only includes modules that changed.
         return $manifestCandidate
       }
     }
   }
-
-  #If we get this far, we didn't find a manifest in this module path
-  Write-Debug "${ModuleSpec}: 👎 No installed versions matched the spec. Will check remotely."
 }
 
 
@@ -1538,6 +1545,7 @@ filter ConvertFrom-ModuleManifest {
   )
   $ErrorActionPreference = 'Stop'
 
+  $ManifestName = Split-Path -Path $ManifestPath -LeafBase
   $manifestData = Import-PowerShellDataFile -Path $ManifestPath -ErrorAction stop
 
   [Version]$manifestVersionData = $null
@@ -1550,7 +1558,7 @@ filter ConvertFrom-ModuleManifest {
     $manifestData.PrivateData.PSData.Prerelease
   )
 
-  return [ModuleFastInfo]::new($manifestData.Name, $manifestVersion, $ManifestPath)
+  return [ModuleFastInfo]::new($ManifestName, $manifestVersion, $ManifestPath)
 }
 
 #endregion Helpers

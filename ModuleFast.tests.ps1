@@ -459,7 +459,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -Be '2.10.2'
 
@@ -467,7 +467,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -Be '2.10.2'
 
@@ -475,14 +475,14 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'2.10.2')
 
     Get-Module Az.Compute -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
-		| Sort-Object Version -Descending
+		| Sort-Object -Descending
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'5.0.0')
   }
