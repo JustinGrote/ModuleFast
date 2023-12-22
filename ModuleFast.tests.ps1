@@ -506,6 +506,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
     $actual | Should -BeLike '*is newer than existing prerelease version*'
   }
+  It 'Doesnt install prerelease if same-version Prerelease already installed' {
+    Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'
+    $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' -WhatIf
+    $plan | Should -BeNullOrEmpty
+  }
 
   It 'Installs from <Name> SpecFile' {
     $SCRIPT:Mocks = Resolve-Path "$PSScriptRoot/Test/Mocks"
