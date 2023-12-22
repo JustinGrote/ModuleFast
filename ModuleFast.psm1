@@ -244,11 +244,12 @@ function New-ModuleFastClient {
   Write-Debug 'Creating new ModuleFast HTTP Client. This should only happen once!'
   $ErrorActionPreference = 'Stop'
   #SocketsHttpHandler is the modern .NET 5+ default handler for HttpClient.
-  #We want more concurrent connections to improve our performance and fairly aggressive timeouts
-  #The max connections are only in case we end up using HTTP/1.1 instead of HTTP/2 for whatever reason.
+
   $httpHandler = [SocketsHttpHandler]@{
+    #The max connections are only in case we end up using HTTP/1.1 instead of HTTP/2 for whatever reason. HTTP/2 will only use one connection (but multiple streams) per the spec unless EnableMultipleHttp2Connections is specified
     MaxConnectionsPerServer        = 10
-    EnableMultipleHttp2Connections = $true
+    #Reduce the amount of round trip confirmations by setting window size to 64MB. ModuleFast should primarily be used on reliable fast connections. Dynamic scaling will reduce this if needed.
+    InitialHttp2StreamWindowSize   = 65535000
     AutomaticDecompression         = 'All'
   }
 
@@ -659,7 +660,7 @@ function Install-ModuleFastHelper {
             Write-Verbose "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module."
             continue
           } else {
-            throw [System.NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection. Use -Update to override..."
+            throw [NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection. Use -Update to override..."
           }
         }
         if ($module.ModuleVersion -lt $existingVersion) {
