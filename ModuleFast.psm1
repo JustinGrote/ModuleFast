@@ -330,10 +330,14 @@ function Get-ModuleFastPlan {
     #We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
     [List[Task[String]]]$currentTasks = @()
 
+
     #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
     foreach ($moduleSpec in $ModulesToResolve) {
+      #This is used to track the highest candidate if -Update was specified to force a remote lookup. If the candidate is still the most valid after remote lookup we can skip it without hitting disk to read the manifest again.
+      [ModuleFastInfo]$bestLocalCandidate = $null
+
       Write-Verbose "${moduleSpec}: Evaluating Module Specification"
-      [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update
+      [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update -BestCandidate:([ref]$bestLocalCandidate)
       if ($localMatch) {
         Write-Debug "${localMatch}: 🎯 FOUND satisfing version $($localMatch.ModuleVersion) at $($localMatch.Location). Skipping remote search."
         #TODO: Capture this somewhere that we can use it to report in the deploy plan
@@ -342,7 +346,6 @@ function Get-ModuleFastPlan {
 
       #If we get this far, we didn't find a manifest in this module path
       Write-Debug "${moduleSpec}: 🔍 No installed versions matched the spec. Will check remotely."
-
 
       $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $moduleSpec.Name
       $taskSpecMap[$task] = $moduleSpec
@@ -509,6 +512,17 @@ function Get-ModuleFastPlan {
         $selectedEntry.PackageContent
       )
 
+      #If -Update was specified, we need to re-check that none of the selected modules are already installed.
+      #TODO: Persist state of the local modules found to this point so we don't have to recheck.
+      if ($Update -and $bestLocalCandidate -and $bestLocalCandidate.ModuleVersion -eq $selectedModule.ModuleVersion) {
+        Write-Debug "${selectedModule}: ✅ -Update was specified and the best remote candidate matches what is locally installed, so we can skip this module."
+        #TODO: Fix the flow so this isn't stated twice
+        [void]$taskSpecMap.Remove($completedTask)
+        [void]$currentTasks.Remove($completedTask)
+        $tasksCompleteCount++
+        continue
+      }
+
       #Check if we have already processed this item and move on if we have
       if (-not $modulesToInstall.Add($selectedModule)) {
         Write-Debug "$selectedModule already exists in the install plan. Skipping..."
@@ -518,6 +532,7 @@ function Get-ModuleFastPlan {
         $tasksCompleteCount++
         continue
       }
+
       Write-Verbose "$selectedModule`: Added to install plan"
 
       # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
@@ -606,6 +621,7 @@ function Get-ModuleFastPlan {
         throw
       }
     } while ($currentTasks.count -gt 0)
+
     if ($modulesToInstall) { return $modulesToInstall }
   }
   CLEAN {
@@ -909,6 +925,11 @@ class ModuleFastSpec {
 
   ModuleFastSpec([ModuleSpecification]$ModuleSpec) {
     $this.Initialize($ModuleSpec)
+  }
+
+  ModuleFastSpec([ModuleFastInfo]$ModuleFastInfo) {
+    $RequiredVersion = [VersionRange]::Parse("[$($ModuleFastInfo.ModuleVersion)]")
+    $this.Initialize($ModuleFastInfo.Name, $requiredVersion, [guid]::Empty)
   }
 
   ModuleFastSpec([string]$Name) {
@@ -1265,7 +1286,8 @@ function Find-LocalModule {
   param(
     [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
     [string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator),
-    [Switch]$Update
+    [Switch]$Update,
+    [ref]$BestCandidate
   )
   $ErrorActionPreference = 'Stop'
 
@@ -1388,7 +1410,12 @@ function Find-LocalModule {
 
       if ($ModuleSpec.SatisfiedBy($candidateVersion)) {
         if ($Update -and ($ModuleSpec.Max -ne $candidateVersion)) {
-          Write-Debug "${ModuleSpec}: Skipping $candidateVersion - The -Update was specified and the version does not exactly meet the upper bound of the spec, meaning there is a possible newer version remotely."
+          Write-Debug "${ModuleSpec}: Skipping $candidateVersion because -Update was specified and the version does not exactly meet the upper bound of the spec or no upper bound was specified at all, meaning there is a possible newer version remotely."
+          #We can use this ref later to find out if our best remote version matches what is installed without having to read the manifest again
+          if ($BestCandidate -and $manifestCandidate.ModuleVersion -gt $bestCandidate.Value.ModuleVersion) {
+            Write-Debug "${ModuleSpec}: New Best Candidate Version $($manifestCandidate.ModuleVersion)"
+            $BestCandidate.Value = $manifestCandidate
+          }
           continue
         }
 
