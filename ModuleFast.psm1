@@ -1,4 +1,4 @@
-#requires -version 7.2
+#requires -version 7.2 -Modules Microsoft.Powershell.SecretManagement
 using namespace Microsoft.PowerShell.Commands
 using namespace System.Management.Automation
 using namespace System.Management.Automation.Language
@@ -1591,5 +1591,5 @@ filter ConvertFrom-ModuleManifest {
 #   To fix this we will just use the name out of the module.psd1 when installing
 # FIXME: DBops dependency version issue
 
-Export-ModuleMember -Function Get-ModuleFastPlan, Install-ModuleFast
 Set-Alias imf -Value Install-ModuleFast
+Export-ModuleMember -Function Get-ModuleFastPlan, Install-ModuleFast -Alias imf

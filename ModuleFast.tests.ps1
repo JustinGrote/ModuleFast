@@ -614,4 +614,15 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     $actual | Should -BeLike '*incomplete installation detected*'
     Test-Path $incompleteItemPath | Should -BeFalse
   }
+
+  Describe 'GitHub Packages' {
+    It 'Gets Specific Module' {
+      $credential = [PSCredential]::new('Pester', (Get-Secret -Name 'ReadOnlyPackagesGithubPAT'))
+      $actual = Install-ModuleFast @imfParams -Specification 'PrereleaseTest=0.0.1' -Source 'https://nuget.pkg.github.com/justingrote/index.json' -Credential $credential -WhatIf
+      $actual.Name | Should -Be 'PrereleaseTest'
+      $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Be '0.0.1'
+    }
+  }
+
 }
+
