@@ -4,7 +4,7 @@
 This is a PowerShell module installer that is optimized for high performance and no external dependencies so it can be
 used as a bootstrap to quickly install and update modules in a declarative fashion.
 
-## Quick Start Bootstrap
+## Bootstrap Quick Start
 
 ### Load ModuleFast as a module for the session
 
@@ -16,6 +16,12 @@ Install-ModuleFast ImportExcel
 ```
 
 The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
+
+### View the Detailed Help for ModuleFast
+```powershell
+iwr bit.ly/modulefast | iex
+Get-Help Install-ModuleFast -Full
+```
 
 ### Single Line Installation (good for CI/CD)
 

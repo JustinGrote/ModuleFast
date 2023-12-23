@@ -26,26 +26,28 @@ $ErrorActionPreference = 'Stop'
 $SCRIPT:DefaultSource = 'https://pwsh.gallery/index.json'
 
 #region Public
-<#
-.SYNOPSIS
-High performance, declarative Powershell Module Installer
-.DESCRIPTION
-ModuleFast is a high performance, declarative PowerShell module installer. It is designed with no external dependencies and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by pnpm and other high performance declarative package managers.
 
-ModuleFast accepts a variety of familiar PowerShell syntaxes and objects for module specification as well as a custom shorthand syntax allowing complex version requirements to be defined in a single string.
-
-ModuleFast can also install the required modules specified in the #Requires line of a script, or in the RequiredModules section of a module manifest, by simplying providing the path to that file in the -Path parameter (which also accepts remote UNC, http, and https URLs).
-
-.EXAMPLE
-Install-ModuleFast 'Az'
-.EXAMPLE
-$plan = Get-ModuleFastPlan 'Az','VMWare.PowerCLI'
-$plan | Install-ModuleFast
-.EXAMPLE
-$plan = Install-ModuleFast 'Az','VMWare.PowerCLI' -WhatIf
-$plan | Install-ModuleFast
-#>
 function Install-ModuleFast {
+  <#
+  .SYNOPSIS
+  High performance, declarative Powershell Module Installer
+  .DESCRIPTION
+  ModuleFast is a high performance, declarative PowerShell module installer. It is designed with no external dependencies and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by pnpm and other high performance declarative package managers.
+
+  ModuleFast accepts a variety of familiar PowerShell syntaxes and objects for module specification as well as a custom shorthand syntax allowing complex version requirements to be defined in a single string.
+
+  ModuleFast can also install the required modules specified in the #Requires line of a script, or in the RequiredModules section of a module manifest, by simplying providing the path to that file in the -Path parameter (which also accepts remote UNC, http, and https URLs).
+
+  .EXAMPLE
+  Install-ModuleFast 'Az'
+  .EXAMPLE
+  $plan = Get-ModuleFastPlan 'Az','VMWare.PowerCLI'
+  $plan | Install-ModuleFast
+  .EXAMPLE
+  $plan = Install-ModuleFast 'Az','VMWare.PowerCLI' -WhatIf
+  $plan | Install-ModuleFast
+  #>
+
   [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Specification')]
   param(
     #The module(s) to install. This can be a string, a ModuleSpecification, a hashtable with nuget version style (e.g. @{Name='test';Version='1.0'}), a hashtable with ModuleSpecification style (e.g. @{Name='test';RequiredVersion='1.0'}),

@@ -62,30 +62,35 @@ function Import-NuGetVersioningAssembly {
 Import-NuGetVersioningAssembly
 if ($ImportNugetVersioning) { return }
 
-if (Get-Module $ModuleName) {
+if (-not (Get-Module $ModuleName)) {
+  #Dont use a release, use the latest commit on main
+  if ($UseMain) {
+    $Uri = "https://raw.githubusercontent.com/$User/$Repo/main/$ModuleName.psm1"
+  }
+
+  Write-Debug "Fetching $ModuleName from $Uri"
+  $ProgressPreference = 'SilentlyContinue'
+  try {
+    $response = [HttpClient]::new().GetStringAsync($Uri).GetAwaiter().GetResult()
+  } catch {
+    $PSItem.ErrorDetails = "Failed to fetch $ModuleName from $Uri`: $PSItem"
+    $PSCmdlet.ThrowTerminatingError($PSItem)
+  }
+  Write-Debug 'Fetched response'
+  $scriptBlock = [ScriptBlock]::Create($response)
+  $ProgressPreference = 'Continue'
+
+  $bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptblock | Import-Module -PassThru
+  Write-Debug "Loaded Module $ModuleName"
+} else {
   Write-Warning "Module $ModuleName already loaded, skipping bootstrap."
-  return
 }
 
-#Dont use a release, use the latest commit on main
+#This is ModuleFast specific
 if ($UseMain) {
-  $Uri = "https://raw.githubusercontent.com/$User/$Repo/main/$ModuleName.psm1"
+  Write-Debug 'UseMain Specified, ModuleFast will use preview.pwsh.gallery'
+  & (Get-Module $ModuleName) { $SCRIPT:DefaultSource = 'https://preview.pwsh.gallery/index.json' }
 }
-
-Write-Debug "Fetching $ModuleName from $Uri"
-$ProgressPreference = 'SilentlyContinue'
-try {
-  $response = [HttpClient]::new().GetStringAsync($Uri).GetAwaiter().GetResult()
-} catch {
-  $PSItem.ErrorDetails = "Failed to fetch $ModuleName from $Uri`: $PSItem"
-  $PSCmdlet.ThrowTerminatingError($PSItem)
-}
-Write-Debug 'Fetched response'
-$scriptBlock = [ScriptBlock]::Create($response)
-$ProgressPreference = 'Continue'
-
-$bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptblock | Import-Module -PassThru
-Write-Debug "Loaded Module $ModuleName"
 
 if ($installArgs) {
   Write-Debug "Detected we were started with args, running $Entrypoint $($installArgs -join ' ')"
@@ -95,8 +100,4 @@ if ($installArgs) {
   Remove-Module $bootstrapModule
 }
 
-#This is ModuleFast specific
-if ($UseMain) {
-  Write-Debug 'UseMain Specified, ModuleFast will use preview.pwsh.gallery'
-  & (Get-Module $ModuleName) { $SCRIPT:DefaultSource = 'https://preview.pwsh.gallery/index.json' }
-}
+
