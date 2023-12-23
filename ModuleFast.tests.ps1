@@ -605,4 +605,13 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     | Should -Be 'prerelease' -Because 'CI lock file should have 0.1 prerelease even if 0.2 is available'
     #TODO: CI Content
   }
+
+  It 'Handles an incomplete installation' {
+    $incompleteItemPath = "$installTempPath\PreReleaseTest\0.0.1\.incomplete"
+    Install-ModuleFast @imfParams -Specification 'PreReleaseTest=0.0.1'
+    New-Item -ItemType File -Path $incompleteItemPath
+    Install-ModuleFast @imfParams -Specification 'PreReleaseTest=0.0.1' -Update -WarningVariable actual 3>$null
+    $actual | Should -BeLike '*incomplete installation detected*'
+    Test-Path $incompleteItemPath | Should -BeFalse
+  }
 }

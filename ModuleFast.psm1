@@ -418,13 +418,13 @@ function Get-ModuleFastPlan {
         foreach ($candidate in $inlinedVersions.Reverse()) {
           #Skip Prereleases unless explicitly requested
           if (($candidate.IsPrerelease -or $candidate.HasMetadata) -and -not ($currentModuleSpec.PreRelease -or $Prerelease)) {
-            Write-Debug "Skipping candidate $candidate because it is a prerelease and prerelease was not specified either with the -Prerelease parameter or with a ! on the module name."
+            Write-Debug "${moduleSpec}: skipping candidate $candidate because it is a prerelease and prerelease was not specified either with the -Prerelease parameter, by specifying a prerelease version in the spec, or adding a ! on the module name spec to indicate prerelease is acceptable."
             continue
           }
 
           if ($currentModuleSpec.SatisfiedBy($candidate)) {
             #TODO: If the found version still matches an installed version, we should skip it
-            Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the inlined index."
+            Write-Debug "${ModuleSpec}: Found satisfying version $candidate in the inlined index."
             $matchingEntry = $entries | Where-Object version -EQ $candidate
             if ($matchingEntry.count -gt 1) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
             $matchingEntry
@@ -638,12 +638,15 @@ function Install-ModuleFastHelper {
 
     #Used to keep track of context with Tasks, because we dont have "await" style syntax like C#
     [Dictionary[Task, hashtable]]$taskMap = @{}
-
     [List[Task[Stream]]]$streamTasks = foreach ($module in $ModuleToInstall) {
-
       $installPath = Join-Path $Destination $module.Name (Resolve-FolderVersion $module.ModuleVersion)
-
       #TODO: Do a get-localmodule check here
+      $installIndicatorPath = Join-Path $installPath '.incomplete'
+      if (Test-Path $installIndicatorPath) {
+        Write-Warning "${module}: Incomplete installation found at $installPath. Will delete and retry."
+        Remove-Item $installPath -Recurse -Force
+      }
+
       if (Test-Path $installPath) {
         $existingManifestPath = try {
           Resolve-Path (Join-Path $installPath "$($module.Name).psd1") -ErrorAction Stop
@@ -661,7 +664,7 @@ function Install-ModuleFastHelper {
         #Do a prerelease evaluation
         if ($module.ModuleVersion -eq $existingVersion) {
           if ($Update) {
-            Write-Verbose "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module."
+            Write-Verbose "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module installation."
             continue
           } else {
             throw [NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection. Use -Update to override..."
@@ -709,7 +712,19 @@ function Install-ModuleFastHelper {
           [ValidateNotNullOrEmpty()]$context = $USING:context
         )
         $installPath = $context.InstallPath
-        #TODO: Add a ".incomplete" marker file to the folder and remove it when done. This will allow us to detect failed installations
+        $installIndicatorPath = Join-Path $installPath '.incomplete'
+
+        if (Test-Path $installIndicatorPath) {
+          #FIXME: Output inside a threadjob is not surfaced to the user.
+          Write-Warning "$($context.Module): Incomplete installation found at $installPath. Will delete and retry."
+          Remove-Item $installPath -Recurse -Force
+        }
+
+        if (-not (Test-Path $context.InstallPath)) {
+          New-Item -Path $context.InstallPath -ItemType Directory -Force | Out-Null
+        }
+
+        New-Item -ItemType File -Path $installIndicatorPath -Force | Out-Null
 
         $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
         [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
@@ -722,6 +737,7 @@ function Install-ModuleFastHelper {
         } | Remove-Item -Force -Recurse
         ($zip).Dispose()
         ($stream).Dispose()
+        Remove-Item $installIndicatorPath -Force
         return $context
       }
       $installJob
@@ -1037,7 +1053,7 @@ class ModuleFastSpec {
     $guid = $this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : ''
     $versionRange = $this._VersionRange.ToString() -eq '(, )' ? '' : " $($this._VersionRange)"
     if ($this._VersionRange.MaxVersion -eq $this._VersionRange.MinVersion) {
-      $versionRange = "=$($this._VersionRange.MinVersion)"
+      $versionRange = "($($this._VersionRange.MinVersion))"
     }
     return "$($this._Name)$guid$versionRange"
   }
@@ -1347,6 +1363,13 @@ function Find-LocalModule {
     foreach ($candidateItem in $candidatePaths) {
       [version]$version = $candidateItem.Item1
       [string]$folder = $candidateItem.Item2
+
+      #Make sure this isn't an incomplete installation
+      if (Test-Path (Join-Path $folder '.incomplete')) {
+        Write-Warning "${ModuleSpec}: Incomplete installation detected at $folder. Deleting and ignoring."
+        Remove-Item $folder -Recurse -Force
+        continue
+      }
 
       #Read the module manifest to check for prerelease versions.
       $manifestName = "$($ModuleSpec.Name).psd1"
