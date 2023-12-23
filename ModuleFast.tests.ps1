@@ -449,8 +449,9 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Only installs once when Update is specified and latest has not changed' {
     Install-ModuleFast @imfParams 'Az.Accounts' -Update
-    #This will error if the file already exists
-    Install-ModuleFast @imfParams 'Az.Accounts' -Update
+    Install-ModuleFast @imfParams 'Az.Accounts' -Update -Debug *>&1
+    | Select-String 'best remote candidate matches what is locally installed'
+    | Should -Not -BeNullOrEmpty
   }
 
   It 'Updates only dependent module that requires update' {
