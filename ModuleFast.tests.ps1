@@ -453,6 +453,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     | Select-String 'best remote candidate matches what is locally installed'
     | Should -Not -BeNullOrEmpty
   }
+  It 'Only installs once when Update is specified and latest has not changed for multiple modules' {
+    Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update
+    Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update -WhatIf
+    | Should -BeNullOrEmpty
+  }
 
   It 'Updates only dependent module that requires update' {
     Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
@@ -625,5 +630,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     }
   }
 
+  Describe 'Plan Parameter' {
+    It 'Does not install if Plan is specified' {
+      Install-ModuleFast @imfParams -Specification 'PrereleaseTest' -Plan | Should -Match 'PreReleaseTest'
+      Test-Path $installTempPath\PreReleaseTest | Should -BeFalse
+    }
+  }
 }
 

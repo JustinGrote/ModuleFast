@@ -1,4 +1,4 @@
-#requires -version 7.2 -Modules Microsoft.Powershell.SecretManagement
+#requires -version 7.3
 using namespace Microsoft.PowerShell.Commands
 using namespace System.Management.Automation
 using namespace System.Management.Automation.Language
@@ -79,6 +79,8 @@ function Install-ModuleFast {
     #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
     [string]$CILockFilePath = $(Join-Path $PWD 'requires.lock.json'),
     [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo,
+    #Output a list of specifications for the modules to install. This is the same as -WhatIf but without the additional WhatIf Output
+    [Switch]$Plan,
     #This will output the resulting modules that were installed.
     [Switch]$PassThru
   )
@@ -118,10 +120,6 @@ function Install-ModuleFast {
       Add-DestinationToPSModulePath @addtoPathParams
     }
 
-    $currentWhatIfPreference = $WhatIfPreference
-    #We do some stuff here that doesn't affect the system but triggers whatif, so we disable it
-    $WhatIfPreference = $false
-
     #We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
     #it is still a best practice.
     if (-not $SCRIPT:__ModuleFastHttpClient -or $Source -ne $SCRIPT:__ModuleFastHttpClient.BaseAddress) {
@@ -133,26 +131,27 @@ function Install-ModuleFast {
     $httpClient = $SCRIPT:__ModuleFastHttpClient
 
     $cancelSource = [CancellationTokenSource]::new()
+
+    [List[ModuleFastSpec]]$ModulesToInstall = @()
+    [List[ModuleFastInfo]]$installPlan = @()
   }
 
   process {
     #We initialize and type the container list here because there is a bug where the ParameterSet is not correct in the begin block if the pipeline is used. Null conditional keeps it from being reinitialized
-    [List[ModuleFastSpec]]$ModulesToInstall = @()
+
     switch ($PSCmdlet.ParameterSetName) {
       'Specification' {
-        [List[ModuleFastSpec]]$ModulesToInstall ??= @()
         foreach ($ModuleToInstall in $Specification) {
           $ModulesToInstall.Add($ModuleToInstall)
         }
         break
+
       }
       'ModuleFastInfo' {
-        [List[ModuleFastInfo]]$ModulesToInstall ??= @()
-        foreach ($ModuleToInstall in $ModuleFastInfo) {
-          $ModulesToInstall.Add($ModuleToInstall)
+        foreach ($info in $ModuleFastInfo) {
+          $installPlan.Add($info)
         }
         break
-
       }
       'Path' {
         $ModulesToInstall = ConvertFrom-RequiredSpec -RequiredSpecPath $Path
@@ -161,36 +160,35 @@ function Install-ModuleFast {
   }
 
   end {
-
-    if ($ModulesToInstall.Count -eq 0 -and $PSCmdlet.ParameterSetName -eq 'Specification') {
-      Write-Verbose 'No modules specified to install. Beginning SpecFile detection...'
-      $modulesToInstall = if ($CI -and (Test-Path $CILockFilePath)) {
-        Write-Debug "Found lockfile at $CILockFilePath. Using for specification evaluation and ignoring all others."
-        ConvertFrom-RequiredSpec -RequiredSpecPath $CILockFilePath
-      } else {
-        $specFiles = Find-RequiredSpecFile $PWD -CILockFileHint $CILockFilePath
-        foreach ($specfile in $specFiles) {
-          ConvertFrom-RequiredSpec -RequiredSpecPath $Path
+    if (-not $installPlan) {
+      if ($ModulesToInstall.Count -eq 0 -and $PSCmdlet.ParameterSetName -eq 'Specification') {
+        Write-Verbose 'No modules specified to install. Beginning SpecFile detection...'
+        $modulesToInstall = if ($CI -and (Test-Path $CILockFilePath)) {
+          Write-Debug "Found lockfile at $CILockFilePath. Using for specification evaluation and ignoring all others."
+          ConvertFrom-RequiredSpec -RequiredSpecPath $CILockFilePath
+        } else {
+          $specFiles = Find-RequiredSpecFile $PWD -CILockFileHint $CILockFilePath
+          foreach ($specfile in $specFiles) {
+            ConvertFrom-RequiredSpec -RequiredSpecPath $Path
+          }
         }
+      }
+
+      if (-not $ModulesToInstall) {
+        throw [InvalidDataException]'No modules specifications found to evaluate.'
+      }
+
+      #If we do not have an explicit implementation plan, fetch it
+      #This is done so that Get-ModuleFastPlan | Install-ModuleFastPlan and Install-ModuleFastPlan have the same flow.
+      [ModuleFastInfo[]]$installPlan = if ($PSCmdlet.ParameterSetName -eq 'ModuleFastInfo') {
+        $ModulesToInstall.ToArray()
+      } else {
+        Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
+        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent
       }
     }
 
-    if (-not $ModulesToInstall) {
-      throw [InvalidDataException]'No modules specifications found to evaluate.'
-    }
-
-    #If we do not have an explicit implementation plan, fetch it
-    #This is done so that Get-ModuleFastPlan | Install-ModuleFastPlan and Install-ModuleFastPlan have the same flow.
-    [ModuleFastInfo[]]$plan = if ($PSCmdlet.ParameterSetName -eq 'ModuleFastInfo') {
-      $ModulesToInstall.ToArray()
-    } else {
-      Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-      Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent
-    }
-
-    $WhatIfPreference = $currentWhatIfPreference
-
-    if ($plan.Count -eq 0) {
+    if ($installPlan.Count -eq 0) {
       $planAlreadySatisfiedMessage = "`u{2705} $($ModulesToInstall.count) Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update"
       if ($WhatIfPreference) {
         Write-Host -fore DarkGreen $planAlreadySatisfiedMessage
@@ -200,31 +198,34 @@ function Install-ModuleFast {
       return
     }
 
-    if (-not $PSCmdlet.ShouldProcess($Destination, "Install $($plan.Count) Modules")) {
-      # Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan BEGIN"
-      #TODO: Separate planned installs and dependencies
-      $plan
-      # Write-Host -fore DarkGreen "`u{1F680} ModuleFast Install Plan END"
-      return
+    #Unless Plan was specified, run the process (WhatIf will also short circuit).
+    #Plan is specified first so that WhatIf message will only show if Plan is not specified due to -or short circuit logic.
+    if ($Plan -or -not $PSCmdlet.ShouldProcess($Destination, "Install $($installPlan.Count) Modules")) {
+      if ($Plan) {
+        Write-Verbose "📑 -Plan was specified. Returning a plan including $($installPlan.Count) Module Specifications"
+      }
+      #TODO: Separate planned installs and dependencies. Can probably do this with a dependency flag on the ModuleInfo item and some custom formatting.
+      Write-Output $installPlan
+    } else {
+      Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($installPlan.count) Modules" -PercentComplete 50
+
+      $installHelperParams = @{
+        ModuleToInstall   = $installPlan
+        Destination       = $Destination
+        CancellationToken = $cancelSource.Token
+        HttpClient        = $httpClient
+        Update            = $Update
+      }
+      Install-ModuleFastHelper @installHelperParams
+      Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
+      Write-Verbose "`u{2705} All required modules installed! Exiting."
     }
 
-    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Installing: $($plan.count) Modules" -PercentComplete 50
-
-    $installHelperParams = @{
-      ModuleToInstall   = $plan
-      Destination       = $Destination
-      CancellationToken = $cancelSource.Token
-      HttpClient        = $httpClient
-      Update            = $Update
-    }
-    Install-ModuleFastHelper @installHelperParams
-    Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
-    Write-Verbose "`u{2705} All required modules installed! Exiting."
     if ($CI) {
       #FIXME: If a package was already installed, it doesn't show up in this lockfile.
       Write-Verbose "Writing lockfile to $CILockFilePath"
       [Dictionary[string, string]]$lockFile = @{}
-      $plan
+      $installPlan
       | ForEach-Object {
         $lockFile.Add($PSItem.Name, $PSItem.ModuleVersion)
       }
@@ -332,12 +333,10 @@ function Get-ModuleFastPlan {
     #We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
     [List[Task[String]]]$currentTasks = @()
 
+    #This is used to track the highest candidate if -Update was specified to force a remote lookup. If the candidate is still the most valid after remote lookup we can skip it without hitting disk to read the manifest again.
+    [Dictionary[ModuleFastSpec, ModuleFastInfo]]$bestLocalCandidate = @{}
 
-    #This try finally is so that we can interrupt all http call tasks if Ctrl-C is pressed
     foreach ($moduleSpec in $ModulesToResolve) {
-      #This is used to track the highest candidate if -Update was specified to force a remote lookup. If the candidate is still the most valid after remote lookup we can skip it without hitting disk to read the manifest again.
-      [ModuleFastInfo]$bestLocalCandidate = $null
-
       Write-Verbose "${moduleSpec}: Evaluating Module Specification"
       [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update -BestCandidate:([ref]$bestLocalCandidate)
       if ($localMatch) {
@@ -516,7 +515,7 @@ function Get-ModuleFastPlan {
 
       #If -Update was specified, we need to re-check that none of the selected modules are already installed.
       #TODO: Persist state of the local modules found to this point so we don't have to recheck.
-      if ($Update -and $bestLocalCandidate -and $bestLocalCandidate.ModuleVersion -eq $selectedModule.ModuleVersion) {
+      if ($Update -and $bestLocalCandidate[$currentModuleSpec].ModuleVersion -eq $selectedModule.ModuleVersion) {
         Write-Debug "${selectedModule}: ✅ -Update was specified and the best remote candidate matches what is locally installed, so we can skip this module."
         #TODO: Fix the flow so this isn't stated twice
         [void]$taskSpecMap.Remove($completedTask)
@@ -568,7 +567,7 @@ function Get-ModuleFastPlan {
             return $true
           }
 
-          $modulesToInstall
+        $modulesToInstall
         | Where-Object Name -EQ $dependency.Name
         | Sort-Object ModuleVersion -Descending
         | ForEach-Object {
@@ -1075,7 +1074,7 @@ class ModuleFastSpec {
   [string] ToString() {
     $guid = $this._Guid -ne [Guid]::Empty ? " [$($this._Guid)]" : ''
     $versionRange = $this._VersionRange.ToString() -eq '(, )' ? '' : " $($this._VersionRange)"
-    if ($this._VersionRange.MaxVersion -eq $this._VersionRange.MinVersion) {
+    if ($this._VersionRange.MaxVersion -and $this._VersionRange.MaxVersion -eq $this._VersionRange.MinVersion) {
       $versionRange = "($($this._VersionRange.MinVersion))"
     }
     return "$($this._Name)$guid$versionRange"
@@ -1414,9 +1413,9 @@ function Find-LocalModule {
         if ($Update -and ($ModuleSpec.Max -ne $candidateVersion)) {
           Write-Debug "${ModuleSpec}: Skipping $candidateVersion because -Update was specified and the version does not exactly meet the upper bound of the spec or no upper bound was specified at all, meaning there is a possible newer version remotely."
           #We can use this ref later to find out if our best remote version matches what is installed without having to read the manifest again
-          if ($BestCandidate -and $manifestCandidate.ModuleVersion -gt $bestCandidate.Value.ModuleVersion) {
+          if ($BestCandidate -and $manifestCandidate.ModuleVersion -gt $bestCandidate.Value[$moduleSpec]) {
             Write-Debug "${ModuleSpec}: New Best Candidate Version $($manifestCandidate.ModuleVersion)"
-            $BestCandidate.Value = $manifestCandidate
+            $BestCandidate.Value.Add($moduleSpec, $manifestCandidate)
           }
           continue
         }
