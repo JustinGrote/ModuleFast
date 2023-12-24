@@ -214,7 +214,7 @@ function Install-ModuleFast {
         Destination       = $Destination
         CancellationToken = $cancelSource.Token
         HttpClient        = $httpClient
-        Update            = $Update
+        Update            = $Update -or $PSCmdlet.ParameterSetName -eq 'ModuleFastInfo'
       }
       Install-ModuleFastHelper @installHelperParams
       Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
@@ -681,7 +681,7 @@ function Install-ModuleFastHelper {
         #Do a prerelease evaluation
         if ($module.ModuleVersion -eq $existingVersion) {
           if ($Update) {
-            Write-Verbose "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module installation."
+            Write-Debug "${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. -Update was specified so we are assuming that the discovered online version is the same as the local version and skipping this module installation."
             continue
           } else {
             throw [NotImplementedException]"${module}: Existing module found at $installPath and its version $existingVersion is the same as the requested version. This is probably a bug because it should have been detected by localmodule detection. Use -Update to override..."
