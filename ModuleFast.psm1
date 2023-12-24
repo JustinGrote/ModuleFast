@@ -78,7 +78,7 @@ function Install-ModuleFast {
     [Switch]$CI,
     #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
     [string]$CILockFilePath = $(Join-Path $PWD 'requires.lock.json'),
-    [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo]$ModuleFastInfo,
+    [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo[]]$ModuleFastInfo,
     #Output a list of specifications for the modules to install. This is the same as -WhatIf but without the additional WhatIf Output
     [Switch]$Plan,
     #This will output the resulting modules that were installed.
