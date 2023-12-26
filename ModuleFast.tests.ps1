@@ -248,8 +248,15 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
             $actual.ModuleVersion | Should -Be '0.0.1-prerelease'
           }
           ModuleName = 'PrereleaseTest'
+        },
+        @{
+          Spec       = 'PrereleaseTest:*'
+          ModuleName = 'PrereleaseTest'
+        },
+        @{
+          Spec       = 'PrereleaseTest:0.0.*'
+          ModuleName = 'PrereleaseTest'
         }
-
       )
 
       It 'Fails if hashtable-style string parameter is not a modulespec' {
