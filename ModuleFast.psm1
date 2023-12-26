@@ -32,20 +32,121 @@ function Install-ModuleFast {
   .SYNOPSIS
   High performance, declarative Powershell Module Installer
   .DESCRIPTION
-  ModuleFast is a high performance, declarative PowerShell module installer. It is designed with no external dependencies and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by pnpm and other high performance declarative package managers.
+  ModuleFast is a high performance, declarative PowerShell module installer. It is optimized for speed and written primarily in PowerShell and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by pnpm and other high performance declarative package managers.
 
   ModuleFast accepts a variety of familiar PowerShell syntaxes and objects for module specification as well as a custom shorthand syntax allowing complex version requirements to be defined in a single string.
 
   ModuleFast can also install the required modules specified in the #Requires line of a script, or in the RequiredModules section of a module manifest, by simplying providing the path to that file in the -Path parameter (which also accepts remote UNC, http, and https URLs).
 
+  ---------------------------
+  Module Specification Syntax
+  ---------------------------
+  ModuleFast supports a shorthand string syntax for defining module specifications. It generally takes the form of '<Module><Operator><Version>'. The version supports SemVer 2 and prerelease tags.
+
+  The available operators are:
+  - '=': Exact version match. Examples: 'ImportExcel=7.1.0', 'ImportExcel=7.1.0-preview'
+  - '>': Greater than. Example: 'ImportExcel>7.1.0'
+  - '>=': Greater than or equal to. Example: 'ImportExcel>=7.1.0'
+  - '<': Less than. Example: 'ImportExcel<7.1.0'
+  - '<=': Less than or equal to. Example: 'ImportExcel<=7.1.0'
+  - ':': Lets you specify a NuGet version range. Example: 'ImportExcel:(7.0.0, 7.2.1-preview]' For more info: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. 'ImportExcel:3.2.*' will install the latest 3.2.x version.
+
+  ModuleFast also fully supports the ModuleSpecification object and hashtable-like string syntaxes that are used by Install-Module and Install-PSResource. More information on this format: https://learn.microsoft.com/en-us/dotnet/api/microsoft.powershell.commands.modulespecification?view=powershellsdk-7.4.0
+
+  -------
+  Logging
+  -------
+  Modulefast has extensive Verbose and Debug information available if you specify the -Verbose and/or -Debug parameters. This can be useful for troubleshooting or understanding how ModuleFast is working. Verbose level provides a high level "what" view of the process of module selection, while Debug level provides a much more detailed "Why" information about the module selection and installation process that can be useful in troubleshooting issues.
+
+  -----------------
+  Installation Path
+  -----------------
+  ModuleFast will install modules to the default PowerShell module path on non-Windows platforms. On Windows, it will install to %LOCALAPPDATA%\PowerShell\Modules by default as the default Documents PowerShell Modules folder has increasing caused problems due to conflicts with document syncing programs such as OneDrive. You can override this behavior by specifying the -Destination parameter. You can also specify 'CurrentUser' to install to the legacy Documents PowerShell Modules folder on Windows only.
+
+  As part of this installation process on Windows, ModuleFast will add the destination to your PSModulePath for the current session. This is done to ensure that the modules are available for use in the current session. If you do not want this behavior, you can specify the -NoPSModulePathUpdate switch.
+
+  In addition, if you do not already have the %LOCALAPPDATA%\PowerShell\Modules in your $env:PSModulesPath, Modulefast will append a command to add it to your user profile. This is done to ensure that the modules are available for use in future sessions. If you do not want this behavior, you can specify the -NoProfileUpdate switch.
+
+  .PARAMETER WhatIf
+  If specified, will output the installation plan to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date.
+
   .EXAMPLE
-  Install-ModuleFast 'Az'
+  Install-ModuleFast 'ImportExcel' -PassThru
+
+  Installs the latest version of ImportExcel and outputs info about the installed modules. Remove -PassThru for a quieter installation, or add -Verbose or -Debug for even more information.
+
+  --- RESULT ---
+  Name                      ModuleVersion
+  ----                      -------------
+  ImportExcel               7.8.6
+
   .EXAMPLE
-  $plan = Get-ModuleFastPlan 'Az','VMWare.PowerCLI'
+  Install-ModuleFast 'ImportExcel','VMware.PowerCLI.Sdk=12.6.0.19600125','PowerConfig<0.1.6','Az.Compute:7.1.*' -WhatIf
+
+  Prepares an install plan for the latest version of ImportExcel, a specific version of VMware.PowerCLI.Sdk, a version of PowerConfig less than 0.1.6, and the latest version of Az.Compute that is in the 7.1.x range.
+
+  --- RESULT ---
+  Name                      ModuleVersion
+  ----                      -------------
+  VMware.PowerCLI.Sdk       12.6.0.19600125
+  ImportExcel               7.8.6
+  PowerConfig               0.1.5
+  Az.Compute                7.1.0
+  VMware.PowerCLI.Sdk.Types 12.6.0.19600125
+  Az.Accounts               2.13.2
+
+  .EXAMPLE
+  $plan = Install-ModuleFast 'ImportExcel' -WhatIf
   $plan | Install-ModuleFast
+
+  Stores an Install Plan for ImportExcel in the $plan variable, then installs it. The later install can be done later, and the $plan objects are serializable to CLIXML/JSON/etc. for storage.
+
+  --- RESULT ---
+  What if: Performing the operation "Install 1 Modules" on target "C:\Users\JGrote\AppData\Local\powershell\Modules".  Name        ModuleVersion
+  ----        -------------
+  ImportExcel 7.8.6
+
   .EXAMPLE
-  $plan = Install-ModuleFast 'Az','VMWare.PowerCLI' -WhatIf
-  $plan | Install-ModuleFast
+  @{ModuleName='ImportExcel';ModuleVersion='7.8.6'} | Install-ModuleFast
+
+  Installs a specific version of ImportExcel using
+
+  .EXAMPLE
+  Install-ModuleFast 'ImportExcel' -Destination 'CurrentUser' -NoProfileUpdate -NoPSModulePathUpdate
+
+  Installs ImportExcel to the legacy PowerShell Modules folder in My Documents on Windows only, but does not update the PSModulePath or the user profile to include the new module path. This behavior is similar to Install-Module or Install-PSResource.
+
+  .EXAMPLE
+  Install-ModuleFast -Path 'path\to\RequiresScript.ps1' -WhatIf
+
+  Prepares a plan to install the dependencies defined in the #Requires statement of a script if a .ps1 is specified, the #Requires statement of a module if .psm1 is specified, or the RequiredModules section of a .psd1 file if it is a PowerShell Module Manifest. This is useful for quickly installing dependencies for scripts or modules.
+
+  RequiresScript.ps1 Contents:
+  #Requires -Module PreReleaseTest
+
+  --- RESULT ---
+
+  What if: Performing the operation "Install 1 Modules" on target "C:\Users\JGrote\AppData\Local\powershell\Modules".
+
+  Name           ModuleVersion
+  ----           -------------
+  PrereleaseTest 0.0.1
+
+  .EXAMPLE
+  Install-ModuleFast -WhatIf
+
+  If no Specification or Path parameter is provided, ModuleFast will search for a .requires.json or a .requires.psd1 file in the current directory and install the modules specified in that file. This is useful for quickly installing dependencies for scripts or modules during a CI build or Github Action.
+
+  Note that for this format you can explicitly specify 'latest' or ':*' as the version to install the latest version of a module.
+
+  Module.requires.psd1 Contents:
+  @{
+    ImportExcel = 'latest'
+  }
+
+  --- Result ---
+
+
   #>
 
   [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Specification')]
