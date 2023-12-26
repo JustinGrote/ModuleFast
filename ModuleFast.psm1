@@ -96,6 +96,22 @@ function Install-ModuleFast {
   Az.Accounts               2.13.2
 
   .EXAMPLE
+  'ImportExcel','VMware.PowerCLI.Sdk=12.6.0.19600125','PowerConfig<0.1.6','Az.Compute:7.1.*' | Install-ModuleFast -WhatIf
+
+  Same as the previous example, but using the pipeline to provide the module specifications.
+
+  --- RESULT ---
+  Name                      ModuleVersion
+  ----                      -------------
+  VMware.PowerCLI.Sdk       12.6.0.19600125
+  ImportExcel               7.8.6
+  PowerConfig               0.1.5
+  Az.Compute                7.1.0
+  VMware.PowerCLI.Sdk.Types 12.6.0.19600125
+  Az.Accounts               2.13.2
+
+
+  .EXAMPLE
   $plan = Install-ModuleFast 'ImportExcel' -WhatIf
   $plan | Install-ModuleFast
 
