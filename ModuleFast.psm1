@@ -91,7 +91,7 @@ function Install-ModuleFast {
     if (-not $Destination) {
       $Destination = $defaultRepoPath
     } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {
-      $windowsDefaultDocumentsPath = Join-Path [environment]::GetFolderPath('MyDocuments') 'PowerShell/Modules'
+      $windowsDefaultDocumentsPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell/Modules'
       $Destination = $windowsDefaultDocumentsPath
     }
 
@@ -132,7 +132,7 @@ function Install-ModuleFast {
 
     $cancelSource = [CancellationTokenSource]::new()
 
-    [List[ModuleFastSpec]]$ModulesToInstall = @()
+    [HashSet[ModuleFastSpec]]$ModulesToInstall = @()
     [List[ModuleFastInfo]]$installPlan = @()
   }
 
@@ -142,7 +142,10 @@ function Install-ModuleFast {
     switch ($PSCmdlet.ParameterSetName) {
       'Specification' {
         foreach ($ModuleToInstall in $Specification) {
-          $ModulesToInstall.Add($ModuleToInstall)
+          $duplicate = $ModulesToInstall.Add($ModuleToInstall)
+          if ($duplicate) {
+            Write-Warning "$ModuleToInstall was specified twice, skipping duplicate"
+          }
         }
         break
 
@@ -162,14 +165,19 @@ function Install-ModuleFast {
   end {
     if (-not $installPlan) {
       if ($ModulesToInstall.Count -eq 0 -and $PSCmdlet.ParameterSetName -eq 'Specification') {
-        Write-Verbose 'No modules specified to install. Beginning SpecFile detection...'
+        Write-Verbose '🔎 No modules specified to install. Beginning SpecFile detection...'
         $modulesToInstall = if ($CI -and (Test-Path $CILockFilePath)) {
           Write-Debug "Found lockfile at $CILockFilePath. Using for specification evaluation and ignoring all others."
           ConvertFrom-RequiredSpec -RequiredSpecPath $CILockFilePath
         } else {
-          $specFiles = Find-RequiredSpecFile $PWD -CILockFileHint $CILockFilePath
+          $Destination = $PWD
+          $specFiles = Find-RequiredSpecFile $Destination -CILockFileHint $CILockFilePath
+          if (-not $specFiles) {
+            Write-Warning "No specfiles found in $Destination. Please ensure you have a .requires.json or .requires.psd1 file in the current directory, specify a path with -Path, or define specifications with the -Specification parameter to skip this search."
+          }
           foreach ($specfile in $specFiles) {
-            ConvertFrom-RequiredSpec -RequiredSpecPath $Path
+            Write-Verbose "Found Specfile $specFile. Evaluating..."
+            ConvertFrom-RequiredSpec -RequiredSpecPath $specFile
           }
         }
       }
@@ -285,6 +293,10 @@ function New-ModuleFastClient {
 }
 
 function Get-ModuleFastPlan {
+  <#
+  .NOTES
+  THIS COMMAND IS DEPRECATED AND WILL NOT RECEIVE PARAMETER UPDATES. Please use Install-ModuleFast -Plan instead.
+  #>
   [CmdletBinding()]
   [OutputType([ModuleFastInfo])]
   param(
@@ -343,7 +355,7 @@ function Get-ModuleFastPlan {
       Write-Verbose "${moduleSpec}: Evaluating Module Specification"
       [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update -BestCandidate:([ref]$bestLocalCandidate)
       if ($localMatch) {
-        Write-Debug "${localMatch}: 🎯 FOUND satisfing version $($localMatch.ModuleVersion) at $($localMatch.Location). Skipping remote search."
+        Write-Debug "${localMatch}: 🎯 FOUND satisfying version $($localMatch.ModuleVersion) at $($localMatch.Location). Skipping remote search."
         #TODO: Capture this somewhere that we can use it to report in the deploy plan
         continue
       }
@@ -1520,7 +1532,7 @@ filter ConvertFrom-RequiredSpec {
 }
 
 function Find-RequiredSpecFile ([string]$Path) {
-  Write-Debug "Attempting to find a Required Spec file at $Path"
+  Write-Debug "Attempting to find Required Specfile(s) at $Path"
 
   $resolvedPath = Resolve-Path $Path
 
@@ -1533,6 +1545,7 @@ function Find-RequiredSpecFile ([string]$Path) {
   if (-not $requireFiles) {
     throw [NotSupportedException]"Could not find any required spec files in $Path. Verify the path is correct or specify Module Specifications either via -Path or -Specification"
   }
+  return $requireFiles
 }
 
 function Read-RequiredSpecFile ($RequiredSpecPath) {
