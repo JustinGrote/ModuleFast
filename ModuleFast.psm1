@@ -102,7 +102,10 @@ function Install-ModuleFast {
   Stores an Install Plan for ImportExcel in the $plan variable, then installs it. The later install can be done later, and the $plan objects are serializable to CLIXML/JSON/etc. for storage.
 
   --- RESULT ---
+
   What if: Performing the operation "Install 1 Modules" on target "C:\Users\JGrote\AppData\Local\powershell\Modules".  Name        ModuleVersion
+
+  Name        ModuleVersion
   ----        -------------
   ImportExcel 7.8.6
 
@@ -142,10 +145,24 @@ function Install-ModuleFast {
   Module.requires.psd1 Contents:
   @{
     ImportExcel = 'latest'
+    'VMware.PowerCLI.Sdk' = '>=12.6.0.19600125'
   }
 
-  --- Result ---
+  --- RESULT ---
 
+  Name                      ModuleVersion
+  ----                      -------------
+  ImportExcel               7.8.6
+  VMware.PowerCLI.Sdk       12.6.0.19600125
+  VMware.PowerCLI.Sdk.Types 12.6.0.19600125
+
+  .EXAMPLE
+  Install-ModuleFast 'ImportExcel' -CI
+  Install-ModuleFast -CI
+
+  If the -CI switch is specified, ModuleFast will write a lockfile to the current directory indicating all modules that were installed. This lockfile will contain the exact versions of the modules that were installed. If the lockfile is present in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of modules are releases that match the initial specification.
+
+  For instance, the above will install the latest version of ImportExcel (7.8.6 as of this writing) but will not install newer while modulefast is in this directory until the lockfile is removed or replaced.
 
   #>
 
