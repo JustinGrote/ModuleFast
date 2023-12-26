@@ -216,9 +216,12 @@ function Install-ModuleFast {
         HttpClient        = $httpClient
         Update            = $Update -or $PSCmdlet.ParameterSetName -eq 'ModuleFastInfo'
       }
-      Install-ModuleFastHelper @installHelperParams
+      $installedModules = Install-ModuleFastHelper @installHelperParams
       Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
       Write-Verbose "`u{2705} All required modules installed! Exiting."
+      if ($PassThru) {
+        Write-Output $installedModules
+      }
     }
 
     if ($CI) {
@@ -761,7 +764,7 @@ function Install-ModuleFastHelper {
     }
 
     $installed = 0
-    while ($installJobs.count -gt 0) {
+    $installedModules = while ($installJobs.count -gt 0) {
       $ErrorActionPreference = 'Stop'
       $completedJob = $installJobs | Wait-Job -Any
       $completedJobContext = $completedJob | Receive-Job -Wait -AutoRemoveJob
@@ -769,6 +772,13 @@ function Install-ModuleFastHelper {
       $installed++
       Write-Verbose "$($completedJobContext.Module)`: Installed to $($completedJobContext.InstallPath)"
       Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
+      $context.Module.Location = $completedJobContext.InstallPath
+      #Output the module for potential future passthru
+      $context.Module
+    }
+
+    if ($PassThru) {
+      return $installedModules
     }
   }
 }
