@@ -621,6 +621,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Test-Path $incompleteItemPath | Should -BeFalse
   }
 
+  It 'PassThru only reports on installed modules' {
+    Install-ModuleFast @imfParams -Specification 'Pester=5.4.0', 'Pester=5.4.1' -PassThru | Should -HaveCount 2
+    Install-ModuleFast @imfParams -Specification 'Pester=5.4.0', 'Pester=5.4.1' -PassThru | Should -HaveCount 0
+  }
+
   Describe 'GitHub Packages' {
     It 'Gets Specific Module' {
       $credential = [PSCredential]::new('Pester', (Get-Secret -Name 'ReadOnlyPackagesGithubPAT'))
