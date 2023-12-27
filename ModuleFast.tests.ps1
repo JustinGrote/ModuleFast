@@ -72,6 +72,16 @@ InModuleScope 'ModuleFast' {
       }
     }
   }
+
+  Describe 'Import-ModuleManifest' {
+    It 'Reads Dynamic Manifest' {
+      $Mocks = "$PSScriptRoot/Test/Mocks"
+      $manifest = Import-ModuleManifest "$Mocks/Dynamic.psd1"
+      $manifest | Should -BeOfType [System.Collections.Hashtable]
+      $manifest.ModuleVersion | Should -Be '1.0.0'
+      $manifest.RootModule | Should -Be 'coreclr\PrtgAPI.PowerShell.dll'
+    }
+  }
 }
 
 Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
@@ -551,6 +561,10 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     @{
       Name = 'ScriptModule'
       File = 'RequiresModule.psm1'
+    },
+    @{
+      Name = 'DynamicManifest'
+      File = 'Dynamic.psd1'
     }
   )
 
