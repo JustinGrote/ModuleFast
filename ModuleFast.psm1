@@ -825,7 +825,7 @@ function Install-ModuleFastHelper {
         }
 
         #TODO: Dedupe all import-powershelldatafile operations to a function ideally
-        $existingModuleMetadata = Import-PowerShellDataFile $existingManifestPath
+        $existingModuleMetadata = Import-ModuleManifest $existingManifestPath
         $existingVersion = [NugetVersion]::new(
           $existingModuleMetadata.ModuleVersion,
           $existingModuleMetadata.privatedata.psdata.prerelease
@@ -930,6 +930,34 @@ function Install-ModuleFastHelper {
     if ($PassThru) {
       return $installedModules
     }
+  }
+}
+
+function Import-ModuleManifest {
+  <#
+  .SYNOPSIS
+  Imports a module manifest from a path, and can handle some limited dynamic module manifest formats.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory, ValueFromPipeline)][string]$Path
+  )
+
+  try {
+    Import-PowerShellDataFile $Path -ErrorAction Stop
+  } catch [InvalidOperationException] {
+    if ($PSItem.Exception.Message -notlike '*Cannot generate a PowerShell object for a ScriptBlock evaluating dynamic expressions*') {throw}
+
+    Write-Debug "$Path is a Manifest with dynamic expressions. Attempting to safe evaluate..."
+    #Inspiration from: https://github.com/PowerShell/PSResourceGet/blob/0a1836a4088ab0f4f13a4638fa8cd0f571c24140/src/code/Utils.cs#L1219
+    $manifest = [ScriptBlock]::Create((Get-Content $Path -Raw))
+
+    $manifest.CheckRestrictedLanguage(
+      [list[string]]::new(),
+      [list[string]]@('PSEdition','PSScriptRoot'),
+      $true
+    )
+    return $manifest.InvokeReturnAsIs();
   }
 }
 
@@ -1547,7 +1575,7 @@ function Find-LocalModule {
       [string]$classicManifestPath = $classicManifestPaths[0]
       if ($classicManifestPath) {
         #NOTE: This does result in Import-PowerShellData getting called twice which isn't ideal for performance, but classic modules should be fairly rare and not worth optimizing.
-        [version]$classicVersion = (Import-PowerShellDataFile $classicManifestPath).ModuleVersion
+        [version]$classicVersion = (Import-ModuleManifest $classicManifestPath).ModuleVersion
         Write-Debug "${ModuleSpec}: Found classic module $classicVersion at $moduleBaseDir"
         $candidatePaths.Add([Tuple]::Create($classicVersion, $moduleBaseDir))
       }
@@ -1708,7 +1736,7 @@ function Read-RequiredSpecFile ($RequiredSpecPath) {
       #HACK: Cannot read PowerShell Data Files from a string, the interface is private, so we write to a temp file as a workaround.
       $tempFile = [io.path]::GetTempFileName()
       $content > $tempFile
-      return Import-PowerShellDataFile -Path $tempFile
+      return Import-ModuleManifest -Path $tempFile
     } else {
       $json = ConvertFrom-Json $content -Depth 5
       return $json
@@ -1720,7 +1748,7 @@ function Read-RequiredSpecFile ($RequiredSpecPath) {
   $extension = [Path]::GetExtension($resolvedPath)
 
   if ($extension -eq '.psd1') {
-    $manifestData = Import-PowerShellDataFile -Path $resolvedPath
+    $manifestData = Import-ModuleManifest -Path $resolvedPath
     if ($manifestData.ModuleVersion) {
       [ModuleSpecification[]]$requiredModules = $manifestData.RequiredModules
       Write-Debug 'Detected a Module Manifest, evaluating RequiredModules'
@@ -1773,7 +1801,7 @@ filter ConvertFrom-ModuleManifest {
   $ErrorActionPreference = 'Stop'
 
   $ManifestName = Split-Path -Path $ManifestPath -LeafBase
-  $manifestData = Import-PowerShellDataFile -Path $ManifestPath -ErrorAction stop
+  $manifestData = Import-ModuleManifest -Path $ManifestPath
 
   [Version]$manifestVersionData = $null
   if (-not [Version]::TryParse($manifestData.ModuleVersion, [ref]$manifestVersionData)) {
