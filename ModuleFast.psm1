@@ -16,6 +16,7 @@ using namespace System.Reflection
 using namespace System.Text
 using namespace System.Threading
 using namespace System.Threading.Tasks
+using namespace System.Runtime.Caching
 
 #Because we are changing state, we want to be safe
 #TODO: Implement logic to only fail on module installs, such that one module failure doesn't prevent others from installing.
@@ -276,8 +277,8 @@ function Install-ModuleFast {
     switch ($PSCmdlet.ParameterSetName) {
       'Specification' {
         foreach ($ModuleToInstall in $Specification) {
-          $duplicate = $ModulesToInstall.Add($ModuleToInstall)
-          if ($duplicate) {
+          $isDuplicate = -not $ModulesToInstall.Add($ModuleToInstall)
+          if ($isDuplicate) {
             Write-Warning "$ModuleToInstall was specified twice, skipping duplicate"
           }
         }
@@ -1315,6 +1316,8 @@ enum HashtableType {
 
 #region Helpers
 
+#This is used as a simple caching mechanism to avoid multiple simultaneous fetches for the same info. For example, Az.Accounts. It will persist for the life of the PowerShell session
+[MemoryCache]$SCRIPT:RequestCache = [MemoryCache]::new('PowerShell-ModuleFast-RequestCache')
 function Get-ModuleInfoAsync {
   [CmdletBinding()]
   [OutputType([Task[String]])]
@@ -1337,14 +1340,19 @@ function Get-ModuleInfoAsync {
     $ModuleId = $Name
 
     #This call should be cached by httpclient after first attempt to speed up future calls
-    #TODO: Only select supported versions
-    #TODO: Cache this index more centrally to be used for other services
     Write-Debug ('{0}fetch registration index from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $Endpoint)
-    if (-not $SCRIPT:__registrationIndex) {
-      $SCRIPT:__registrationIndex = $HttpClient.GetStringAsync($Endpoint, $CancellationToken).GetAwaiter().GetResult()
+    $endpointTask = $SCRIPT:RequestCache[$Endpoint]
+
+    if ($endpointTask) {
+      Write-Debug "REQUEST CACHE HIT for Registration Index $Endpoint"
+    } else {
+      $endpointTask = $HttpClient.GetStringAsync($Endpoint, $CancellationToken)
+      $SCRIPT:RequestCache[$Endpoint] = $endpointTask
     }
 
-    $registrationBase = $SCRIPT:__registrationIndex
+    $registrationIndex = $endpointTask.GetAwaiter().GetResult()
+
+    $registrationBase = $registrationIndex
     | ConvertFrom-Json
     | Select-Object -ExpandProperty resources
     | Where-Object {
@@ -1353,13 +1361,19 @@ function Get-ModuleInfoAsync {
     | Sort-Object -Property '@type' -Descending
     | Select-Object -ExpandProperty '@id' -First 1
 
-    $uri = "$registrationBase/$($ModuleId.ToLower())/$Path"
+    $Uri = "$registrationBase/$($ModuleId.ToLower())/$Path"
   }
 
-  #TODO: System.Text.JSON serialize this with fancy generic methods in 7.3?
-  Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
+  $requestTask = $SCRIPT:RequestCache[$Uri]
 
-  return $HttpClient.GetStringAsync($uri, $CancellationToken)
+  if ($requestTask) {
+    Write-Debug "REQUEST CACHE HIT for $Uri"
+  } else {
+    Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
+    $requestTask = $HttpClient.GetStringAsync($uri, $CancellationToken)
+    $SCRIPT:RequestCache[$Uri] = $requestTask
+  }
+  return $requestTask
 }
 
 function Add-DestinationToPSModulePath {
