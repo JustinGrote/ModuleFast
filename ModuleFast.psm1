@@ -477,11 +477,11 @@ function Get-ModuleFastPlan {
     [HashSet[ModuleFastInfo]]$modulesToInstall = @{}
 
     # We use this as a fast lookup table for the context of the request
-    [Dictionary[Task[String], ModuleFastSpec]]$taskSpecMap = @{}
+    [Dictionary[Task, ModuleFastSpec]]$taskSpecMap = @{}
 
     #We use this to track the tasks that are currently running
     #We dont need this to be ConcurrentList because we only manipulate it in the "main" runspace.
-    [List[Task[String]]]$currentTasks = @()
+    [List[Task]]$currentTasks = @()
 
     #This is used to track the highest candidate if -Update was specified to force a remote lookup. If the candidate is still the most valid after remote lookup we can skip it without hitting disk to read the manifest again.
     [Dictionary[ModuleFastSpec, ModuleFastInfo]]$bestLocalCandidate = @{}
@@ -519,8 +519,11 @@ function Get-ModuleFastPlan {
       #For now the content is small but this could be faster if we have another inner loop that WaitAny's on content
       #TODO: Perform a HEAD query to see if something has changed
 
-      [Task[string]]$completedTask = $currentTasks[$thisTaskIndex]
+      $completedTask = $currentTasks[$thisTaskIndex]
       [ModuleFastSpec]$currentModuleSpec = $taskSpecMap[$completedTask]
+      if (-not $currentModuleSpec) {
+        throw 'Failed to find Module Specification for completed task. This is a bug.'
+      }
 
       Write-Debug "$currentModuleSpec`: Processing Response"
       # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
@@ -1340,12 +1343,12 @@ function Get-ModuleInfoAsync {
     $ModuleId = $Name
 
     #This call should be cached by httpclient after first attempt to speed up future calls
-    Write-Debug ('{0}fetch registration index from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $Endpoint)
     $endpointTask = $SCRIPT:RequestCache[$Endpoint]
 
     if ($endpointTask) {
       Write-Debug "REQUEST CACHE HIT for Registration Index $Endpoint"
     } else {
+      Write-Debug ('{0}fetch registration index from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $Endpoint)
       $endpointTask = $HttpClient.GetStringAsync($Endpoint, $CancellationToken)
       $SCRIPT:RequestCache[$Endpoint] = $endpointTask
     }
@@ -1368,6 +1371,8 @@ function Get-ModuleInfoAsync {
 
   if ($requestTask) {
     Write-Debug "REQUEST CACHE HIT for $Uri"
+    #HACK: We need the task to be a unique reference for the context mapping that occurs later on, so this is an easy if obscure way to "clone" the task using PowerShell.
+    $requestTask = [Task]::WhenAll($requestTask)
   } else {
     Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
     $requestTask = $HttpClient.GetStringAsync($uri, $CancellationToken)
