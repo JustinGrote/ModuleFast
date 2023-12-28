@@ -1,7 +1,5 @@
 #requires -version 7.3
 using namespace Microsoft.PowerShell.Commands
-using namespace System.Management.Automation
-using namespace System.Management.Automation.Language
 using namespace NuGet.Versioning
 using namespace System.Collections
 using namespace System.Collections.Concurrent
@@ -10,13 +8,15 @@ using namespace System.Collections.Specialized
 using namespace System.IO
 using namespace System.IO.Compression
 using namespace System.IO.Pipelines
+using namespace System.Management.Automation
+using namespace System.Management.Automation.Language
 using namespace System.Net
 using namespace System.Net.Http
 using namespace System.Reflection
+using namespace System.Runtime.Caching
 using namespace System.Text
 using namespace System.Threading
 using namespace System.Threading.Tasks
-using namespace System.Runtime.Caching
 
 #Because we are changing state, we want to be safe
 #TODO: Implement logic to only fail on module installs, such that one module failure doesn't prevent others from installing.
@@ -67,6 +67,11 @@ function Install-ModuleFast {
   As part of this installation process on Windows, ModuleFast will add the destination to your PSModulePath for the current session. This is done to ensure that the modules are available for use in the current session. If you do not want this behavior, you can specify the -NoPSModulePathUpdate switch.
 
   In addition, if you do not already have the %LOCALAPPDATA%\PowerShell\Modules in your $env:PSModulesPath, Modulefast will append a command to add it to your user profile. This is done to ensure that the modules are available for use in future sessions. If you do not want this behavior, you can specify the -NoProfileUpdate switch.
+
+  -------
+  Caching
+  -------
+  ModuleFast will cache the results of the module selection process in memory for the duration of the PowerShell session. This is done to improve performance when multiple modules are being installed. If you want to clear the cache, you can call Clear-ModuleFastCache.
 
   .PARAMETER WhatIf
   If specified, will output the installation plan to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date.
@@ -220,6 +225,8 @@ function Install-ModuleFast {
     [Switch]$PassThru
   )
   begin {
+    trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
+
     # Setup the Destination repository
     $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
 
@@ -298,6 +305,8 @@ function Install-ModuleFast {
   }
 
   end {
+    trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
+
     if (-not $installPlan) {
       if ($ModulesToInstall.Count -eq 0 -and $PSCmdlet.ParameterSetName -eq 'Specification') {
         Write-Verbose '🔎 No modules specified to install. Beginning SpecFile detection...'
@@ -451,6 +460,8 @@ function Get-ModuleFastPlan {
   )
 
   BEGIN {
+    trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
+
     $ErrorActionPreference = 'Stop'
     [HashSet[ModuleFastSpec]]$modulesToResolve = @()
 
@@ -466,6 +477,8 @@ function Get-ModuleFastPlan {
     }
   }
   PROCESS {
+    trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
+
     foreach ($spec in $Specification) {
       if (-not $ModulesToResolve.Add($spec)) {
         Write-Warning "$spec was specified twice, skipping duplicate"
@@ -473,6 +486,8 @@ function Get-ModuleFastPlan {
     }
   }
   END {
+    trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
+
     # A deduplicated list of modules to install
     [HashSet[ModuleFastInfo]]$modulesToInstall = @{}
 
@@ -525,28 +540,28 @@ function Get-ModuleFastPlan {
         throw 'Failed to find Module Specification for completed task. This is a bug.'
       }
 
-      Write-Debug "$currentModuleSpec`: Processing Response"
+      Write-Debug "${currentModuleSpec}: Processing Response"
       # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
       try {
         $response = $completedTask.GetAwaiter().GetResult()
         | ConvertFrom-Json
-        Write-Debug "$currentModuleSpec`: Received Response with $($response.Count) pages"
+        Write-Debug "${currentModuleSpec}: Received Response with $($response.Count) pages"
       } catch {
         $taskException = $PSItem.Exception.InnerException
         #TODO: Rewrite this as a handle filter
         if ($taskException -isnot [HttpRequestException]) { throw }
         [HttpRequestException]$err = $taskException
         if ($err.StatusCode -eq [HttpStatusCode]::NotFound) {
-          throw [InvalidOperationException]"$currentModuleSpec`: module was not found in the $Source repository. Check the spelling and try again."
+          throw [InvalidOperationException]"${currentModuleSpec}: module was not found in the $Source repository. Check the spelling and try again."
         }
 
         #All other cases
-        $PSItem.ErrorDetails = "$currentModuleSpec`: Failed to fetch module $currentModuleSpec from $Source. Error: $PSItem"
+        $PSItem.ErrorDetails = "${currentModuleSpec}: Failed to fetch module $currentModuleSpec from $Source. Error: $PSItem"
         throw $PSItem
       }
 
       if (-not $response.count) {
-        throw [InvalidDataException]"$currentModuleSpec`: invalid result received from $Source. This is probably a bug. Content: $response"
+        throw [InvalidDataException]"${currentModuleSpec}: invalid result received from $Source. This is probably a bug. Content: $response"
       }
 
       #If what we are looking for exists in the response, we can stop looking
@@ -567,7 +582,7 @@ function Get-ModuleFastPlan {
       $selectedEntry = if ($entries) {
         #Sanity Check for Modules
         if ('ItemType:Script' -in $entries[0].tags) {
-          throw [NotImplementedException]"$currentModuleSpec`: Script installations are currently not supported."
+          throw [NotImplementedException]"${currentModuleSpec}: Script installations are currently not supported."
         }
 
         [SortedSet[NuGetVersion]]$inlinedVersions = $entries.version
@@ -593,7 +608,7 @@ function Get-ModuleFastPlan {
       if ($selectedEntry.count -gt 1) { throw 'Multiple Entries Selected. This is a bug.' }
       #Search additional pages if we didn't find it in the inlined ones
       $selectedEntry ??= $(
-        Write-Debug "$currentModuleSpec`: not found in inlined index. Determining appropriate page(s) to query"
+        Write-Debug "${currentModuleSpec}: not found in inlined index. Determining appropriate page(s) to query"
 
         #If not inlined, we need to find what page(s) might have the candidate info we are looking for, starting with the highest numbered page first
 
@@ -606,10 +621,10 @@ function Get-ModuleFastPlan {
         | Sort-Object -Descending { [NuGetVersion]$PSItem.Upper }
 
         if (-not $pages) {
-          throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the requested version constraints. You may need to specify -PreRelease or adjust your version constraints."
+          throw [InvalidOperationException]"${currentModuleSpec}: a matching module was not found in the $Source repository that satisfies the requested version constraints. You may need to specify -PreRelease or adjust your version constraints."
         }
 
-        Write-Debug "$currentModuleSpec`: Found $(@($pages).Count) additional pages that might match the query: $($pages.'@id' -join ',')"
+        Write-Debug "${currentModuleSpec}: Found $(@($pages).Count) additional pages that might match the query: $($pages.'@id' -join ',')"
 
         #TODO: This is relatively slow and blocking, but we would need complicated logic to process it in the main task handler loop.
         #I really should make a pipeline that breaks off tasks based on the type of the response.
@@ -641,7 +656,7 @@ function Get-ModuleFastPlan {
               }
 
               if ($currentModuleSpec.SatisfiedBy($candidate)) {
-                Write-Debug "$currentModuleSpec`: Found satisfying version $candidate in the additional pages."
+                Write-Debug "${currentModuleSpec}: Found satisfying version $candidate in the additional pages."
                 $matchingEntry = $entries | Where-Object version -EQ $candidate
                 if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
                 $matchingEntry
@@ -656,7 +671,7 @@ function Get-ModuleFastPlan {
       )
 
       if (-not $selectedEntry) {
-        throw [InvalidOperationException]"$currentModuleSpec`: a matching module was not found in the $Source repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints."
+        throw [InvalidOperationException]"${currentModuleSpec}: a matching module was not found in the $Source repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints."
       }
       if (-not $selectedEntry.PackageContent) { throw "No package location found for $($selectedEntry.PackageContent). This should never happen and is a bug" }
 
@@ -687,7 +702,7 @@ function Get-ModuleFastPlan {
         continue
       }
 
-      Write-Verbose "$selectedModule`: Added to install plan"
+      Write-Verbose "${selectedModule}: Added to install plan"
 
       # HACK: Pwsh doesn't care about target framework as of today so we can skip that evaluation
       # TODO: Should it? Should we check for the target framework and only install if it matches?
@@ -705,7 +720,7 @@ function Get-ModuleFastPlan {
 
           [ModuleFastSpec]::new($PSItem.id, $range)
         }
-        Write-Debug "$currentModuleSpec`: has $($dependencies.count) additional dependencies: $($dependencies -join ', ')"
+        Write-Debug "${currentModuleSpec}: has $($dependencies.count) additional dependencies: $($dependencies -join ', ')"
 
         # TODO: Where loop filter maybe
         [ModuleFastSpec[]]$dependenciesToResolve = $dependencies | Where-Object {
@@ -752,10 +767,8 @@ function Get-ModuleFastPlan {
           } else {
             Write-Debug "No local modules that satisfies dependency $dependencySpec. Checking Remote..."
           }
-          # TODO: Deduplicate in-flight queries (az.accounts is a good example)
-          # Write-Debug "$moduleSpec`: Checking if $dependencySpec already has an in-flight request that satisfies the requirement"
 
-          Write-Debug "$currentModuleSpec`: Fetching dependency $dependencySpec"
+          Write-Debug "${currentModuleSpec}: Fetching dependency $dependencySpec"
           #TODO: Do a direct version lookup if the dependency is a required version
           $task = Get-ModuleInfoAsync @httpContext -Endpoint $Source -Name $dependencySpec.Name
           $taskSpecMap[$task] = $dependencySpec
@@ -782,6 +795,15 @@ function Get-ModuleFastPlan {
     #Cancel any outstanding tasks if unexpected error occurs
     $cancelTokenSource.Dispose()
   }
+}
+
+function Clear-ModuleFastCache {
+  <#
+  .SYNOPSIS
+  Clears the ModuleFast HTTP Cache. This is useful if you are expecting a newer version of a module to be available.
+  #>
+  $SCRIPT:RequestCache.Dispose()
+  $SCRIPT:RequestCache = [MemoryCache]::new('PowerShell-ModuleFast-RequestCache')
 }
 
 #endregion Public
@@ -821,7 +843,7 @@ function Install-ModuleFastHelper {
         $existingManifestPath = try {
           Resolve-Path (Join-Path $installPath "$($module.Name).psd1") -ErrorAction Stop
         } catch [ActionPreferenceStopException] {
-          throw "$module`: Existing module folder found at $installPath but the manifest could not be found. This is likely a corrupted or missing module and should be fixed manually."
+          throw "${module}: Existing module folder found at $installPath but the manifest could not be found. This is likely a corrupted or missing module and should be fixed manually."
         }
 
         #TODO: Dedupe all import-powershelldatafile operations to a function ideally
@@ -851,7 +873,7 @@ function Install-ModuleFastHelper {
 
       Write-Verbose "${module}: Downloading from $($module.Location)"
       if (-not $module.Location) {
-        throw "$module`: No Download Link found. This is a bug"
+        throw "${module}: No Download Link found. This is a bug"
       }
 
       $streamTask = $httpClient.GetStreamAsync($module.Location, $CancellationToken)
@@ -920,7 +942,7 @@ function Install-ModuleFastHelper {
       $completedJobContext = $completedJob | Receive-Job -Wait -AutoRemoveJob
       if (-not $installJobs.Remove($completedJob)) { throw 'Could not remove completed job from list. This is a bug, report it' }
       $installed++
-      Write-Verbose "$($completedJobContext.Module)`: Installed to $($completedJobContext.InstallPath)"
+      Write-Verbose "$($completedJobContext.Module): Installed to $($completedJobContext.InstallPath)"
       Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
       $context.Module.Location = $completedJobContext.InstallPath
       #Output the module for potential future passthru
@@ -1047,8 +1069,8 @@ class ModuleFastInfo: IComparable {
 }
 
 $ModuleFastInfoTypeData = @{
-  DefaultDisplayPropertySet = 'Name', 'ModuleVersion'
-  DefaultKeyPropertySet     = 'Name', 'ModuleVersion'
+  DefaultDisplayPropertySet = 'Name', 'ModuleVersion', 'Location'
+  DefaultKeyPropertySet     = 'Name', 'ModuleVersion', 'Location'
   SerializationMethod       = 'SpecificProperties'
   PropertySerializationSet  = 'Name', 'ModuleVersion', 'Location'
   SerializationDepth        = 0
@@ -1376,7 +1398,7 @@ function Get-ModuleInfoAsync {
     if ($endpointTask) {
       Write-Debug "REQUEST CACHE HIT for Registration Index $Endpoint"
     } else {
-      Write-Debug ('{0}fetch registration index from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $Endpoint)
+      Write-Debug ('{0}fetch registration index from {1}' -f ($ModuleId ? "${ModuleId}: " : ''), $Endpoint)
       $endpointTask = $HttpClient.GetStringAsync($Endpoint, $CancellationToken)
       $SCRIPT:RequestCache[$Endpoint] = $endpointTask
     }
@@ -1402,7 +1424,7 @@ function Get-ModuleInfoAsync {
     #HACK: We need the task to be a unique reference for the context mapping that occurs later on, so this is an easy if obscure way to "clone" the task using PowerShell.
     $requestTask = [Task]::WhenAll($requestTask)
   } else {
-    Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "$ModuleId`: " : ''), $uri)
+    Write-Debug ('{0}fetch info from {1}' -f ($ModuleId ? "${ModuleId}: " : ''), $uri)
     $requestTask = $HttpClient.GetStringAsync($uri, $CancellationToken)
     $SCRIPT:RequestCache[$Uri] = $requestTask
   }
@@ -1724,7 +1746,7 @@ function Find-RequiredSpecFile ([string]$Path) {
   }
 
   if (-not $requireFiles) {
-    throw [NotSupportedException]"Could not find any required spec files in $Path. Verify the path is correct or specify Module Specifications either via -Path or -Specification"
+    throw [NotSupportedException]"Could not find any required spec files in $Path. Verify the path is correct or provide Module Specifications either via -Path or -Specification"
   }
   return $requireFiles
 }
@@ -1824,4 +1846,4 @@ filter ConvertFrom-ModuleManifest {
 # FIXME: DBops dependency version issue
 
 Set-Alias imf -Value Install-ModuleFast
-Export-ModuleMember -Function Get-ModuleFastPlan, Install-ModuleFast -Alias imf
+Export-ModuleMember -Function Get-ModuleFastPlan, Install-ModuleFast, Clear-ModuleFastCache -Alias imf

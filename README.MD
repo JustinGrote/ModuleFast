@@ -15,6 +15,8 @@ iwr bit.ly/modulefast | iex
 Install-ModuleFast ImportExcel
 ```
 
+Modulefast is also accessible via the alias `imf` once loaded
+
 The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
 
 ### View the Detailed Help for ModuleFast
@@ -76,11 +78,15 @@ You can alternatively set it as your `powershell.config.json` PSModulePath, add 
 
 ## Goals
 
-* Given a set of packages, install the packages and their dependencies as fast as possible in a declarative plan/apply incremental approach.
-* Packages once deployed should be fully compatible with built-in *-Module commands, PSGetv2, and PSGetv3.
-* Support a "plan" view that shows what will change before it changes, Terraform-style
-* Support a dependencies file that can declaratively define what packages a module should have
-* Support a "complete" mode that will clean up packages that aren't the latest versions of the specified modules.
+* [x] Given a set of packages, install the packages and their dependencies as fast as possible in a declarative plan/apply incremental approach.* Support a "plan" view that shows what will change before it changes, Terraform-style
+* [x] Support a "plan" view that shows what will change before it changes, Terraform-style
+* [x] Support a dependencies file that can declaratively define what packages a module should have
+* [x] Packages once deployed should be fully compatible with built-in *-Module commands, PSGetv2, and PSGetv3
+* [x] Support Third Party NuGet v3 Repositories using HTTPS Basic Auth (PAT Tokens etc.)
+* [x] Install requirements for scripts with #Requires statements
+* [ ] Able to use existing PSResourceGet registrations if NuGet v3 Repositories
+
+ ~~Support a "complete" mode that will clean up packages that aren't the latest versions of the specified modules~~ Decided there isn't much value for this if packages are correct
 
 ## Non-Goals
 
