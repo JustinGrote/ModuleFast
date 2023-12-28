@@ -1,4 +1,5 @@
 ![ModuleFast Logo](./images/logo.gif)
+
 # ModuleFast
 
 This is a PowerShell module installer that is optimized for high performance and no external dependencies so it can be
@@ -20,6 +21,7 @@ Modulefast is also accessible via the alias `imf` once loaded
 The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
 
 ### View the Detailed Help for ModuleFast
+
 ```powershell
 iwr bit.ly/modulefast | iex
 Get-Help Install-ModuleFast -Full
