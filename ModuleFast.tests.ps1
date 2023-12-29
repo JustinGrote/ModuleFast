@@ -264,8 +264,11 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           ModuleName = 'PrereleaseTest'
         },
         @{
-          Spec       = 'PrereleaseTest:0.0.*'
-          ModuleName = 'PrereleaseTest'
+          Spec       = 'PnP.PowerShell:2.2.*'
+          ModuleName = 'PnP.PowerShell'
+          Check      = {
+            $actual.ModuleVersion | Should -Be '2.2.0'
+          }
         }
       )
 

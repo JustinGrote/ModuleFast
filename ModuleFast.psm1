@@ -1252,6 +1252,9 @@ class ModuleFastSpec {
   }
 
   [bool] SatisfiedBy([NugetVersion]$Version) {
+    if ($this._VersionRange.IsFloating) {
+      return $this._VersionRange.Float.Satisfies($Version)
+    }
     return $this._VersionRange.Satisfies($Version)
   }
 
