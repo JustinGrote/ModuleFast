@@ -216,6 +216,8 @@ function Install-ModuleFast {
     [Switch]$Prerelease,
     #Using the CI switch will write a lockfile to the current folder. If this file is present and -CI is specified in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of software come out.
     [Switch]$CI,
+    #How many concurrent installation threads to run. Each installation thread, given sufficient bandwidth, will likely saturate a full CPU core with decompression work. This defaults to the number of logical cores on the system. If your system uses HyperThreading and presents more logical cores than physical cores available, you may want to set this to half your number of logical cores for best performance.
+    [int]$ThrottleLimit = [Environment]::ProcessorCount,
     #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
     [string]$CILockFilePath = $(Join-Path $PWD 'requires.lock.json'),
     [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo[]]$ModuleFastInfo,
@@ -367,6 +369,7 @@ function Install-ModuleFast {
         CancellationToken = $cancelSource.Token
         HttpClient        = $httpClient
         Update            = $Update -or $PSCmdlet.ParameterSetName -eq 'ModuleFastInfo'
+        ThrottleLimit     = $ThrottleLimit
       }
       $installedModules = Install-ModuleFastHelper @installHelperParams
       Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Completed
@@ -817,7 +820,8 @@ function Install-ModuleFastHelper {
     [string]$Destination,
     [Parameter(Mandatory)][CancellationToken]$CancellationToken,
     [HttpClient]$HttpClient,
-    [switch]$Update
+    [switch]$Update,
+    [int]$ThrottleLimit
   )
   BEGIN {
     #We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient.
@@ -898,7 +902,7 @@ function Install-ModuleFastHelper {
       $streamTasks.RemoveAt($thisTaskIndex)
 
       # This is a sync process and we want to do it in parallel, hence the threadjob
-      $installJob = Start-ThreadJob -ThrottleLimit 8 {
+      $installJob = Start-ThreadJob -ThrottleLimit $ThrottleLimit {
         param(
           [ValidateNotNullOrEmpty()]$stream = $USING:stream,
           [ValidateNotNullOrEmpty()]$context = $USING:context
