@@ -475,7 +475,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Only installs once when Update is specified and latest has not changed for multiple modules' {
     Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update
-    Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update -WhatIf
+    Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update -Plan
     | Should -BeNullOrEmpty
   }
 
@@ -534,14 +534,14 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Doesnt install prerelease if same-version Prerelease already installed' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'
-    $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' -WhatIf
+    $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' -Plan
     $plan | Should -BeNullOrEmpty
   }
 
   It 'Installs from <Name> SpecFile' {
     $SCRIPT:Mocks = Resolve-Path "$PSScriptRoot/Test/Mocks"
     $specFilePath = Join-Path $Mocks $File
-    $modulesToInstall = Install-ModuleFast @imfParams -Path $specFilePath -WhatIf
+    $modulesToInstall = Install-ModuleFast @imfParams -Path $specFilePath -Plan
     #TODO: Verify individual modules and versions
     $modulesToInstall | Should -Not -BeNullOrEmpty
   } -TestCases @(
@@ -609,8 +609,19 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
         }
       )
     }" | Out-File $scriptPath
-    $modules = Install-ModuleFast @imfParams -Path $scriptPath -WhatIf
+    $modules = Install-ModuleFast @imfParams -Path $scriptPath -Plan
     $modules.count | Should -Be 2
+  }
+  It 'Resolves GUID with version range' {
+    $scriptPath = Join-Path $testDrive 'testscript.ps1'
+    "#requires -Module @{ModuleName='PreReleaseTest';Guid='7c279caf-00bc-40ae-a1ed-184ad07be1b0';ModuleVersion='0.0.1';MaximumVersion='0.0.2'}" | Out-File $scriptPath
+    $actual = Install-ModuleFast @imfParams -WarningAction SilentlyContinue -Path $scriptPath -PassThru
+    $actual.Name | Should -Be 'PrereleaseTest'
+    $actual.ModuleVersion | Should -Be '0.0.1'
+  }
+  It 'Errors if GUID spec is different than installed module' {
+    { Install-ModuleFast @imfParams -WarningAction SilentlyContinue -Specification "@{ModuleName='PreReleaseTest';Guid='3cb1a381-5d96-4b56-843e-dd97cf4c6545';ModuleVersion='0.0.1';MaximumVersion='0.0.2'}" -PassThru }
+    | Should -Throw '*Expected 3cb1a381-5d96-4b56-843e-dd97cf4c6545 but found 7c279caf-00bc-40ae-a1ed-184ad07be1b0*'
   }
 
   It 'Writes a CI File' {
@@ -653,7 +664,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   Describe 'GitHub Packages' {
     It 'Gets Specific Module' {
       $credential = [PSCredential]::new('Pester', (Get-Secret -Name 'ReadOnlyPackagesGithubPAT'))
-      $actual = Install-ModuleFast @imfParams -Specification 'PrereleaseTest=0.0.1' -Source 'https://nuget.pkg.github.com/justingrote/index.json' -Credential $credential -WhatIf
+      $actual = Install-ModuleFast @imfParams -Specification 'PrereleaseTest=0.0.1' -Source 'https://nuget.pkg.github.com/justingrote/index.json' -Credential $credential -Plan
       $actual.Name | Should -Be 'PrereleaseTest'
       $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Be '0.0.1'
     }
