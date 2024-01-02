@@ -445,7 +445,7 @@ function Get-ModuleFastPlan {
   THIS COMMAND IS DEPRECATED AND WILL NOT RECEIVE PARAMETER UPDATES. Please use Install-ModuleFast -Plan instead.
   #>
   [CmdletBinding()]
-  [OutputType([ModuleFastInfo])]
+  [OutputType([ModuleFastInfo[]])]
   param(
     #The module(s) to install. This can be a string, a ModuleSpecification, a hashtable with nuget version style (e.g. @{Name='test';Version='1.0'}), a hashtable with ModuleSpecification style (e.g. @{Name='test';RequiredVersion='1.0'}),
     [Alias('Name')]
@@ -543,6 +543,10 @@ function Get-ModuleFastPlan {
         throw 'Failed to find Module Specification for completed task. This is a bug.'
       }
 
+      if ($currentModuleSpec.Guid -ne [Guid]::Empty) {
+        Write-Warning "${currentModuleSpec}: A GUID constraint was found in the module spec. ModuleSpec will currently only verify GUIDs after the module has been installed, so a plan may not be accurate. It is not recommended to match modules by GUID in ModuleFast."
+      }
+
       Write-Debug "${currentModuleSpec}: Processing Response"
       # We use GetAwaiter so we get proper error messages back, as things such as network errors might occur here.
       try {
@@ -598,7 +602,6 @@ function Get-ModuleFastPlan {
           }
 
           if ($currentModuleSpec.SatisfiedBy($candidate)) {
-            #TODO: If the found version still matches an installed version, we should skip it
             Write-Debug "${ModuleSpec}: Found satisfying version $candidate in the inlined index."
             $matchingEntry = $entries | Where-Object version -EQ $candidate
             if ($matchingEntry.count -gt 1) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
@@ -683,6 +686,9 @@ function Get-ModuleFastPlan {
         $selectedEntry.version,
         $selectedEntry.PackageContent
       )
+      if ($moduleSpec.Guid -and $moduleSpec.Guid -ne [Guid]::Empty) {
+        $selectedModule.Guid = $moduleSpec.Guid
+      }
 
       #If -Update was specified, we need to re-check that none of the selected modules are already installed.
       #TODO: Persist state of the local modules found to this point so we don't have to recheck.
@@ -907,34 +913,52 @@ function Install-ModuleFastHelper {
           [ValidateNotNullOrEmpty()]$stream = $USING:stream,
           [ValidateNotNullOrEmpty()]$context = $USING:context
         )
-        $installPath = $context.InstallPath
-        $installIndicatorPath = Join-Path $installPath '.incomplete'
+        process {
+          $installPath = $context.InstallPath
+          $installIndicatorPath = Join-Path $installPath '.incomplete'
 
-        if (Test-Path $installIndicatorPath) {
+          if (Test-Path $installIndicatorPath) {
+            #FIXME: Output inside a threadjob is not surfaced to the user.
+            Write-Warning "$($context.Module): Incomplete installation found at $installPath. Will delete and retry."
+            Remove-Item $installPath -Recurse -Force
+          }
+
+          if (-not (Test-Path $context.InstallPath)) {
+            New-Item -Path $context.InstallPath -ItemType Directory -Force | Out-Null
+          }
+
+          New-Item -ItemType File -Path $installIndicatorPath -Force | Out-Null
+
+          $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
+          [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
+
+          if ($context.Module.Guid -and $context.Module.Guid -ne [Guid]::Empty) {
+            Write-Debug "$($context.Module): GUID was specified in Module. Verifying manifest"
+            $manifestPath = Join-Path $installPath "$($context.Module.Name).psd1"
+            #FIXME: This should be using Import-ModuleManifest but it needs to be brought in via the ThreadJob context. This will fail if the module has a dynamic manifest.
+            $manifest = Import-PowerShellDataFile $manifestPath
+            if ($manifest.Guid -ne $context.Module.Guid) {
+              Remove-Item $installPath -Force -Recurse
+              throw [InvalidOperationException]"$($context.Module): The installed package GUID does not match what was in the Module Spec. Expected $($context.Module.Guid) but found $($manifest.Guid) in $($manifestPath). Deleting this module, please check that your GUID specification is correct, or otherwise investigate why the GUID is different."
+            }
+          }
+
           #FIXME: Output inside a threadjob is not surfaced to the user.
-          Write-Warning "$($context.Module): Incomplete installation found at $installPath. Will delete and retry."
-          Remove-Item $installPath -Recurse -Force
+          Write-Debug "Cleanup Nuget Files in $installPath"
+          if (-not $installPath) { throw 'ModuleDestination was not set. This is a bug, report it' }
+          Get-ChildItem -Path $installPath | Where-Object {
+            $_.Name -in '_rels', 'package', '[Content_Types].xml' -or
+            $_.Name.EndsWith('.nuspec')
+          } | Remove-Item -Force -Recurse
+
+          Remove-Item $installIndicatorPath -Force
+          return $context
         }
 
-        if (-not (Test-Path $context.InstallPath)) {
-          New-Item -Path $context.InstallPath -ItemType Directory -Force | Out-Null
+        CLEAN {
+          if ($zip) {$zip.Dispose()}
+          if ($stream) {$stream.Dispose()}
         }
-
-        New-Item -ItemType File -Path $installIndicatorPath -Force | Out-Null
-
-        $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
-        [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
-        #FIXME: Output inside a threadjob is not surfaced to the user.
-        Write-Debug "Cleanup Nuget Files in $installPath"
-        if (-not $installPath) { throw 'ModuleDestination was not set. This is a bug, report it' }
-        Get-ChildItem -Path $installPath | Where-Object {
-          $_.Name -in '_rels', 'package', '[Content_Types].xml' -or
-          $_.Name.EndsWith('.nuspec')
-        } | Remove-Item -Force -Recurse
-        ($zip).Dispose()
-        ($stream).Dispose()
-        Remove-Item $installIndicatorPath -Force
-        return $context
       }
       $installJob
     }
@@ -955,6 +979,12 @@ function Install-ModuleFastHelper {
 
     if ($PassThru) {
       return $installedModules
+    }
+  }
+  CLEAN {
+    $cancelTokenSource.Dispose()
+    if ($installJobs) {
+      $installJobs | Remove-Job -Force
     }
   }
 }
@@ -1014,6 +1044,7 @@ class ModuleFastInfo: IComparable {
   [uri]$Location
   #TODO: This should be a getter
   [boolean]$IsLocal
+  [Guid]$Guid = [Guid]::Empty
 
   ModuleFastInfo([string]$Name, [NuGetVersion]$ModuleVersion, [Uri]$Location) {
     $this.Name = $Name
@@ -1228,10 +1259,6 @@ class ModuleFastSpec {
     $this._Name = $TrimmedName
     $this._VersionRange = $Range ?? [VersionRange]::new()
     $this._Guid = $Guid ?? [Guid]::Empty
-    # TODO: Fix this check logic
-    # if ($this.Guid -ne [Guid]::Empty -and -not $this.Required) {
-    #   throw 'Cannot specify Guid unless min and max are the same. If you see this, it is probably a bug'
-    # }
   }
 
   hidden Initialize([ModuleSpecification]$ModuleSpec) {
@@ -1530,10 +1557,7 @@ function Find-LocalModule {
     return
   }
 
-  #We want to minimize reading the manifest files, so we will do a fast file-based search first and then do a more detailed inspection on high confidence candidate(s). Any module in any folder path that satisfies the spec will be sufficient, we don't care about finding the "latest" version, so we will return the first module that satisfies the spec.
-
-  #We will store potential candidates in this list, with their evaluated "guessed" version based on the folder name and the path. The first items added to the list should be the highest likelihood candidates in Path priority order, so no sorting should be necessary.
-
+  #We want to minimize reading the manifest files, so we will do a fast file-based search first and then do a more detailed inspection on high confidence candidate(s). Any module in any folder path that satisfies the spec will be sufficient, we don't care about finding the "latest" version, so we will return the first module that satisfies the spec. We will store potential candidates in this list, with their evaluated "guessed" version based on the folder name and the path. The first items added to the list should be the highest likelihood candidates in Path priority order, so no sorting should be necessary.
 
   foreach ($modulePath in $modulePaths) {
     [List[[Tuple[Version, string]]]]$candidatePaths = @()
@@ -1639,6 +1663,10 @@ function Find-LocalModule {
 
       #Read the manifest so we can compare prerelease info. If this matches, we have a valid candidate and don't need to check anything further.
       $manifestCandidate = ConvertFrom-ModuleManifest $versionedManifestPath[0]
+      if ($ModuleSpec.Guid -and $ModuleSpec.Guid -ne [Guid]::Empty -and $manifestCandidate.Guid -ne $ModuleSpec.Guid) {
+        Write-Warning "${ModuleSpec}: A locally installed module $folder that matches the module spec but the manifest GUID $($manifestCandidate.Guid) does not match the expected GUID $($ModuleSpec.Guid) in the spec. Verify your specification is correct otherwise investigate this module for why the GUID does not match."
+        continue
+      }
       $candidateVersion = $manifestCandidate.ModuleVersion
 
       if ($ModuleSpec.SatisfiedBy($candidateVersion)) {
@@ -1842,7 +1870,11 @@ filter ConvertFrom-ModuleManifest {
     $manifestData.PrivateData.PSData.Prerelease
   )
 
-  return [ModuleFastInfo]::new($ManifestName, $manifestVersion, $ManifestPath)
+  $moduleFastInfo = [ModuleFastInfo]::new($ManifestName, $manifestVersion, $ManifestPath)
+  if ($manifestVersion.Guid) {
+    $moduleFastInfo.Guid = $manifestVersion.Guid
+  }
+  return $moduleFastInfo
 }
 
 #endregion Helpers
