@@ -8,7 +8,7 @@ using namespace System.Reflection
 [CmdletBinding(PositionalBinding = $false)]
 param (
   #Specify a specific release to use, otherwise 'latest' is used
-  [string]$Release = 'latest',
+  [string]$Release = $ENV:MFRELEASE ?? 'latest',
   #Specify the user
   [string]$User = 'JustinGrote',
   #Specify the repo
