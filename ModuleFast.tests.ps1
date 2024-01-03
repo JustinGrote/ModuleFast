@@ -478,6 +478,12 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update -Plan
     | Should -BeNullOrEmpty
   }
+  It 'Updates if multiple local versions installed' {
+    Install-ModuleFast @imfParams 'Plaster=1.1.1'
+    Install-ModuleFast @imfParams 'Plaster=1.1.3'
+    $actual = Install-ModuleFast @imfParams 'Plaster' -Update -PassThru
+    $actual.ModuleVersion | Should -Be '1.1.4'
+  }
 
   It 'Updates only dependent module that requires update' {
     Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
