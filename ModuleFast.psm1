@@ -216,6 +216,8 @@ function Install-ModuleFast {
     [Switch]$Prerelease,
     #Using the CI switch will write a lockfile to the current folder. If this file is present and -CI is specified in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of software come out.
     [Switch]$CI,
+    #Only consider the specified destination and not any other paths currently in the PSModulePath. This is useful for CI scenarios where you want to ensure that the modules are installed in a specific location.
+    [Switch]$DestinationOnly,
     #How many concurrent installation threads to run. Each installation thread, given sufficient bandwidth, will likely saturate a full CPU core with decompression work. This defaults to the number of logical cores on the system. If your system uses HyperThreading and presents more logical cores than physical cores available, you may want to set this to half your number of logical cores for best performance.
     [int]$ThrottleLimit = [Environment]::ProcessorCount,
     #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
@@ -338,7 +340,7 @@ function Install-ModuleFast {
         $ModulesToInstall.ToArray()
       } else {
         Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent
+        Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent -DestinationOnly:$DestinationOnly -Destination $Destination
       }
     }
 
@@ -459,6 +461,8 @@ function Get-ModuleFastPlan {
     [PSCredential]$Credential,
     [HttpClient]$HttpClient = $(New-ModuleFastClient -Credential $Credential),
     [int]$ParentProgress,
+    [string]$Destination,
+    [switch]$DestinationOnly,
     [CancellationToken]$CancellationToken
   )
 
@@ -506,7 +510,13 @@ function Get-ModuleFastPlan {
 
     foreach ($moduleSpec in $ModulesToResolve) {
       Write-Verbose "${moduleSpec}: Evaluating Module Specification"
-      [ModuleFastInfo]$localMatch = Find-LocalModule $moduleSpec -Update:$Update -BestCandidate:([ref]$bestLocalCandidate)
+      $findLocalParams = @{
+        Update = $Update
+        BestCandidate = ([ref]$bestLocalCandidate)
+      }
+      if ($DestinationOnly) { $findLocalParams.ModulePaths = $Destination }
+
+      [ModuleFastInfo]$localMatch = Find-LocalModule @findLocalParams $moduleSpec
       if ($localMatch) {
         Write-Debug "${localMatch}: 🎯 FOUND satisfying version $($localMatch.ModuleVersion) at $($localMatch.Location). Skipping remote search."
         #TODO: Capture this somewhere that we can use it to report in the deploy plan
@@ -768,7 +778,13 @@ function Get-ModuleFastPlan {
         # We do this here rather than populate modulesToResolve because the tasks wont start until all the existing tasks complete
         # TODO: Figure out a way to dedupe this logic maybe recursively but I guess a function would be fine too
         foreach ($dependencySpec in $dependenciesToResolve) {
-          [ModuleFastInfo]$localMatch = Find-LocalModule $dependencySpec -Update:$Update
+          $findLocalParams = @{
+            Update = $Update
+            BestCandidate = ([ref]$bestLocalCandidate)
+          }
+          if ($DestinationOnly) { $findLocalParams.Destination = $Destination }
+
+          [ModuleFastInfo]$localMatch = Find-LocalModule @findLocalParams $dependencySpec
           if ($localMatch) {
             Write-Debug "FOUND local module $($localMatch.Name) $($localMatch.ModuleVersion) at $($localMatch.Location.AbsolutePath) that satisfies $moduleSpec. Skipping..."
             #TODO: Capture this somewhere that we can use it to report in the deploy plan
@@ -895,8 +911,7 @@ function Install-ModuleFastHelper {
       $streamTask
     }
 
-    #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
-    Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
+
     [List[Job2]]$installJobs = while ($streamTasks.count -gt 0) {
       $noTasksYetCompleted = -1
       [int]$thisTaskIndex = [Task]::WaitAny($streamTasks, 500)
@@ -908,6 +923,7 @@ function Install-ModuleFastHelper {
       $streamTasks.RemoveAt($thisTaskIndex)
 
       # This is a sync process and we want to do it in parallel, hence the threadjob
+      Write-Verbose "$($context.Module): Extracting to $($context.installPath)"
       $installJob = Start-ThreadJob -ThrottleLimit $ThrottleLimit {
         param(
           [ValidateNotNullOrEmpty()]$stream = $USING:stream,
@@ -929,6 +945,7 @@ function Install-ModuleFastHelper {
 
           New-Item -ItemType File -Path $installIndicatorPath -Force | Out-Null
 
+          #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
           $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
           [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
 
@@ -1545,21 +1562,20 @@ function Find-LocalModule {
 	#>
   param(
     [Parameter(Mandatory)][ModuleFastSpec]$ModuleSpec,
-    [string[]]$ModulePath = $($env:PSModulePath -split [Path]::PathSeparator),
+    [string[]]$ModulePaths = $($env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)),
     [Switch]$Update,
     [ref]$BestCandidate
   )
   $ErrorActionPreference = 'Stop'
 
-  $modulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
-  if (-not $modulePaths) {
+  if (-not $ModulePaths) {
     Write-Warning 'No PSModulePaths found in $env:PSModulePath. If you are doing isolated testing you can disregard this.'
     return
   }
 
   #We want to minimize reading the manifest files, so we will do a fast file-based search first and then do a more detailed inspection on high confidence candidate(s). Any module in any folder path that satisfies the spec will be sufficient, we don't care about finding the "latest" version, so we will return the first module that satisfies the spec. We will store potential candidates in this list, with their evaluated "guessed" version based on the folder name and the path. The first items added to the list should be the highest likelihood candidates in Path priority order, so no sorting should be necessary.
 
-  foreach ($modulePath in $modulePaths) {
+  foreach ($modulePath in $ModulePaths) {
     [List[[Tuple[Version, string]]]]$candidatePaths = @()
     if (-not [Directory]::Exists($modulePath)) {
       Write-Debug "${ModuleSpec}: Skipping PSModulePath $modulePath - Configured but does not exist."
@@ -1673,8 +1689,10 @@ function Find-LocalModule {
         if ($Update -and ($ModuleSpec.Max -ne $candidateVersion)) {
           Write-Debug "${ModuleSpec}: Skipping $candidateVersion because -Update was specified and the version does not exactly meet the upper bound of the spec or no upper bound was specified at all, meaning there is a possible newer version remotely."
           #We can use this ref later to find out if our best remote version matches what is installed without having to read the manifest again
-          if ($bestCandidate.Value[$moduleSpec] -and $manifestCandidate.ModuleVersion -gt $bestCandidate.Value[$moduleSpec]) {
-            Write-Debug "${ModuleSpec}: New Best Candidate Version $($manifestCandidate.ModuleVersion)"
+          if (-not $bestCandidate.Value[$moduleSpec] -or
+            $manifestCandidate.ModuleVersion -gt $bestCandidate.Value[$moduleSpec].ModuleVersion
+          ) {
+            Write-Debug "${ModuleSpec}: ⬆️ New Best Candidate Version $($manifestCandidate.ModuleVersion)"
             $BestCandidate.Value.Add($moduleSpec, $manifestCandidate)
           }
           continue
