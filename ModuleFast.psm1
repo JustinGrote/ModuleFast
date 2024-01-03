@@ -1001,7 +1001,12 @@ function Install-ModuleFastHelper {
   CLEAN {
     $cancelTokenSource.Dispose()
     if ($installJobs) {
-      $installJobs | Remove-Job -Force
+      try {
+        $installJobs | Remove-Job -Force -ErrorAction SilentlyContinue
+      } catch {
+        #Suppress this error because it is likely that the job was already removed
+        if ($PSItem -notlike '*because it is a child job*') {throw}
+      }
     }
   }
 }
@@ -1693,7 +1698,7 @@ function Find-LocalModule {
             $manifestCandidate.ModuleVersion -gt $bestCandidate.Value[$moduleSpec].ModuleVersion
           ) {
             Write-Debug "${ModuleSpec}: ⬆️ New Best Candidate Version $($manifestCandidate.ModuleVersion)"
-            $BestCandidate.Value.Add($moduleSpec, $manifestCandidate)
+            $BestCandidate.Value[$moduleSpec] = $manifestCandidate
           }
           continue
         }
