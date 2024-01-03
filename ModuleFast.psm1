@@ -182,8 +182,8 @@ function Install-ModuleFast {
   VMware.PowerCLI.Sdk.Types 12.6.0.19600125
 
   .EXAMPLE
-  Install-ModuleFast 'ImportExcel' -CI
-  Install-ModuleFast -CI
+  Install-ModuleFast 'ImportExcel' -CI #This will write a lockfile to the current directory
+  Install-ModuleFast -CI #This will use the previously created lockfile to install same state as above.
 
   If the -CI switch is specified, ModuleFast will write a lockfile to the current directory indicating all modules that were installed. This lockfile will contain the exact versions of the modules that were installed. If the lockfile is present in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of modules are releases that match the initial specification.
 
