@@ -33,7 +33,7 @@ function Install-ModuleFast {
   .SYNOPSIS
   High performance, declarative Powershell Module Installer
   .DESCRIPTION
-  ModuleFast is a high performance, declarative PowerShell module installer. It is optimized for speed and written primarily in PowerShell and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by pnpm and other high performance declarative package managers.
+  ModuleFast is a high performance, declarative PowerShell module installer. It is optimized for speed and written primarily in PowerShell and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by PNPm (https://pnpm.io/) and other high performance declarative package managers.
 
   ModuleFast accepts a variety of familiar PowerShell syntaxes and objects for module specification as well as a custom shorthand syntax allowing complex version requirements to be defined in a single string.
 
