@@ -1673,7 +1673,7 @@ function Find-LocalModule {
         if ($Update -and ($ModuleSpec.Max -ne $candidateVersion)) {
           Write-Debug "${ModuleSpec}: Skipping $candidateVersion because -Update was specified and the version does not exactly meet the upper bound of the spec or no upper bound was specified at all, meaning there is a possible newer version remotely."
           #We can use this ref later to find out if our best remote version matches what is installed without having to read the manifest again
-          if ($BestCandidate -and $manifestCandidate.ModuleVersion -gt $bestCandidate.Value[$moduleSpec]) {
+          if ($bestCandidate.Value[$moduleSpec] -and $manifestCandidate.ModuleVersion -gt $bestCandidate.Value[$moduleSpec]) {
             Write-Debug "${ModuleSpec}: New Best Candidate Version $($manifestCandidate.ModuleVersion)"
             $BestCandidate.Value.Add($moduleSpec, $manifestCandidate)
           }
