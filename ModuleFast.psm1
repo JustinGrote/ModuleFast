@@ -77,7 +77,7 @@ function Install-ModuleFast {
   ModuleFast will cache the results of the module selection process in memory for the duration of the PowerShell session. This is done to improve performance when multiple modules are being installed. If you want to clear the cache, you can call Clear-ModuleFastCache.
 
   .PARAMETER WhatIf
-  If specified, will output the installation plan to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date.
+  Outputs the installation plan of modules not already available and needing to be installed to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date.
 
   .EXAMPLE
   Install-ModuleFast 'ImportExcel' -PassThru
@@ -223,10 +223,11 @@ function Install-ModuleFast {
     [Switch]$DestinationOnly,
     #How many concurrent installation threads to run. Each installation thread, given sufficient bandwidth, will likely saturate a full CPU core with decompression work. This defaults to the number of logical cores on the system. If your system uses HyperThreading and presents more logical cores than physical cores available, you may want to set this to half your number of logical cores for best performance.
     [int]$ThrottleLimit = [Environment]::ProcessorCount,
-    #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
+    #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if -CI parameter is not present. It is generally not recommended to change this setting.
     [string]$CILockFilePath = $(Join-Path $PWD 'requires.lock.json'),
+    #A list of ModuleFastInfo objects to install. This parameterset is used when passing a plan to ModuleFast via the pipeline and is generally not used directly.
     [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo[]]$ModuleFastInfo,
-    #Output a list of specifications for the modules to install. This is the same as -WhatIf but without the additional WhatIf Output
+    #Outputs the installation plan of modules not already available and needing to be installed to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date. This is functionally the same as -WhatIf but without the additional WhatIf Output
     [Switch]$Plan,
     #This will output the resulting modules that were installed.
     [Switch]$PassThru
@@ -562,7 +563,7 @@ function Get-ModuleFastPlan {
       }
 
       if ($currentModuleSpec.Guid -ne [Guid]::Empty) {
-        Write-Warning "${currentModuleSpec}: A GUID constraint was found in the module spec. ModuleSpec will currently only verify GUIDs after the module has been installed, so a plan may not be accurate. It is not recommended to match modules by GUID in ModuleFast."
+        Write-Warning "${currentModuleSpec}: A GUID constraint was found in the module spec. ModuleSpec will currently only verify GUIDs after the module has been installed, so a plan may not be accurate. It is not recommended to match modules by GUID in ModuleFast, but instead verify package signatures for full package authenticity."
       }
 
       Write-Debug "${currentModuleSpec}: Processing Response"
