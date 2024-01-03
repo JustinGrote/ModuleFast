@@ -478,6 +478,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update -Plan
     | Should -BeNullOrEmpty
   }
+
   It 'Updates if multiple local versions installed' {
     Install-ModuleFast @imfParams 'Plaster=1.1.1'
     Install-ModuleFast @imfParams 'Plaster=1.1.3'
@@ -518,6 +519,24 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
 		| Select-Object -First 1
 		| Should -BeGreaterThan ([version]'5.0.0')
   }
+
+  It 'Detects module in other psmodulePath' {
+    $installPath2 = Join-Path $testdrive $(New-Guid)
+    New-Item -ItemType Directory $installPath2 | Out-Null
+    $env:PSModulePath = "$installPath2"
+    Install-ModuleFast @imfParams -Destination $installPath2 'PreReleaseTest'
+    Install-ModuleFast @imfParams 'PreReleaseTest' -PassThru | Should -BeNullOrEmpty
+  }
+
+  It 'Only considers destination modules if -DestinationOnly is specified' {
+    $installPath2 = Join-Path $testdrive $(New-Guid)
+    New-Item -ItemType Directory $installPath2 | Out-Null
+    $env:PSModulePath = "$installPath2"
+    Install-ModuleFast @imfParams -Destination $installPath2 'PreReleaseTest'
+    Install-ModuleFast @imfParams 'PreReleaseTest' -DestinationOnly -PassThru | Should -HaveCount 1
+    Install-ModuleFast @imfParams 'PreReleaseTest' -DestinationOnly -PassThru | Should -BeNullOrEmpty
+  }
+
   It 'Errors trying to install prerelease over regular module' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
     { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }
