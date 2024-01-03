@@ -50,7 +50,10 @@ function Install-ModuleFast {
   - '>=': Greater than or equal to. Example: 'ImportExcel>=7.1.0'
   - '<': Less than. Example: 'ImportExcel<7.1.0'
   - '<=': Less than or equal to. Example: 'ImportExcel<=7.1.0'
-  - ':': Lets you specify a NuGet version range. Example: 'ImportExcel:(7.0.0, 7.2.1-preview]' For more info: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. 'ImportExcel:3.2.*' will install the latest 3.2.x version.
+  - '!': A prerelease operator that can be present at the beginning or end of a module name to indicate that prerelease versions are acceptable. Example: 'ImportExcel!', '!ImportExcel'. It can be combined with the other operators like so: 'ImportExcel!>7.1.0'
+  - ':': Lets you specify a NuGet version range. Example: 'ImportExcel:(7.0.0, 7.2.1-preview]'
+
+  For more information about NuGet version range syntax used with the ':' operator: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. 'ImportExcel:3.2.*' will install the latest 3.2.x version.
 
   ModuleFast also fully supports the ModuleSpecification object and hashtable-like string syntaxes that are used by Install-Module and Install-PSResource. More information on this format: https://learn.microsoft.com/en-us/dotnet/api/microsoft.powershell.commands.modulespecification?view=powershellsdk-7.4.0
 
