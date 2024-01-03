@@ -215,7 +215,7 @@ function Install-ModuleFast {
     [Switch]$NoProfileUpdate,
     #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range.
     [Switch]$Update,
-    #Consider prerelease packages in the evaluation. Note that if a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting.
+    #Prerelease packages will be included in ModuleFast evaluation. If a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting. If this setting is specified, all packages will be evaluated for prereleases regardless of if they have a prerelease indicator such as '!' in their specification name, but will still be subject to specification version constraints that would prevent a prerelease from installing.
     [Switch]$Prerelease,
     #Using the CI switch will write a lockfile to the current folder. If this file is present and -CI is specified in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of software come out.
     [Switch]$CI,
@@ -236,6 +236,11 @@ function Install-ModuleFast {
 
     # Setup the Destination repository
     $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
+
+    #Clear the ModuleFastCache if -Update is specified to ensure fresh lookups of remote module availability
+    if ($Update) {
+      Clear-ModuleFastCache
+    }
 
     if (-not $Destination) {
       $Destination = $defaultRepoPath
@@ -830,6 +835,7 @@ function Clear-ModuleFastCache {
   .SYNOPSIS
   Clears the ModuleFast HTTP Cache. This is useful if you are expecting a newer version of a module to be available.
   #>
+  Write-Debug "Flushing ModuleFast Request Cache"
   $SCRIPT:RequestCache.Dispose()
   $SCRIPT:RequestCache = [MemoryCache]::new('PowerShell-ModuleFast-RequestCache')
 }
