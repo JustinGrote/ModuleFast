@@ -213,7 +213,7 @@ function Install-ModuleFast {
     [Switch]$NoPSModulePathUpdate,
     #Setting this won't add the default destination to your powershell.config.json. This really only matters on Windows.
     [Switch]$NoProfileUpdate,
-    #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range.
+    #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range. Note that specifying this will also clear the local request cache for remote repositories which will result in slower evaluations if the information has not changed.
     [Switch]$Update,
     #Prerelease packages will be included in ModuleFast evaluation. If a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting. If this setting is specified, all packages will be evaluated for prereleases regardless of if they have a prerelease indicator such as '!' in their specification name, but will still be subject to specification version constraints that would prevent a prerelease from installing.
     [Switch]$Prerelease,
