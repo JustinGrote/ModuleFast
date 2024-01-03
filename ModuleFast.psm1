@@ -234,6 +234,11 @@ function Install-ModuleFast {
     # Setup the Destination repository
     $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
 
+    #Clear the ModuleFastCache if -Update is specified to ensure fresh lookups of remote module availability
+    if ($Update) {
+      Clear-ModuleFastCache
+    }
+
     if (-not $Destination) {
       $Destination = $defaultRepoPath
     } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {
@@ -827,6 +832,7 @@ function Clear-ModuleFastCache {
   .SYNOPSIS
   Clears the ModuleFast HTTP Cache. This is useful if you are expecting a newer version of a module to be available.
   #>
+  Write-Debug "Flushing ModuleFast Request Cache"
   $SCRIPT:RequestCache.Dispose()
   $SCRIPT:RequestCache = [MemoryCache]::new('PowerShell-ModuleFast-RequestCache')
 }
