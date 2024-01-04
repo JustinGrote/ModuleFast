@@ -759,14 +759,14 @@ function Get-ModuleFastPlan {
           # meaninful performance difference on a whole-system upgrade.
           [HashSet[string]]$moduleNames = $modulesToInstall.Name
           if ($dependency.Name -notin $ModuleNames) {
-            Write-Debug "No modules with name $($dependency.Name) currently exist in the install plan. Resolving dependency..."
+            Write-Debug "$($dependency.Name): No modules with this name currently exist in the install plan. Resolving dependency..."
             return $true
           }
 
-        $modulesToInstall
-        | Where-Object Name -EQ $dependency.Name
-        | Sort-Object ModuleVersion -Descending
-        | ForEach-Object {
+          $modulesToInstall
+          | Where-Object Name -EQ $dependency.Name
+          | Sort-Object ModuleVersion -Descending
+          | ForEach-Object {
             if ($dependency.SatisfiedBy($PSItem.ModuleVersion)) {
               Write-Debug "Dependency $dependency satisfied by existing planned install item $PSItem"
               return $false
