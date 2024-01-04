@@ -33,7 +33,7 @@ function Install-ModuleFast {
   .SYNOPSIS
   High performance, declarative Powershell Module Installer
   .DESCRIPTION
-  ModuleFast is a high performance, declarative PowerShell module installer. It is optimized for speed and written primarily in PowerShell and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by pnpm and other high performance declarative package managers.
+  ModuleFast is a high performance, declarative PowerShell module installer. It is optimized for speed and written primarily in PowerShell and can be bootstrapped in a single line of code. It is ideal for Continuous Integration/Deployment and serverless scenarios where you want to install modules quickly and without any user interaction. It is inspired by PNPm (https://pnpm.io/) and other high performance declarative package managers.
 
   ModuleFast accepts a variety of familiar PowerShell syntaxes and objects for module specification as well as a custom shorthand syntax allowing complex version requirements to be defined in a single string.
 
@@ -50,7 +50,10 @@ function Install-ModuleFast {
   - '>=': Greater than or equal to. Example: 'ImportExcel>=7.1.0'
   - '<': Less than. Example: 'ImportExcel<7.1.0'
   - '<=': Less than or equal to. Example: 'ImportExcel<=7.1.0'
-  - ':': Lets you specify a NuGet version range. Example: 'ImportExcel:(7.0.0, 7.2.1-preview]' For more info: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. 'ImportExcel:3.2.*' will install the latest 3.2.x version.
+  - '!': A prerelease operator that can be present at the beginning or end of a module name to indicate that prerelease versions are acceptable. Example: 'ImportExcel!', '!ImportExcel'. It can be combined with the other operators like so: 'ImportExcel!>7.1.0'
+  - ':': Lets you specify a NuGet version range. Example: 'ImportExcel:(7.0.0, 7.2.1-preview]'
+
+  For more information about NuGet version range syntax used with the ':' operator: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. 'ImportExcel:3.2.*' will install the latest 3.2.x version.
 
   ModuleFast also fully supports the ModuleSpecification object and hashtable-like string syntaxes that are used by Install-Module and Install-PSResource. More information on this format: https://learn.microsoft.com/en-us/dotnet/api/microsoft.powershell.commands.modulespecification?view=powershellsdk-7.4.0
 
@@ -74,7 +77,7 @@ function Install-ModuleFast {
   ModuleFast will cache the results of the module selection process in memory for the duration of the PowerShell session. This is done to improve performance when multiple modules are being installed. If you want to clear the cache, you can call Clear-ModuleFastCache.
 
   .PARAMETER WhatIf
-  If specified, will output the installation plan to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date.
+  Outputs the installation plan of modules not already available and needing to be installed to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date.
 
   .EXAMPLE
   Install-ModuleFast 'ImportExcel' -PassThru
@@ -179,8 +182,8 @@ function Install-ModuleFast {
   VMware.PowerCLI.Sdk.Types 12.6.0.19600125
 
   .EXAMPLE
-  Install-ModuleFast 'ImportExcel' -CI
-  Install-ModuleFast -CI
+  Install-ModuleFast 'ImportExcel' -CI #This will write a lockfile to the current directory
+  Install-ModuleFast -CI #This will use the previously created lockfile to install same state as above.
 
   If the -CI switch is specified, ModuleFast will write a lockfile to the current directory indicating all modules that were installed. This lockfile will contain the exact versions of the modules that were installed. If the lockfile is present in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of modules are releases that match the initial specification.
 
@@ -210,9 +213,9 @@ function Install-ModuleFast {
     [Switch]$NoPSModulePathUpdate,
     #Setting this won't add the default destination to your powershell.config.json. This really only matters on Windows.
     [Switch]$NoProfileUpdate,
-    #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range.
+    #Setting this will check for newer modules if your installed modules are not already at the upper bound of the required version range. Note that specifying this will also clear the local request cache for remote repositories which will result in slower evaluations if the information has not changed.
     [Switch]$Update,
-    #Consider prerelease packages in the evaluation. Note that if a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting.
+    #Prerelease packages will be included in ModuleFast evaluation. If a non-prerelease package has a prerelease dependency, that dependency will be included regardless of this setting. If this setting is specified, all packages will be evaluated for prereleases regardless of if they have a prerelease indicator such as '!' in their specification name, but will still be subject to specification version constraints that would prevent a prerelease from installing.
     [Switch]$Prerelease,
     #Using the CI switch will write a lockfile to the current folder. If this file is present and -CI is specified in the future, ModuleFast will only install the versions specified in the lockfile, which is useful for reproducing CI builds even if newer versions of software come out.
     [Switch]$CI,
@@ -220,10 +223,11 @@ function Install-ModuleFast {
     [Switch]$DestinationOnly,
     #How many concurrent installation threads to run. Each installation thread, given sufficient bandwidth, will likely saturate a full CPU core with decompression work. This defaults to the number of logical cores on the system. If your system uses HyperThreading and presents more logical cores than physical cores available, you may want to set this to half your number of logical cores for best performance.
     [int]$ThrottleLimit = [Environment]::ProcessorCount,
-    #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if CI is not present. It is generally not recommended to change this setting.
+    #The path to the lockfile. By default it is requires.lock.json in the current folder. This is ignored if -CI parameter is not present. It is generally not recommended to change this setting.
     [string]$CILockFilePath = $(Join-Path $PWD 'requires.lock.json'),
+    #A list of ModuleFastInfo objects to install. This parameterset is used when passing a plan to ModuleFast via the pipeline and is generally not used directly.
     [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'ModuleFastInfo')][ModuleFastInfo[]]$ModuleFastInfo,
-    #Output a list of specifications for the modules to install. This is the same as -WhatIf but without the additional WhatIf Output
+    #Outputs the installation plan of modules not already available and needing to be installed to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date. This is functionally the same as -WhatIf but without the additional WhatIf Output
     [Switch]$Plan,
     #This will output the resulting modules that were installed.
     [Switch]$PassThru
@@ -559,7 +563,7 @@ function Get-ModuleFastPlan {
       }
 
       if ($currentModuleSpec.Guid -ne [Guid]::Empty) {
-        Write-Warning "${currentModuleSpec}: A GUID constraint was found in the module spec. ModuleSpec will currently only verify GUIDs after the module has been installed, so a plan may not be accurate. It is not recommended to match modules by GUID in ModuleFast."
+        Write-Warning "${currentModuleSpec}: A GUID constraint was found in the module spec. ModuleSpec will currently only verify GUIDs after the module has been installed, so a plan may not be accurate. It is not recommended to match modules by GUID in ModuleFast, but instead verify package signatures for full package authenticity."
       }
 
       Write-Debug "${currentModuleSpec}: Processing Response"
