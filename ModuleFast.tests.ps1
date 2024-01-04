@@ -537,6 +537,10 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'PreReleaseTest' -DestinationOnly -PassThru | Should -BeNullOrEmpty
   }
 
+  It '-DestinationOnly works on modules with dependencies' {
+    Install-ModuleFast @imfParams 'Az.Compute' -DestinationOnly -PassThru | Should -HaveCount 2
+  }
+
   It 'Errors trying to install prerelease over regular module' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
     { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }

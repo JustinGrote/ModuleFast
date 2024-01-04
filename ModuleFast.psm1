@@ -791,7 +791,7 @@ function Get-ModuleFastPlan {
             Update = $Update
             BestCandidate = ([ref]$bestLocalCandidate)
           }
-          if ($DestinationOnly) { $findLocalParams.Destination = $Destination }
+          if ($DestinationOnly) { $findLocalParams.ModulePaths = $Destination }
 
           [ModuleFastInfo]$localMatch = Find-LocalModule @findLocalParams $dependencySpec
           if ($localMatch) {
