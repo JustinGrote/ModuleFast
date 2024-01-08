@@ -9,7 +9,7 @@ using namespace System.Reflection
 [CmdletBinding(PositionalBinding = $false)]
 param (
   #Specify a specific release to use, otherwise 'latest' is used
-  [string]$Release = $ENV:MFRELEASE ?? 'latest',
+  [string]$Release = $(if ($ENV:MFRELEASE) { $ENV:MFRELEASE } else { 'latest' }),
   #Specify the user
   [string]$User = 'JustinGrote',
   #Specify the repo
@@ -23,7 +23,7 @@ param (
   #Path of the module to bootstrap. You normally won't change this but you can override it if you want
   [string]$Uri = $(
     $base = "https://github.com/$User/$Repo/releases/{0}/$ModuleFile";
-    $version = $Release -eq 'latest' ? 'latest/download' : "download/$Release";
+    $version = if ($Release -eq 'latest') { 'latest/download' } else { "download/$Release"}
     $base -f $version
   ),
   #All additional arguments passed to this script will be passed to Install-ModuleFast
