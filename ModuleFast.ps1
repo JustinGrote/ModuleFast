@@ -4,6 +4,7 @@ using namespace System.IO.Compression
 using namespace System.Reflection
 
 #requires -version 7.2
+
 # This is the bootstrap script for Modules
 [CmdletBinding(PositionalBinding = $false)]
 param (
@@ -34,7 +35,14 @@ param (
   [Parameter(DontShow)]
   [switch]$UseMain
 )
+
 $ErrorActionPreference = 'Stop'
+
+#Bootstrap via IEX does not evaluate requires so we need an additional check here:
+if ($PSVersionTable.PSVersion -lt '7.2.0') {
+  throw [NotSupportedException]'The ModuleFast Bootstrap script requires PowerShell 7.2 or higher. Specific ModuleFast versions may have more strict requirements.'
+}
+
 
 
 #We need to load the versioning assembly before we load the dependent classes
