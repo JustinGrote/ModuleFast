@@ -29,16 +29,16 @@ Get-Help Install-ModuleFast -Full
 
 ### Single Line Installation (good for CI/CD)
 
-This syntax allows you to both load and invoke Install-Modulefast. Any additional arguments you pass to the command are the same as if you provided them as arguments to Install-ModuleFast
+This syntax allows you to both load and invoke Install-Modulefast. Any additional arguments you pass to the command are the same as if you provided them as arguments to Install-ModuleFast. The module will automatically unload upon completion.
 
 ```powershell
 & ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) ImportExcel
 ```
 
-The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
+The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific GitHub release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
 
 ```powershell
-& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release '1.0' ImportExcel
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release 'v0.1.2' ImportExcel
 ```
 
 ### ModuleSpecification Install
