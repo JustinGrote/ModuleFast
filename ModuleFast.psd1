@@ -33,7 +33,7 @@
     Description       = 'Optimizes the PowerShell Module Installation Process to be as fast as possible and operate in CI/CD scenarios in a declarative manner'
 
     # Minimum version of the PowerShell engine required by this module
-    PowerShellVersion = '7.3' #Due to use of CLEAN block
+    PowerShellVersion = '7.2' #Due to use of CLEAN block
 
     # Name of the PowerShell host required by this module
     # PowerShellHostName = ''
