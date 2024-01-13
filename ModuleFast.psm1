@@ -1879,7 +1879,7 @@ function Read-RequiredSpecFile ($RequiredSpecPath) {
 }
 
 filter Resolve-FolderVersion([NuGetVersion]$version) {
-  if ($version.IsLegacyVersion) {
+  if ($version.IsLegacyVersion -or $version.OriginalVersion -match '\d+\.\d+\.\d+\.\d+') {
     return $version.version
   }
   [Version]::new($version.Major, $version.Minor, $version.Patch)

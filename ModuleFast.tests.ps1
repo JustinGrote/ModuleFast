@@ -429,7 +429,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Item $installTempPath\Az.Accounts\*\Az.Accounts.psd1 | Should -Not -BeNullOrEmpty
   }
   It '4 section version numbers (VMware.PowerCLI)' {
-    Install-ModuleFast @imfParams 'VMware.VimAutomation.Common=13.2.0.22643733'
+    $actual = Install-ModuleFast @imfParams 'VMware.VimAutomation.Common=13.2.0.22643733' -PassThru
     Get-Item $installTempPath\VMware*\*\*.psd1 | ForEach-Object {
       $moduleFolderVersion = $_ | Split-Path | Split-Path -Leaf
       Import-PowerShellDataFile -Path $_.FullName | Select-Object -ExpandProperty ModuleVersion | Should -Be $moduleFolderVersion
@@ -437,6 +437,14 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Get-Module VMWare* -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Should -HaveCount 2
+  }
+  It '4 section version numbers with repeated zeroes' {
+    $actual = Install-ModuleFast @imfParams 'xDSCResourceDesigner=1.13.0.0' -PassThru
+    $resolvedPath = Resolve-Path $actual.Location.LocalPath
+    Split-Path $resolvedPath -Leaf | Should -Be '1.13.0.0'
+    Get-Module xDSCResourceDesigner -ListAvailable
+		| Limit-ModulePath $installTempPath
+		| Should -HaveCount 1
   }
   It 'lots of dependencies (Az)' {
     Install-ModuleFast @imfParams 'Az'
