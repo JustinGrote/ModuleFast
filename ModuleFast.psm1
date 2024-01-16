@@ -203,6 +203,8 @@ function Install-ModuleFast {
 
     #Provide a required module specification path to install from. This can be a local psd1/json file, or a remote URL with a psd1/json file in supported manifest formats, or a .ps1/.psm1 file with a #Requires statement.
     [Parameter(Mandatory, ParameterSetName = 'Path')][string]$Path,
+    #Explicitly specify the type of SpecFile to use. ModuleFast has some limited autodetection capability for ModuleBuilder and PSDepend formats, you should use this parameter if they explicitly fail. This is ignored if the file is not a .psd1 file.
+    [Parameter(ParameterSetName = 'Path')][SpecFileType]$SpecFileType = [SpecFileType]::AutoDetect,
     #Where to install the modules. This defaults to the builtin module path on non-windows and a custom LOCALAPPDATA location on Windows. You can also specify 'CurrentUser' to install to the Documents folder on Windows Only (this is not recommended)
     [string]$Destination,
     #The repository to scan for modules. TODO: Multi-repo support
@@ -312,7 +314,7 @@ function Install-ModuleFast {
         break
       }
       'Path' {
-        $ModulesToInstall = ConvertFrom-RequiredSpec -RequiredSpecPath $Path
+        $ModulesToInstall = ConvertFrom-RequiredSpec -RequiredSpecPath $Path -SpecFileType $SpecFileType
       }
     }
   }
@@ -325,7 +327,7 @@ function Install-ModuleFast {
           Write-Verbose '🔎 No modules specified to install. Beginning SpecFile detection...'
           $modulesToInstall = if ($CI -and (Test-Path $CILockFilePath)) {
             Write-Debug "Found lockfile at $CILockFilePath. Using for specification evaluation and ignoring all others."
-            ConvertFrom-RequiredSpec -RequiredSpecPath $CILockFilePath
+            ConvertFrom-RequiredSpec -RequiredSpecPath $CILockFilePath -SpecFileType $SpecFileType
           } else {
             $Destination = $PWD
             $specFiles = Find-RequiredSpecFile $Destination -CILockFileHint $CILockFilePath
@@ -334,7 +336,7 @@ function Install-ModuleFast {
             }
             foreach ($specfile in $specFiles) {
               Write-Verbose "Found Specfile $specFile. Evaluating..."
-              ConvertFrom-RequiredSpec -RequiredSpecPath $specFile
+              ConvertFrom-RequiredSpec -RequiredSpecPath $specFile -SpecFileType $SpecFileType
             }
           }
         }
@@ -1052,9 +1054,143 @@ function Import-ModuleManifest {
   }
 }
 
+function ConvertFrom-PSDepend {
+  [OutputType([ModuleFastSpec[]])]
+  param(
+    [hashtable]$PSDependManifest
+  )
+
+  $initialSpec = [ordered]@{}
+  foreach ($key in $PSDependManifest.Keys) {
+    $value = $PSDependManifest[$key]
+
+    if ($key -isnot [string]) {
+      throw [InvalidDataException]"PSDepend Parse: Manifest is invalid. Keys must be strings. Found $key $($key.GetType().FullName)"
+    }
+
+    if ($key -like '*/*') {
+      Write-Debug "PSDepend Parse: Skipping Unsupported GitHub module $key"
+      continue
+    }
+
+    if ($key -match '^(.+)::(.+)$') {
+      if ($matches[0] -ne 'PSGalleryModule') {
+        Write-Debug "PSDepend Parse: Skipping $key because its extended type is not PSGalleryModule"
+        continue
+      } else {
+        Write-Debug "PSDepend Parse: Adding $key $value)"
+        $initialSpec[$matches[1]] = $value
+        continue
+      }
+    } elseif ($value -is [string]) {
+      #If the key doesn't have any special formats and the value is a string, we can assume it is a direct "shorthand" specification
+      $initialSpec[$key] = $value
+      continue
+    }
+
+    #At this point there should only be PSDepend "Extended" Syntax objects
+    if ($value -isnot [hashtable]) {
+      throw [NotSupportedException]'PSDepend Parse: Value target must be a string or hashtable'
+    }
+
+    if ($value.DependencyType -ne 'PSGalleryModule') {
+      Write-Debug "PSDepend Parse: Skipping $key because its extended DependencyType is not PSGalleryModule"
+      continue
+    }
+
+    if ($value.Parameters.Repository) {
+      Write-Warning "PSDepend Parse: Repository specification detected for $key. This is not currently supported and will use the default Source for now."
+    }
+
+    $version = $value.Version ?? 'latest'
+
+    #TODO: Repository support
+    if (-not $value.Name) {
+      Write-Debug 'PSDepend Parse: Skipping $key because no Name property was specified'
+    }
+
+    if ($value.Parameters.AllowPrerelease) {
+      Write-Debug "PSDepend Parse: Prerelease detected for $key"
+      $value.Name = "!$($value.Name)"
+    }
+
+    Write-Debug "PSDepend Parse: Adding $key extended module name $($value.Name) $version"
+    $initialSpec[$value.Name] = $version
+  }
+
+  foreach ($entry in $initialspec.GetEnumerator()) {
+    if ($entry.Value -eq 'latest') {
+      [ModuleFastSpec]::new($entry.Key)
+    } else {
+      [ModuleFastSpec]::new($entry.Key, $entry.Value)
+    }
+  }
+}
+
+function ConvertFrom-PSResourceGet {
+  [OutputType([ModuleFastSpec[]])]
+  param(
+    [hashtable]$PSDependManifest
+  )
+
+  $initialSpec = [ordered]@{}
+  foreach ($key in $PSDependManifest.Keys) {
+    $value = $PSDependManifest[$key]
+
+    if ($key -isnot [string]) {
+      throw [InvalidDataException]"PSResourceGet Parse: Manifest is invalid. Keys must be strings. Found $key $($key.GetType().FullName)"
+    }
+
+    if ($value -is [string]) {
+      $initialSpec[$key] = $value
+      continue
+    }
+
+    #At this point there should only be PSDepend "Extended" Syntax objects
+    if ($value -isnot [hashtable]) {throw [NotSupportedException]'PSResourceGet Parse: Value target must be a string or hashtable'}
+
+    $version = $value.Version ?? 'latest'
+
+    if ($value.prerelease) {
+      Write-Debug "PSResourceGet Parse: Prerelease detected for $key"
+      $key = "!$key"
+    }
+
+    if ($value.Repository) {
+      Write-Warning "PSResourceGet Parse: Repository specification detected for $key. This is not currently supported and will use the default Source for now."
+    }
+
+    Write-Debug "PSResourceGet Parse: Adding $key extended module name $key $version"
+    $initialSpec[$key] = $version
+  }
+
+  foreach ($entry in $initialspec.GetEnumerator()) {
+    if ($entry.Value -eq 'latest') {
+      [ModuleFastSpec]::new($entry.Key)
+    } else {
+      $version = $entry.Value
+
+      #HACK: This handles a PSResourceGet/RequiresModule quirk where '1.0.5' is meant to be a specific version, not a minimum version which is what the NuGet version spec defines it as.
+      # https://learn.microsoft.com/en-us/nuget/concepts/package-versioning?tabs=semver20sort
+      if ($version.StartsWith('[') -or $version.StartsWith('(') -or $version.Contains('*')) {
+        $version = [VersionRange]::Parse($entry.Value)
+      }
+
+      [ModuleFastSpec]::new($entry.Key, $version)
+    }
+  }
+}
+
 #endregion Private
 
 #region Classes
+
+enum SpecFileType {
+  AutoDetect
+  ModuleFast
+  PSResourceGet #Note: RequiredModules seems to be semantically close enough to PSResourceGet to use the same parser
+  PSDepend
+}
 
 #This is a module construction helper to create "getters" in classes. The getters must be defined as a static hidden class prefixed with Get_ (case sensitive) and take a single parameter of the PSObject type that will be an instance of the class object for you to act on. Place this in your class constructor to automatically add the getters to the class.
 function Add-Getters ([Parameter(Mandatory, ValueFromPipeline)][Type]$Type) {
@@ -1425,15 +1561,6 @@ class ModuleFastSpec {
 }
 [ModuleFastSpec] | Add-Getters
 
-
-#The supported hashtable types
-enum HashtableType {
-  ModuleSpecification
-  PSDepend
-  RequiredModule
-  NugetRange
-}
-
 #endRegion Classes
 
 #region Helpers
@@ -1744,7 +1871,8 @@ filter ConvertFrom-RequiredSpec {
   [OutputType([ModuleFastSpec[]])]
   param(
     [Parameter(Mandatory, ParameterSetName = 'File')][string]$RequiredSpecPath,
-    [Parameter(Mandatory, ParameterSetName = 'Object')]$RequiredSpec
+    [Parameter(Mandatory, ParameterSetName = 'Object')]$RequiredSpec,
+    [SpecFileType]$SpecFileType
   )
   $ErrorActionPreference = 'Stop'
 
@@ -1775,9 +1903,26 @@ filter ConvertFrom-RequiredSpec {
   }
 
   if ($RequiredSpec -is [IDictionary]) {
+
+    if ($SpecFileType -eq 'AutoDetect') {
+      $SpecFileType = Select-RequiredSpecFileType $RequiredSpec
+    }
+    if ($SpecFileType -eq 'AutoDetect') {throw 'There was an unexpected error processing the spec file type. This is a bug that should be reported.'}
+
+    switch ($SpecFileType) {
+      ([SpecFileType]::PSDepend) {
+        Write-Debug 'Requires Parse: PSDepend Spec specified, evaluating...'
+        return ConvertFrom-PSDepend $requiredSpec
+      }
+      ([SpecFileType]::PSResourceGet) {
+        Write-Debug 'Requires Parse: PSResourceGet Spec specified, evaluating...'
+        return ConvertFrom-PSResourceGet $requiredSpec
+      }
+    }
+
     foreach ($kv in $RequiredSpec.GetEnumerator()) {
       if ($kv.Value -is [IDictionary]) {
-        throw [NotImplementedException]'TODO: PSResourceGet/PSDepend full syntax'
+        throw [NotSupportedException]'ModuleFast SpecFile detected but the value is a hashtable. This is not supported. Try using the -SpecFileType parameter if you expected another format'
       }
       if ($kv.Value -isnot [string]) {
         throw [NotSupportedException]'Only strings and hashtables are supported on the right hand side of the = operator.'
@@ -1787,12 +1932,20 @@ filter ConvertFrom-RequiredSpec {
         continue
       }
       if ($kv.Value -as [NuGetVersion]) {
-        [ModuleFastSpec]"$($kv.Name)=$($kv.Value)"
+        [ModuleFastSpec]::new($kv.Name, $kv.Value)
+        continue
+      }
+      if ($kv.Value -as [VersionRange]) {
+        [ModuleFastSpec]::new($kv.Name, ($kv.Value -as [VersionRange]))
         continue
       }
 
       #All other potential options (<=, @, :, etc.) are a direct merge
-      [ModuleFastSpec]"$($kv.Name)$($kv.Value)"
+      try {
+        [ModuleFastSpec]"$($kv.Name)$($kv.Value)"
+      } catch {
+        throw [NotSupportedException]"Could not parse $($kv.Value) as a valid ModuleFastSpec. Check out the simplified syntax instructions for your options."
+      }
     }
     return
   }
@@ -1820,6 +1973,29 @@ function Find-RequiredSpecFile ([string]$Path) {
     throw [NotSupportedException]"Could not find any required spec files in $Path. Verify the path is correct or provide Module Specifications either via -Path or -Specification"
   }
   return $requireFiles
+}
+
+function Select-RequiredSpecFileType ([IDictionary]$requiredSpec) {
+  Write-Debug 'SpecFile Parse: Attempting to auto-detect SpecFile type'
+  foreach ($key in $requiredSpec.Keys) {
+    if ($key -match '::|/') {
+      Write-Debug 'SpecFile Parse: Auto-detected SpecFile type as PSDepend due to presence of :: or / in keys'
+      return [SpecFileType]::PSDepend
+    }
+
+    if ($requiredSpec[$key] -is [IDictionary]) {
+      if ($requiredSpec[$key].ContainsKey('DependencyType')) {
+        Write-Debug 'SpecFile Parse: Auto-detected SpecFile type as PSDepend due to presence of DependencyType key'
+        return [SpecFileType]::PSDepend
+      }
+      if ($requiredSpec[$key].ContainsKey('Repository') -or $requiredSpec[$key].ContainsKey('Version')) {
+        Write-Debug 'SpecFile Parse: Auto-detected SpecFile type as PSResourceGet/RequiredModules due to presence of Repository or Version key'
+        return [SpecFileType]::PSResourceGet
+      }
+    }
+  }
+  Write-Debug 'SpecFile Parse: Auto-detected SpecFile type as ModuleFast due to lack of other indicators'
+  return [SpecFileType]::ModuleFast
 }
 
 function Read-RequiredSpecFile ($RequiredSpecPath) {

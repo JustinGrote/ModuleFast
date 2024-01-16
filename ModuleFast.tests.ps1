@@ -581,6 +581,14 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     $modulesToInstall = Install-ModuleFast @imfParams -Path $specFilePath -Plan
     #TODO: Verify individual modules and versions
     $modulesToInstall | Should -Not -BeNullOrEmpty
+    if ($modules) {
+      foreach ($module in $modules) {
+        $module | Should -BeIn $modulesToInstall
+        $modulesToInstall.Remove($module)
+      }
+      #All modules should be removed at this point
+      $modulesToInstall | Should -BeNullOrEmpty
+    }
   } -TestCases @(
     @{
       Name = 'PowerShell Data File'
@@ -605,6 +613,14 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     @{
       Name = 'DynamicManifest'
       File = 'Dynamic.psd1'
+    },
+    @{
+      Name = 'ModuleBuilder'
+      File = 'ModuleBuilder-RequiredModules.psd1'
+    },
+    @{
+      Name = 'PSDepend-Implicit'
+      File = 'PSDepend.psd1'
     }
   )
 
