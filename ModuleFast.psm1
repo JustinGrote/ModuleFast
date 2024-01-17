@@ -1061,6 +1061,15 @@ function ConvertFrom-PSDepend {
   )
 
   $initialSpec = [ordered]@{}
+
+  if ($PSDependManifest.ContainsKey('PSDependOptions')) {
+    $options = $PSDependManifest['PSDependOptions']
+    if ($options.DependencyType) {
+      throw [NotSupportedException]"PSDepend Parse: Top-Level DependencyType in PSDependOptions is not currently supported."
+    }
+    $PSDependManifest.Remove('PSDependOptions')
+  }
+
   foreach ($key in $PSDependManifest.Keys) {
     $value = $PSDependManifest[$key]
 
