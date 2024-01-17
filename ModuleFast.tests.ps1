@@ -624,6 +624,13 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     }
   )
 
+  It 'Fails if PSDepend File has PSDependOptions DependencyType set' {
+    $SCRIPT:Mocks = Resolve-Path "$PSScriptRoot/Test/Mocks"
+    $specFilePath = Join-Path $Mocks 'PSDepend-NotSupported.psd1'
+    { Install-ModuleFast @imfParams -Path $specFilePath -Plan }
+    | Should -Throw '*DependencyType*'
+  }
+
   It 'Fails for script if #Requires is not Present' {
     $scriptPath = Join-Path $testDrive 'norequires.ps1'
     {
