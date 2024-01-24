@@ -1063,11 +1063,14 @@ function ConvertFrom-PSDepend {
   $initialSpec = [ordered]@{}
 
   if ($PSDependManifest.ContainsKey('PSDependOptions')) {
+    Write-Debug 'PSDepend Parse: PSDependOptions detected. Removing...'
     $options = $PSDependManifest['PSDependOptions']
     if ($options.DependencyType) {
       throw [NotSupportedException]"PSDepend Parse: Top-Level DependencyType in PSDependOptions is not currently supported."
     }
-    Write-Debug 'PSDepend Parse: PSDependOptions detected. Removing...'
+    if ($options.Target) {
+      Write-Warning "PSDepend Parse: Target in PSDependOptions is not currently supported and will be ignored. Ensure you have -Destination $($options.Target) specified on the Install-ModuleFast command."
+    }
     $PSDependManifest.Remove('PSDependOptions')
   }
 
