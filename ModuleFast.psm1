@@ -140,7 +140,7 @@ function Install-ModuleFast {
   Installs a specific version of ImportExcel using
 
   .EXAMPLE
-  Install-ModuleFast 'ImportExcel' -Destination 'CurrentUser' -NoProfileUpdate -NoPSModulePathUpdate
+  Install-ModuleFast 'ImportExcel' -Destination 'CurrentUser'
 
   Installs ImportExcel to the legacy PowerShell Modules folder in My Documents on Windows only, but does not update the PSModulePath or the user profile to include the new module path. This behavior is similar to Install-Module or Install-PSResource.
 
@@ -240,6 +240,9 @@ function Install-ModuleFast {
     # Setup the Destination repository
     $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
 
+    # Get the current PSModulePath
+    $PSModulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
+
     #Clear the ModuleFastCache if -Update is specified to ensure fresh lookups of remote module availability
     if ($Update) {
       Clear-ModuleFastCache
@@ -250,6 +253,10 @@ function Install-ModuleFast {
     } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {
       $windowsDefaultDocumentsPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell/Modules'
       $Destination = $windowsDefaultDocumentsPath
+      # if CurrentUser and is on Windows, we do not need to update the PSModulePath or the user profile.
+      # this allows for a similar experience to Install-Module and Install-PSResource
+      $NoPSModulePathUpdate = $true
+      $NoProfileUpdate = $true
     }
 
     # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
