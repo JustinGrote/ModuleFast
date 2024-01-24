@@ -1067,6 +1067,7 @@ function ConvertFrom-PSDepend {
     if ($options.DependencyType) {
       throw [NotSupportedException]"PSDepend Parse: Top-Level DependencyType in PSDependOptions is not currently supported."
     }
+    Write-Debug 'PSDepend Parse: PSDependOptions detected. Removing...'
     $PSDependManifest.Remove('PSDependOptions')
   }
 
@@ -1989,6 +1990,10 @@ function Select-RequiredSpecFileType ([IDictionary]$requiredSpec) {
   foreach ($key in $requiredSpec.Keys) {
     if ($key -match '::|/') {
       Write-Debug 'SpecFile Parse: Auto-detected SpecFile type as PSDepend due to presence of :: or / in keys'
+      return [SpecFileType]::PSDepend
+    }
+    if ($key -eq 'PSDependOptions') {
+      Write-Debug 'SpecFile Parse: Auto-detected SpecFile type as PSDepend due to presence of PSDependOptions key'
       return [SpecFileType]::PSDepend
     }
 
