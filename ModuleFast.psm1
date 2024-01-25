@@ -28,6 +28,10 @@ $SCRIPT:DefaultSource = 'https://pwsh.gallery/index.json'
 
 #region Public
 
+enum InstallScope {
+  CurrentUser
+}
+
 function Install-ModuleFast {
   <#
   .SYNOPSIS
@@ -232,7 +236,9 @@ function Install-ModuleFast {
     #Outputs the installation plan of modules not already available and needing to be installed to the pipeline as well as the console. This can be saved and provided to Install-ModuleFast at a later date. This is functionally the same as -WhatIf but without the additional WhatIf Output
     [Switch]$Plan,
     #This will output the resulting modules that were installed.
-    [Switch]$PassThru
+    [Switch]$PassThru,
+    #Setting this to "CurrentUser" is the same as specifying the destination as 'Current'. This is a usability convenience.
+    [InstallScope]$Scope
   )
   begin {
     trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
@@ -248,6 +254,9 @@ function Install-ModuleFast {
       Clear-ModuleFastCache
     }
 
+    if ($Scope -eq [InstallScope]::CurrentUser) {
+      $Destination = 'CurrentUser'
+    }
     if (-not $Destination) {
       $Destination = $defaultRepoPath
     } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {

@@ -545,6 +545,27 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'PreReleaseTest' -DestinationOnly -PassThru | Should -BeNullOrEmpty
   }
 
+  #TODO: Possibly mock this so we don't touch the testing system documents directory
+  It 'Destination CurrentUser installs to $HOME\Documents\PowerShell\Modules' {
+    try {
+      Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
+      Install-ModuleFast @imfParams 'PrereleaseTest' -Destination CurrentUser
+      Resolve-Path $HOME\Documents\PowerShell\Modules\PrereleaseTest -EA Stop
+    } finally {
+      Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  It 'Scope CurrentUser installs to $HOME\Documents\PowerShell\Modules' {
+    try {
+      Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
+      Install-ModuleFast @imfParams 'PrereleaseTest' -Scope CurrentUser
+      Resolve-Path $HOME\Documents\PowerShell\Modules\PrereleaseTest -EA Stop
+    } finally {
+      Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+
   It '-DestinationOnly works on modules with dependencies' {
     Install-ModuleFast @imfParams 'Az.Compute' -DestinationOnly -PassThru | Should -HaveCount 2
   }
