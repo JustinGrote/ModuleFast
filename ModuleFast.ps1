@@ -102,8 +102,9 @@ if ($installArgs) {
   try {
     [string]$bootstrapScript = "$EntryPoint $($installArgs -join ' ')"
     Write-Debug "Detected we were started with args, running $bootstrapScript"
-    #TODO: Find a less gross way to do this than Invoke-Expression
-    Invoke-Expression $bootstrapScript
+    #Because we are using a module entry point, we don't need a child scope, we can run in current scope which will just
+    #pass to the module
+    . ([scriptblock]::Create($bootstrapScript))
   } finally {
     #Remove the bootstrap module if args were specified, otherwise persist it in memory
     Remove-Module $bootstrapModule
