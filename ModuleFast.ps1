@@ -43,8 +43,6 @@ if ($PSVersionTable.PSVersion -lt '7.2.0') {
   throw [NotSupportedException]'The ModuleFast Bootstrap script requires PowerShell 7.2 or higher. Specific ModuleFast versions may have more strict requirements.'
 }
 
-
-
 #We need to load the versioning assembly before we load the dependent classes
 #We inline this in order to keep ModuleFast self-contained
 function Import-NuGetVersioningAssembly {
@@ -101,11 +99,15 @@ if ($UseMain) {
 }
 
 if ($installArgs) {
-  Write-Debug "Detected we were started with args, running $Entrypoint $($installArgs -join ' ')"
-  & $EntryPoint @installArgs
+  try {
+    Write-Debug "Detected we were started with args, running $Entrypoint $($installArgs -join ' ')"
+    #TODO: Find a less gross way to do this than Invoke-Expression
+    Invoke-Expression "$EntryPoint $($installArgs -join ' ')"
+  } finally {
+    #Remove the bootstrap module if args were specified, otherwise persist it in memory
+    Remove-Module $bootstrapModule
+  }
 
-  #Remove the bootstrap module if args were specified, otherwise persist it in memory
-  Remove-Module $bootstrapModule
 }
 
 
