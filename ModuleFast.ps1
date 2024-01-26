@@ -100,14 +100,12 @@ if ($UseMain) {
 
 if ($installArgs) {
   try {
-    Write-Debug "Detected we were started with args, running $Entrypoint $($installArgs -join ' ')"
+    [string]$bootstrapScript = "$EntryPoint $($installArgs -join ' ')"
+    Write-Debug "Detected we were started with args, running $bootstrapScript"
     #TODO: Find a less gross way to do this than Invoke-Expression
-    Invoke-Expression "$EntryPoint $($installArgs -join ' ')"
+    Invoke-Expression $bootstrapScript
   } finally {
     #Remove the bootstrap module if args were specified, otherwise persist it in memory
     Remove-Module $bootstrapModule
   }
-
 }
-
-
