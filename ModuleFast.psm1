@@ -1776,7 +1776,7 @@ function Find-LocalModule {
       $manifestPath = Join-Path $moduleFolder $manifestName
 
       if (Test-Path $ModuleFolder) {
-        $candidatePaths.Add([Tuple]::Create($moduleVersion, $manifestPath))
+        $candidatePaths.Add([Tuple]::Create([version]$moduleVersion, $manifestPath))
       }
     } else {
       #Check for versioned module folders next and sort by the folder versions to process them in descending order.
@@ -1807,7 +1807,7 @@ function Find-LocalModule {
           }
         }
 
-        $candidatePaths.Add([Tuple]::Create($version, $PSItem))
+        $candidatePaths.Add([Tuple]::Create([Version]$version, $PSItem))
       }
     }
 
@@ -1820,7 +1820,7 @@ function Find-LocalModule {
         #NOTE: This does result in Import-PowerShellData getting called twice which isn't ideal for performance, but classic modules should be fairly rare and not worth optimizing.
         [version]$classicVersion = (Import-ModuleManifest $classicManifestPath).ModuleVersion
         Write-Debug "${ModuleSpec}: Found classic module $classicVersion at $moduleBaseDir"
-        $candidatePaths.Add([Tuple]::Create($classicVersion, $moduleBaseDir))
+        $candidatePaths.Add([Tuple[Version, String]]::new($classicVersion, $moduleBaseDir))
       }
     }
 
