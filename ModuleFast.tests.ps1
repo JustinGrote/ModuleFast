@@ -736,7 +736,12 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     $actual | Should -BeLike '*incomplete installation detected*'
     Test-Path $incompleteItemPath | Should -BeFalse
   }
-
+  It 'PassThru has proper matching output' {
+    $actual = Install-ModuleFast @imfParams -Specification 'PrereleaseTest=0.0.1', 'ImportExcel=7.8.6', 'PendingReboot=0.9.0.6' -PassThru
+    ($actual | Where-Object Name -EQ 'ImportExcel').ModuleVersion | Should -Be '7.8.6'
+    ($actual | Where-Object Name -EQ 'PrereleaseTest').ModuleVersion | Should -Be '0.0.1'
+    ($actual | Where-Object Name -EQ 'PendingReboot').ModuleVersion | Should -Be '0.9.0.6'
+  }
   It 'PassThru only reports on installed modules' {
     Install-ModuleFast @imfParams -Specification 'Pester=5.4.0', 'Pester=5.4.1' -PassThru | Should -HaveCount 2
     Install-ModuleFast @imfParams -Specification 'Pester=5.4.0', 'Pester=5.4.1' -PassThru | Should -HaveCount 0
