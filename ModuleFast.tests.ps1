@@ -264,6 +264,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           ModuleName = 'PrereleaseTest'
         },
         @{
+          Spec       = 'ImportExcel<2'
+          ModuleName = 'ImportExcel'
+          Check      = {
+            $actual.ModuleVersion | Should -Be '1.99'
+          }
+        },
+        @{
           Spec       = 'PnP.PowerShell:2.2.*'
           ModuleName = 'PnP.PowerShell'
           Check      = {
