@@ -1019,9 +1019,9 @@ function Install-ModuleFastHelper {
         $installed++
         Write-Verbose "$($completedJobContext.Module): Installed to $($completedJobContext.InstallPath)"
         Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status "Install: $installed/$($ModuleToInstall.count) Modules" -PercentComplete ((($installed / $ModuleToInstall.count) * 50) + 50)
-        $context.Module.Location = $completedJobContext.InstallPath
+        $completedJobContext.Module.Location = $completedJobContext.InstallPath
         #Output the module for potential future passthru
-        $context.Module
+        $completedJobContext.Module
       }
 
       if ($PassThru) {
