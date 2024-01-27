@@ -344,6 +344,10 @@ function Install-ModuleFast {
           $modulesToInstall = if ($CI -and (Test-Path $CILockFilePath)) {
             Write-Debug "Found lockfile at $CILockFilePath. Using for specification evaluation and ignoring all others."
             ConvertFrom-RequiredSpec -RequiredSpecPath $CILockFilePath -SpecFileType $SpecFileType
+            if ($Update) {
+              Write-Verbose "-Update was specified but a lockfile was found. Ignoring -Update and using lockfile specification."
+              $Update = $false
+            }
           } else {
             $Destination = $PWD
             $specFiles = Find-RequiredSpecFile $Destination -CILockFileHint $CILockFilePath
