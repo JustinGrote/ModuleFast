@@ -32,13 +32,27 @@ Get-Help Install-ModuleFast -Full
 This syntax allows you to both load and invoke Install-Modulefast. Any additional arguments you pass to the command are the same as if you provided them as arguments to Install-ModuleFast. The module will automatically unload upon completion.
 
 ```powershell
-& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) ImportExcel
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Specification ImportExcel
 ```
 
 The bit.ly link will always point to the latest release of ModuleFast by default. In order to avoid breaking changes, you can pin to a specific GitHub release. This is recommended when using CI systems such as GitHub Actions to install dependencies but is generally not needed on an interactive basis.
 
 ```powershell
-& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release 'v0.1.2' ImportExcel
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release 'v0.2.0' -Specification ImportExcel
+```
+
+### GitHub Action
+
+ModuleFast provides a [GitHub Action](https://github.com/marketplace/actions/modulefast). Details for usage are on the GitHub Marketplace page.
+
+### AnyPackage
+
+ModuleFast is supported with [AnyPackage](https://github.com/anypackage/anypackage), a cross-platform PowerShell unified package management interface. Shorthand specifications are supported. More information is available on the provider page.
+
+```powershell
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Specification AnyPackage.ModuleFast
+Import-Module AnyPackage.ModuleFast
+AnyPackage\Install-Package -provider ModuleFast -Name 'ImportExcel<4','Pester<4'
 ```
 
 ### ModuleSpecification Install
