@@ -62,20 +62,6 @@ Task AddNugetVersioningAssemblyRequired {
   (Get-Content -Raw -Path $ModuleOutFolderPath\ModuleFast.psd1) -replace [Regex]::Escape('# RequiredAssemblies = @()'), 'RequiredAssemblies = @(".\lib\netstandard2.0\NuGet.Versioning.dll")' | Set-Content -Path $ModuleOutFolderPath\ModuleFast.psd1
 }
 
-Task Test {
-  #Run this in a separate job so as not to lock any NuGet DLL packages for future runs. Runspace would lock the package to this process still.
-  Start-Job {
-    Invoke-Pester
-  } | Receive-Job -Wait -AutoRemoveJob
-}
-
-Task Build @(
-  'Clean'
-  'CopyFiles'
-  'GetNugetVersioningAssembly'
-  'AddNugetVersioningAssemblyRequired'
-)
-
 Task Package.Nuget {
   [string]$repoName = 'ModuleFastBuild-' + (New-Guid)
   Get-ChildItem $ModuleOutFolderPath -Recurse -Include '*.nupkg' | Remove-Item @c -Force
