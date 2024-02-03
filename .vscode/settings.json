@@ -1,3 +1,6 @@
 {
-	"pester.autoRunOnSave": false
+  "files.readonlyInclude": {
+    // Prevent accidents in debugging by editing the Build files and not the source files. It sure would be nice if PowerShell had source maps.
+    "Build/**": true
+  }
 }
