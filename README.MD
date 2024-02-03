@@ -41,7 +41,7 @@ The bit.ly link will always point to the latest release of ModuleFast by default
 & ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release 'v0.2.0' -Specification ImportExcel
 ```
 
-### GitHub Action
+### ![alt text](images/README/image.png) GitHub Action
 
 ModuleFast provides a [GitHub Action](https://github.com/marketplace/actions/modulefast). Details for usage are on the GitHub Marketplace page.
 
