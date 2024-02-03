@@ -23,6 +23,13 @@ using namespace System.Threading.Tasks
 #Probably need to take into account inconsistent state, such as if a dependent module fails then the depending modules should be removed.
 $ErrorActionPreference = 'Stop'
 
+if ($ENV:CI) {
+  Write-Verbose 'CI Environment Variable is set, this indicates a Continuous Integration System is being used. ModuleFast will suppress prompts by setting ConfirmPreference to None and forcing confirmations to false. This is to ensure that ModuleFast can be used in CI/CD systems without user interaction.'
+  #Module Scope which should carry to other called commands
+  $SCRIPT:ConfirmPreference = 'None'
+  $PSDefaultParameterValues['Install-ModuleFast:Confirm'] = $false
+}
+
 #Default Source is PWSH Gallery
 $SCRIPT:DefaultSource = 'https://pwsh.gallery/index.json'
 
@@ -31,6 +38,8 @@ $SCRIPT:DefaultSource = 'https://pwsh.gallery/index.json'
 enum InstallScope {
   CurrentUser
 }
+
+
 
 function Install-ModuleFast {
   <#
@@ -270,7 +279,7 @@ function Install-ModuleFast {
 
     # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
     if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
-      if ($PSCmdlet.ShouldProcess('Create Destination Folder', $Destination)) {
+      if (Approve-Action 'Create Destination Folder' $Destination) {
         New-Item -ItemType Directory -Path $Destination -Force | Out-Null
       }
     }
@@ -386,7 +395,7 @@ function Install-ModuleFast {
 
       #Unless Plan was specified, run the process (WhatIf will also short circuit).
       #Plan is specified first so that WhatIf message will only show if Plan is not specified due to -or short circuit logic.
-      if ($Plan -or -not $PSCmdlet.ShouldProcess($Destination, "Install $($installPlan.Count) Modules")) {
+      if ($Plan -or -not (Approve-Action $Destination "Install $($installPlan.Count) Modules")) {
         if ($Plan) {
           Write-Verbose "📑 -Plan was specified. Returning a plan including $($installPlan.Count) Module Specifications"
         }
@@ -1697,7 +1706,7 @@ function Add-DestinationToPSModulePath {
   $myProfile = $profile.CurrentUserAllHosts
 
   if (-not (Test-Path $myProfile)) {
-    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
+    if (-not (Approve-Action $myProfile "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
     Write-Verbose 'User All Hosts profile not found, creating one.'
     New-Item -ItemType File -Path $myProfile -Force | Out-Null
   }
@@ -1722,7 +1731,7 @@ function Add-DestinationToPSModulePath {
   $profileLine = $profileLine -replace '##DESTINATION##', $Destination
 
   if ((Get-Content -Raw $myProfile) -notmatch [Regex]::Escape($ProfileLine)) {
-    if (-not $PSCmdlet.ShouldProcess($myProfile, "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the specified destination to your powershell.config.json or to your PSModulePath another way.")) { return }
+    if (-not (Approve-Action $myProfile "Allow ModuleFast to work by adding $Destination to your PSModulePath on startup by appending to your CurrentUserAllHosts profile. If you do not want this, add -NoProfileUpdate to Install-ModuleFast or add the specified destination to your powershell.config.json or to your PSModulePath another way.")) { return }
     Write-Verbose "Adding $Destination to profile $myProfile"
     Add-Content -Path $myProfile -Value "`n`n"
     Add-Content -Path $myProfile -Value $ProfileLine
@@ -2123,6 +2132,26 @@ filter ConvertFrom-ModuleManifest {
     $moduleFastInfo.Guid = $manifestVersion.Guid
   }
   return $moduleFastInfo
+}
+
+#Fixes an issue where ShouldProcess will not respect ConfirmPreference if -Debug is specified
+function Approve-Action {
+  param(
+    [ValidateNotNullOrEmpty()][string]$Target,
+    [ValidateNotNullOrEmpty()][string]$Action,
+    $ThisCmdlet = $PSCmdlet
+  )
+  $ShouldProcessMessage = 'Performing the operation "{0}" on target "{1}"' -f $Action, $Target
+  if ($ENV:CI -or $CI) {
+    Write-Verbose "$ShouldProcessMessage (Auto-Confirmed because `$ENV:CI is specified)"
+    return $true
+  }
+  if ($ConfirmPreference -eq 'None') {
+    Write-Verbose "$ShouldProcessMessage (Auto-Confirmed because `$ConfirmPreference is set to 'None')"
+    return $true
+  }
+
+  return $ThisCmdlet.ShouldProcess($Target, $Action)
 }
 
 #endregion Helpers
