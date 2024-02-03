@@ -140,3 +140,7 @@ This script will use the latest unstable main commit and configure the instance 
 ```powershell
 & ([scriptblock]::Create((iwr 'bit.ly/modulefastmain'))) -UseMain
 ```
+
+# Development
+
+Run `.\build.ps1` which will install all prerequisites (using ModuleFast!) and compile/test the package. After running it once, you can simply use `Invoke-Build` to start a new build. The module will be output into the `Build` Directory by default.
