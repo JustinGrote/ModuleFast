@@ -349,10 +349,9 @@ function Install-ModuleFast {
               $Update = $false
             }
           } else {
-            $Destination = $PWD
-            $specFiles = Find-RequiredSpecFile $Destination -CILockFileHint $CILockFilePath
+            $specFiles = Find-RequiredSpecFile $PWD -CILockFileHint $CILockFilePath
             if (-not $specFiles) {
-              Write-Warning "No specfiles found in $Destination. Please ensure you have a .requires.json or .requires.psd1 file in the current directory, specify a path with -Path, or define specifications with the -Specification parameter to skip this search."
+              Write-Warning "No specfiles found in $PWD. Please ensure you have a .requires.json or .requires.psd1 file in the current directory, specify a path with -Path, or define specifications with the -Specification parameter to skip this search."
             }
             foreach ($specfile in $specFiles) {
               Write-Verbose "Found Specfile $specFile. Evaluating..."

@@ -36,6 +36,8 @@ Task CopyFiles {
     'ModuleFast.psm1'
     'LICENSE'
   ) -Destination $ModuleOutFolderPath
+
+  Copy-Item 'ModuleFast.ps1' -Destination $Destination -Force
 }
 
 Task GetNugetVersioningAssembly {
