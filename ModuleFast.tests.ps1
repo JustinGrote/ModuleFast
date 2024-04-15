@@ -361,8 +361,8 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
   It 'Gets Module with 1 dependency' {
     Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
   }
-  It 'Gets Module with lots of dependencies (Az)' {
-    Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0' } | Should -HaveCount 86
+  It 'Gets all dependencies for a Module with lots of dependencies (Az)' {
+    Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0.0' } | Should -HaveCount 86
   }
   It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
     Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
