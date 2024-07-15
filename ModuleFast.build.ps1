@@ -54,7 +54,7 @@ Task Version {
 }
 
 Task GetNugetVersioningAssembly {
-  Install-Package @c -Name Nuget.Versioning -RequiredVersion $NuGetVersioning -Destination $tempPath -Force | Out-Null
+  PackageManagement\Install-Package @c -Name Nuget.Versioning -RequiredVersion $NuGetVersioning -Destination $tempPath -Force | Out-Null
   Copy-Item @c -Path "$tempPath/NuGet.Versioning.$NuGetVersioning/lib/netstandard2.0/NuGet.Versioning.dll" -Destination $libPath -Recurse -Force
 }
 
