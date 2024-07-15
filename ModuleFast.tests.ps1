@@ -146,7 +146,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual = Get-ModuleFastPlan $Spec
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
-        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        $actual.ModuleVersion | Should -Not -BeNullOrEmpty
         if ($Check) { . $Check }
       } -TestCases $moduleSpecTestCases
 
@@ -154,7 +154,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual = $Spec | Get-ModuleFastPlan
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
-        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        $actual.ModuleVersion | Should -Not -BeNullOrEmpty
         if ($Check) { . $Check }
       } -TestCases $moduleSpecTestCases
     }
@@ -288,7 +288,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual = Get-ModuleFastPlan $Spec
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
-        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        $actual.ModuleVersion | Should -Not -BeNullOrEmpty
         if ($Check) { . $Check }
       } -TestCases $stringTestCases
 
@@ -296,7 +296,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual = $Spec | Get-ModuleFastPlan
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
-        $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Not -BeNullOrEmpty
+        $actual.ModuleVersion | Should -Not -BeNullOrEmpty
         if ($Check) { . $Check }
       } -TestCases $stringTestCases
     }
@@ -307,7 +307,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
-          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+          $PSItem.ModuleVersion | Should -BeGreaterThan '1.0'
         }
       }
       It 'Strings as Pipeline' {
@@ -315,7 +315,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
-          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+          $PSItem.ModuleVersion | Should -BeGreaterThan '1.0'
         }
       }
       It 'ModuleSpecs as Parameter' {
@@ -323,7 +323,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
-          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+          $PSItem.ModuleVersion | Should -BeGreaterThan '1.0'
         }
       }
       It 'ModuleSpecs as Pipeline' {
@@ -331,7 +331,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
-          $PSItem.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -BeGreaterThan '1.0'
+          $PSItem.ModuleVersion | Should -BeGreaterThan '1.0'
         }
       }
 
@@ -345,7 +345,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       }
       It '-Prerelease overrides even if prerelease is not specified' {
         #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
-        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan -PreRelease
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan -Prerelease
         $actual | Should -HaveCount 2
         $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
           $PSItem.ModuleVersion | Should -Be '0.0.2-prerelease'
@@ -362,13 +362,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
   }
   It 'Gets all dependencies for a Module with lots of dependencies (Az)' {
-    Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0.0' } | Should -HaveCount 86
+    Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' } | Should -HaveCount 86
   }
   It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
     Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
   }
   It 'Gets multiple modules' {
-    Get-ModuleFastPlan @{ModuleName = 'Az'; ModuleVersion = '11.0' }, @{ModuleName = 'VMWare.PowerCli'; ModuleVersion = '13.2' }
+    Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' }, @{ModuleName = 'VMWare.PowerCli'; RequiredVersion = '13.2.0.22746353' }
     | Should -HaveCount 168
   }
 
@@ -384,7 +384,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
     $actual.ModuleVersion | Should -Be '0.0.1'
   }
   It 'Shows Prerelease Modules if Prerelease is specified' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest' -PreRelease
+    $actual = Get-ModuleFastPlan 'PrereleaseTest' -Prerelease
     $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
   It 'Detects Prerelease even if Prerelease not specified' {
@@ -759,7 +759,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
       $credential = [PSCredential]::new('Pester', (Get-Secret -Name 'ReadOnlyPackagesGithubPAT'))
       $actual = Install-ModuleFast @imfParams -Specification 'PrereleaseTest=0.0.1' -Source 'https://nuget.pkg.github.com/justingrote/index.json' -Credential $credential -Plan
       $actual.Name | Should -Be 'PrereleaseTest'
-      $actual.ModuleVersion -as 'NuGet.Versioning.NuGetVersion' | Should -Be '0.0.1'
+      $actual.ModuleVersion | Should -Be '0.0.1'
     }
   }
 
