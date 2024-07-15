@@ -247,7 +247,9 @@ function Install-ModuleFast {
     #This will output the resulting modules that were installed.
     [Switch]$PassThru,
     #Setting this to "CurrentUser" is the same as specifying the destination as 'Current'. This is a usability convenience.
-    [InstallScope]$Scope
+    [InstallScope]$Scope,
+    #The timeout for HTTP requests. This is set to 30 seconds by default. This is generally sufficient for most requests, but you may need to increase this if you are on a slow connection or are downloading large modules.
+    [int]$Timeout = 30
   )
   begin {
     trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
@@ -305,7 +307,7 @@ function Install-ModuleFast {
     #We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
     #it is still a best practice.
     if (-not $SCRIPT:__ModuleFastHttpClient -or $Source -ne $SCRIPT:__ModuleFastHttpClient.BaseAddress) {
-      $SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential
+      $SCRIPT:__ModuleFastHttpClient = New-ModuleFastClient -Credential $Credential -Timeout $Timeout
       if (-not $SCRIPT:__ModuleFastHttpClient) {
         throw 'Failed to create ModuleFast HTTPClient. This is a bug'
       }
@@ -313,6 +315,7 @@ function Install-ModuleFast {
     $httpClient = $SCRIPT:__ModuleFastHttpClient
 
     $cancelSource = [CancellationTokenSource]::new()
+    $cancelSource.CancelAfter([TimeSpan]::FromSeconds($Timeout))
 
     [HashSet[ModuleFastSpec]]$ModulesToInstall = @()
     [List[ModuleFastInfo]]$installPlan = @()
@@ -379,7 +382,7 @@ function Install-ModuleFast {
           $ModulesToInstall.ToArray()
         } else {
           Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-          Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent -DestinationOnly:$DestinationOnly -Destination $Destination
+          Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent -DestinationOnly:$DestinationOnly -Destination $Destination -Timeout $Timeout
         }
       }
 
@@ -441,7 +444,8 @@ function Install-ModuleFast {
 
 function New-ModuleFastClient {
   param(
-    [PSCredential]$Credential
+    [PSCredential]$Credential,
+    [int]$Timeout = 30
   )
   Write-Debug 'Creating new ModuleFast HTTP Client. This should only happen once!'
   $ErrorActionPreference = 'Stop'
@@ -498,7 +502,8 @@ function Get-ModuleFastPlan {
     #By default we use in-place modules if they satisfy the version requirements. This switch will force a search for all latest modules
     [Switch]$Update,
     [PSCredential]$Credential,
-    [HttpClient]$HttpClient = $(New-ModuleFastClient -Credential $Credential),
+    [int]$Timeout = 30,
+    [HttpClient]$HttpClient = $(New-ModuleFastClient -Credential $Credential -Timeout $Timeout),
     [int]$ParentProgress,
     [string]$Destination,
     [switch]$DestinationOnly,
