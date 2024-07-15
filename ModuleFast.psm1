@@ -458,7 +458,7 @@ function New-ModuleFastClient {
   $httpClient = [HttpClient]::new($httpHandler)
   $httpClient.BaseAddress = $Source
   #When in parallel some operations may take a significant amount of time to return
-  $httpClient.Timeout = [TimeSpan]::FromSeconds(30)
+  $httpClient.Timeout = [TimeSpan]::FromSeconds($Timeout)
 
   #If a credential was provided, use it as a basic auth credential
   if ($Credential) {
@@ -884,7 +884,8 @@ function Install-ModuleFastHelper {
     [Parameter(Mandatory)][CancellationToken]$CancellationToken,
     [HttpClient]$HttpClient,
     [switch]$Update,
-    [int]$ThrottleLimit
+    [int]$ThrottleLimit,
+    [int]$Timeout = 30
   )
   BEGIN {
     #We use this token to cancel the HTTP requests if the user hits ctrl-C without having to dispose of the HttpClient.
