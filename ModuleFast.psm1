@@ -2189,7 +2189,7 @@ function Get-CustomPSModulePath {
             return $LocalPSModulePath
         }
     }
-    $GlobalConfig = "$PSHOME\powershell.config.json"
+    $GlobalConfig = Join-Path $PSHOME 'powershell.config.json'
     if (Test-Path -Path $GlobalConfig -PathType Leaf) {
         $json = Get-Content -LiteralPath $globalconfig -Raw | ConvertFrom-Json
         $GlobalPSModulePath = ${json}?.PSModulePath
