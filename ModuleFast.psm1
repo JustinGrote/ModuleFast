@@ -254,6 +254,7 @@ function Install-ModuleFast {
   begin {
     trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
 
+    $CustomPSModulePath = Get-CustomPSModulePath
     # Setup the Destination repository
     $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
 
@@ -269,7 +270,13 @@ function Install-ModuleFast {
       $Destination = 'CurrentUser'
     }
     if (-not $Destination) {
-      $Destination = $defaultRepoPath
+      $Destination =
+      if ($CustomPSModulePath) {
+          $CustomPSModulePath
+      }
+      else {
+          $defaultRepoPath
+      }
     } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {
       $windowsDefaultDocumentsPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell/Modules'
       $Destination = $windowsDefaultDocumentsPath
@@ -2158,6 +2165,38 @@ function Approve-Action {
   }
 
   return $ThisCmdlet.ShouldProcess($Target, $Action)
+}
+function Get-CustomPSModulePath {
+  <#
+  .DESCRIPTION
+  Gets the custom PSModulePath from the powershell.config.json file in the user's profile directory or $PSHOME.
+  user profile is preferred over global profile.
+  .PARAMETER Config
+  The path to the powershell.config.json file. If not specified, it will default to the user's profile directory.
+  this should only be used in testing scenarios.
+  #>
+    [cmdletbinding()]
+    param(
+      [String] $Config
+    )
+    if (-Not $Config) {
+      $Config = Join-Path (Split-Path $PROFILE.CurrentUserCurrentHost) 'powershell.config.json'
+    }
+    if (Test-Path -Path $Config -PathType Leaf) {
+        $json = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+        $LocalPSModulePath = ${json}?.PSModulePath
+        if (-Not [String]::IsNullOrEmpty($LocalPSModulePath)) {
+            return $LocalPSModulePath
+        }
+    }
+    $GlobalConfig = "$PSHOME\powershell.config.json"
+    if (Test-Path -Path $GlobalConfig -PathType Leaf) {
+        $json = Get-Content -LiteralPath $globalconfig -Raw | ConvertFrom-Json
+        $GlobalPSModulePath = ${json}?.PSModulePath
+        if (-Not [String]::IsNullOrEmpty($GlobalPSModulePath)) {
+            $GlobalPSModulePath
+        }
+    }
 }
 
 #endregion Helpers

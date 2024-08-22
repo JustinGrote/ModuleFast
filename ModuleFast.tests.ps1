@@ -72,6 +72,16 @@ InModuleScope 'ModuleFast' {
       }
     }
   }
+  Describe 'Custom Module Path' {
+    It 'Should respect powershell.config.json PSModulePath' {
+      $jsonconfig = New-TemporaryFile
+      $CustomPSModulePath = Join-Path (Split-Path $jsonconfig -Parent) -ChildPath 'CustomPSModulePath'
+        [PSCustomObject]@{
+          PSModulePath = $CustomPSModulePath
+        } | ConvertTo-Json | Set-Content $jsonconfig
+        Get-CustomPSModulePath $jsonconfig | Should -Be $CustomPSModulePath
+    }
+  }
 
   Describe 'Import-ModuleManifest' {
     It 'Reads Dynamic Manifest' {
@@ -770,4 +780,3 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     }
   }
 }
-
