@@ -1654,7 +1654,7 @@ function Get-ModuleInfoAsync {
     | Sort-Object -Property '@type' -Descending
     | Select-Object -ExpandProperty '@id' -First 1
 
-    $Uri = "$registrationBase/$($ModuleId.ToLower())/$Path"
+    $Uri = "$($registrationBase -replace '/$','')/$($ModuleId.ToLower())/$Path"
   }
 
   $requestTask = $SCRIPT:RequestCache[$Uri]
