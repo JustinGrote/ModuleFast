@@ -260,6 +260,14 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           ModuleName = 'PrereleaseTest'
         },
         @{
+          Spec       = 'PrereleaseTest>=0.0.1-prerelease'
+          Check      = {
+            $actual.Name | Should -Be 'PrereleaseTest'
+            $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
+          }
+          ModuleName = 'PrereleaseTest'
+        },
+        @{
           Spec       = 'PrereleaseTest:*'
           ModuleName = 'PrereleaseTest'
         },
