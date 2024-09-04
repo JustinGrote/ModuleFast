@@ -1816,11 +1816,11 @@ function Find-LocalModule {
 
         #We can fast filter items that are below the lower bound, we dont need to read these manifests
         if ($ModuleSpec.Min) {
-          #HACK: Nuget does not correctly convert major.minor.build versions.
+          #HACK: Nuget does not correctly convert major.minor.build versions
           [version]$originalBaseVersion = ($modulespec.Min.OriginalVersion -split '-')[0]
           [Version]$minVersion = $originalBaseVersion.Revision -eq -1 ? $originalBaseVersion : $ModuleSpec.Min.Version
-          if ($minVersion -lt $ModuleSpec.Min.OriginalVersion) {
-            Write-Debug "${ModuleSpec}: Skipping $folder - below the lower bound"
+          if ($version -lt $minVersion) {
+            Write-Debug "${ModuleSpec}: Skipping $folder - $version is below the lower bound of $minVersion"
             return
           }
         }
