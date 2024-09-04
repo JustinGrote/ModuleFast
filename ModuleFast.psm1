@@ -37,6 +37,7 @@ $SCRIPT:DefaultSource = 'https://pwsh.gallery/index.json'
 
 enum InstallScope {
   CurrentUser
+  AllUsers
 }
 
 
@@ -254,34 +255,36 @@ function Install-ModuleFast {
   begin {
     trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
 
-    # Setup the Destination repository
-    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
 
-    # Get the current PSModulePath
-    $PSModulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
 
     #Clear the ModuleFastCache if -Update is specified to ensure fresh lookups of remote module availability
     if ($Update) {
       Clear-ModuleFastCache
     }
 
-    if ($Scope -eq [InstallScope]::CurrentUser) {
-      $Destination = 'CurrentUser'
-    }
+    $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
     if (-not $Destination) {
-      $Destination = $defaultRepoPath
-    } elseif ($IsWindows -and $Destination -eq 'CurrentUser') {
-      $windowsDefaultDocumentsPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell/Modules'
-      $Destination = $windowsDefaultDocumentsPath
-      # if CurrentUser and is on Windows, we do not need to update the PSModulePath or the user profile.
-      # this allows for a similar experience to Install-Module and Install-PSResource
-      $NoPSModulePathUpdate = $true
-      $NoProfileUpdate = $true
+      #Special function that will retrieve the default module path for the current user
+      $Destination = Get-PSDefaultModulePath -AllUsers:($Scope -eq 'AllUsers')
+
+      #Special case for Windows to avoid the default installation path because it has issues with OneDrive
+      $defaultWindowsModulePath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell/Modules'
+      if ($IsWindows -and $Destination -eq $defaultWindowsModulePath -and $Scope -ne 'CurrentUser') {
+        Write-Debug "Windows Documents module folder detected. Changing to $defaultRepoPath"
+        $Destination = $defaultRepoPath
+      }
     }
 
-    # Autocreate the default as a convenience, otherwise require the path to be present to avoid mistakes
-    if ($Destination -eq $defaultRepoPath -and -not (Test-Path $Destination)) {
-      if (Approve-Action 'Create Destination Folder' $Destination) {
+    if (-not $Destination) {
+      throw 'Failed to determine destination path. This is a bug, please report it, it should always have something by this point.'
+    }
+
+    # Require approval to create the destination folder if it is not our default path, otherwise this is automatic
+    if (-not (Test-Path $Destination)) {
+      if ($configRepoPath -or
+          $Destination -eq $defaultRepoPath -or
+          (Approve-Action 'Create Destination Folder' $Destination)
+      ) {
         New-Item -ItemType Directory -Path $Destination -Force | Out-Null
       }
     }
@@ -289,19 +292,13 @@ function Install-ModuleFast {
     $Destination = Resolve-Path $Destination
 
     if (-not $NoPSModulePathUpdate) {
-      if ($defaultRepoPath -ne $Destination -and $Destination -notin $PSModulePaths) {
-        Write-Warning 'Parameter -Destination is set to a custom path not in your current PSModulePath. We will add it to your PSModulePath for this session. You can suppress this behavior with the -NoPSModulePathUpdate switch.'
-        $NoProfileUpdate = $true
-      }
+      # Get the current PSModulePath
+      $PSModulePaths = $env:PSModulePath.Split([Path]::PathSeparator, [StringSplitOptions]::RemoveEmptyEntries)
 
-      $addToPathParams = @{
-        Destination     = $Destination
-        NoProfileUpdate = $NoProfileUpdate
+      #Only update if the module path is not already in the PSModulePath
+      if ($Destination -notin $PSModulePaths) {
+        Add-DestinationToPSModulePath -Destination $Destination -NoProfileUpdate:$NoProfileUpdate -Confirm:$Confirm
       }
-      if ($PSBoundParameters.ContainsKey('Confirm')) {
-        $addToPathParams.Confirm = $PSBoundParameters.Confirm
-      }
-      Add-DestinationToPSModulePath @addtoPathParams
     }
 
     #We want to maintain a single HttpClient for the life of the module. This isn't as big of a deal as it used to be but
@@ -2158,6 +2155,27 @@ function Approve-Action {
   }
 
   return $ThisCmdlet.ShouldProcess($Target, $Action)
+}
+
+#Fetches the module path for the current user or all users.
+#HACK: Uses a private API until https://github.com/PowerShell/PowerShell/issues/15552 is resolved
+function Get-PSDefaultModulePath ([Switch]$AllUsers) {
+    $scopeType = [Management.Automation.Configuration.ConfigScope]
+    $pscType = $scopeType.
+    Assembly.
+    GetType('System.Management.Automation.Configuration.PowerShellConfig')
+
+    $pscInstance = $pscType.
+    GetField('Instance', [Reflection.BindingFlags]'Static,NonPublic').
+    GetValue($null)
+
+    $getModulePathMethod = $pscType.GetMethod('GetModulePath', [Reflection.BindingFlags]'Instance,NonPublic')
+
+    if ($AllUsers) {
+        $getModulePathMethod.Invoke($pscInstance, $scopeType::AllUsers) ?? [Management.Automation.ModuleIntrinsics]::GetPSModulePath('BuiltIn')
+    } else {
+        $getModulePathMethod.Invoke($pscInstance, $scopeType::CurrentUser) ?? [Management.Automation.ModuleIntrinsics]::GetPSModulePath('User')
+    }
 }
 
 #endregion Helpers

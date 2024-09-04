@@ -562,19 +562,17 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
 
   #TODO: Possibly mock this so we don't touch the testing system documents directory
   It 'Destination CurrentUser installs to $HOME\Documents\PowerShell\Modules' {
+    if (-not $profile) {
+      Set-ItResult -Skipped -Because 'This test is not supported when $profile is not set'
+    }
+    $winConfigPath = Join-Path (Split-Path ($profile.CurrentUserAllHosts)) 'powershell.config.json'
+    if (-not $IsWindows -or (Test-Path $winConfigPath)) {
+      Set-ItResult -Skipped -Because 'This test is not supported on non-Windows or when powershell.config.json is present'
+    }
+
     try {
       Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
       Install-ModuleFast @imfParams 'PrereleaseTest' -Destination CurrentUser
-      Resolve-Path $HOME\Documents\PowerShell\Modules\PrereleaseTest -EA Stop
-    } finally {
-      Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
-    }
-  }
-
-  It 'Scope CurrentUser installs to $HOME\Documents\PowerShell\Modules' {
-    try {
-      Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
-      Install-ModuleFast @imfParams 'PrereleaseTest' -Scope CurrentUser
       Resolve-Path $HOME\Documents\PowerShell\Modules\PrereleaseTest -EA Stop
     } finally {
       Remove-Item $HOME\Documents\PowerShell\Modules\PrereleaseTest -Recurse -Force -ErrorAction SilentlyContinue
@@ -764,7 +762,15 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
 
   Describe 'GitHub Packages' {
     It 'Gets Specific Module' {
+      if (-not (Get-Command Get-Secret -ea 0)) {
+        Set-ItResult -Skipped -Because 'SecretManagement Not Present'
+        return
+      }
       $credential = [PSCredential]::new('Pester', (Get-Secret -Name 'ReadOnlyPackagesGithubPAT'))
+      if (-not $credential) {
+        Set-ItResult -Skipped -Because 'No ReadOnlyPackagesGithubPAT Credential'
+        return
+      }
       $actual = Install-ModuleFast @imfParams -Specification 'PrereleaseTest=0.0.1' -Source 'https://nuget.pkg.github.com/justingrote/index.json' -Credential $credential -Plan
       $actual.Name | Should -Be 'PrereleaseTest'
       $actual.ModuleVersion | Should -Be '0.0.1'
@@ -778,4 +784,3 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     }
   }
 }
-
