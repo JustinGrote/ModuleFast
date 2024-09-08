@@ -254,12 +254,16 @@ function Install-ModuleFast {
   )
   begin {
     trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
-
-
-
     #Clear the ModuleFastCache if -Update is specified to ensure fresh lookups of remote module availability
     if ($Update) {
       Clear-ModuleFastCache
+    }
+
+    #Cleanup that allows for shorthand such as pwsh.gallery
+    [Uri]$srcTest = $Source
+    if ($srcTest.Scheme -notin 'http', 'https') {
+      Write-Debug "Appending https and index.json to $Source"
+      $Source = "https://$Source/index.json"
     }
 
     $defaultRepoPath = $(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'powershell/Modules')
@@ -278,6 +282,8 @@ function Install-ModuleFast {
     if (-not $Destination) {
       throw 'Failed to determine destination path. This is a bug, please report it, it should always have something by this point.'
     }
+
+
 
     # Require approval to create the destination folder if it is not our default path, otherwise this is automatic
     if (-not (Test-Path $Destination)) {
