@@ -2142,9 +2142,11 @@ filter ConvertFrom-ModuleManifest {
   }
   return $moduleFastInfo
 }
-
 #Fixes an issue where ShouldProcess will not respect ConfirmPreference if -Debug is specified
+
+
 function Approve-Action {
+  [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSShouldProcess", '', Scope='Function')]
   param(
     [ValidateNotNullOrEmpty()][string]$Target,
     [ValidateNotNullOrEmpty()][string]$Action,
