@@ -346,7 +346,16 @@ function Install-ModuleFast {
         break
       }
       'Path' {
-        $ModulesToInstall = ConvertFrom-RequiredSpec -RequiredSpecPath $Path -SpecFileType $SpecFileType
+        $Paths = @()
+        #Search for a spec file if a directory was provided
+        if ('Directory' -in (Get-Item $Path).Attributes) {
+          $Paths += Find-RequiredSpecFile -Path $Path
+        } else {
+          $Paths = $Path
+        }
+        foreach ($pathItem in $Paths) {
+          $ModulesToInstall = ConvertFrom-RequiredSpec -RequiredSpecPath $pathItem -SpecFileType $SpecFileType
+        }
       }
     }
   }
