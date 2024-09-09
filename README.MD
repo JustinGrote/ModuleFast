@@ -76,7 +76,7 @@ ModuleFast can read a variety of files for module specifications:
 1. .json file with module/version pairs
 1. .json file with array of Module Specification strings
 
-You can specify one of these files by using the `-Path parameter`. If you run `Install-ModuleFast` with no arguments, it will search for *.required.psd1|psm1|json|jsonc files in the current directory to install.
+You can specify one of these files by using the `-Path parameter`. If you run `Install-ModuleFast` with no arguments, it will search for *.requires.psd1|psm1|json|jsonc files in the current directory to install.
 
 ### CI Lockfile
 
