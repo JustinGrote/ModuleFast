@@ -272,7 +272,8 @@ function Install-ModuleFast {
       $Destination = Get-PSDefaultModulePath -AllUsers:($Scope -eq 'AllUsers')
 
       #Special case for Windows to avoid the default installation path because it has issues with OneDrive
-      $defaultWindowsModulePath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell/Modules'
+	    $defaultWindowsModulePath = $isWindows ? (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell/Modules') : 'XXX___NOTSUPPORTED'
+
       if ($IsWindows -and $Destination -eq $defaultWindowsModulePath -and $Scope -ne 'CurrentUser') {
         Write-Debug "Windows Documents module folder detected. Changing to $defaultRepoPath"
         $Destination = $defaultRepoPath
