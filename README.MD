@@ -41,6 +41,26 @@ The bit.ly link will always point to the latest release of ModuleFast by default
 & ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release 'v0.2.0' -Specification ImportExcel
 ```
 
+### Module Specification Syntax
+
+ModuleFast introduces a shorthand string syntax for defining module specifications. It generally takes the form of '<Module><Operator><Version>'. The version supports SemVer 2 and prerelease tags.
+
+The available operators are:
+- '=': Exact version match. Examples: 'ImportExcel=7.1.0', 'ImportExcel=7.1.0-preview'
+- '>': Greater than. Example: 'ImportExcel>7.1.0'
+- '>=': Greater than or equal to. Example: 'ImportExcel>=7.1.0'
+- '<': Less than. Example: 'ImportExcel<7.1.0'
+- '<=': Less than or equal to. Example: 'ImportExcel<=7.1.0'
+- '!': A prerelease operator that can be present at the beginning or end of a module name to indicate that prerelease versions are acceptable. Example: 'ImportExcel!', '!ImportExcel'. It can be combined with the other operators like so: 'ImportExcel!>7.1.0'
+- ':': Lets you specify a NuGet version range. Example: 'ImportExcel:(7.0.0, 7.2.1-preview]'
+
+For more information about NuGet version range syntax used with the ':' operator: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. 'ImportExcel:3.2.*' will install the latest 3.2.x version.
+
+ModuleFast also fully supports the ModuleSpecification object and hashtable-like string syntaxes that are used by Install-Module and Install-PSResource. More information on this format: https://learn.microsoft.com/en-us/dotnet/api/microsoft.powershell.commands.modulespecification?view=powershellsdk-7.4.0
+
+### Logging
+Modulefast has extensive Verbose and Debug information available if you specify the -Verbose and/or -Debug parameters. This can be useful for troubleshooting or understanding how ModuleFast is working. Verbose level provides a high level "what" view of the process of module selection, while Debug level provides a much more detailed "Why" information about the module selection and installation process that can be useful in troubleshooting issues.
+
 ### ![alt text](images/README/image.png) GitHub Action
 
 ModuleFast provides a [GitHub Action](https://github.com/marketplace/actions/modulefast). Details for usage are on the GitHub Marketplace page.
