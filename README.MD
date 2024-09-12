@@ -43,7 +43,7 @@ The bit.ly link will always point to the latest release of ModuleFast by default
 
 ### Module Specification Syntax
 
-ModuleFast introduces a shorthand string syntax for defining module specifications. It generally takes the form of '<Module><Operator><Version>'. The version supports SemVer 2 and prerelease tags.
+ModuleFast introduces a shorthand string syntax for defining module specifications. It generally takes the form of `<ModuleName><Operator><Version>`. The version supports SemVer 2 and prerelease tags.
 
 The available operators are:
 - `=`: Exact version match. Examples: `ImportExcel=7.1.0`, `ImportExcel=7.1.0-preview`
