@@ -463,7 +463,8 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It '4 section version numbers with single trailing zero' {
     $actual = Install-ModuleFast @imfParams 'ConnectWiseManageApi=0.4.15.0' -PassThru
-    $resolvedPath = Resolve-Path $actual.Location.LocalPath
+    # Path should exist in the new location
+    $resolvedPath = $actual.Location.LocalPath
     Split-Path $resolvedPath -Leaf | Should -Be '0.4.15.0'
   }
   It 'lots of dependencies (Az)' {
