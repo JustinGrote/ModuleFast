@@ -1011,6 +1011,47 @@ function Install-ModuleFastHelper {
               $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
               [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
 
+              $manifestPath = Join-Path $installPath "$($context.Module.Name).psd1"
+
+              # Try to read the manifest with a streamreader just to ModuleVersion.
+              # This makes a glaring but reasonable assumption that the moduleVersion is not dynamic and has no newlines.
+              # Much more performant than a full parse, as it will stop as soon as it hits moduleversion, perhaps at the
+              # expense of more iops due to the readline vs reading the entire file at once
+              $reader = [IO.StreamReader]::new($manifestPath)
+              [Version]$moduleManifestVersion = $null
+              try {
+                while ($null -ne ($line = $reader.ReadLine())) {
+                  if ($line -match '\s*ModuleVersion\s*=\s*[''"](?<version>.+?)[''"]') {
+                    $moduleManifestVersion = $matches['version']
+                    break
+                  }
+                }
+              } finally {
+                $reader.Close()
+              }
+
+              # Resolves an edge case where nuget packages are normalized in some package manages from 3.2.1.0 to 3.2.1
+              if (-not $moduleManifestVersion) {
+                Write-Warning "$($context.Module): Could not detect the module manifest version. This module may not install properly if it has trailing zeros in the version"
+              } else {
+                $installPathRoot = Split-Path $installPath
+                $originalModuleVersion = Split-Path $installPath -Leaf
+                if ($originalModuleVersion -ne $moduleManifestVersion)
+                {
+                    Write-Debug "$($context.Module): Module Manifest Version $moduleManifestVersion differs from package version $originalModuleVersion, moving..."
+
+                    $newInstallPath = Join-Path $installPathRoot $moduleManifestVersion
+                    [System.IO.Directory]::Move($installPath, $newInstallPath)
+
+                    $installPath = $newInstallPath
+                    $context.InstallPath = $installPath
+                    $originalModuleVersion > (Join-Path $installPath '.originalModuleVersion')
+                    $installIndicatorPath = Join-Path $installPath '.incomplete'
+                } else {
+                  Write-Debug "$($context.Module): Module Manifest version matches the expected version"
+                }
+              }
+
               if ($context.Module.Guid -and $context.Module.Guid -ne [Guid]::Empty) {
                 Write-Debug "$($context.Module): GUID was specified in Module. Verifying manifest"
                 $manifestPath = Join-Path $installPath "$($context.Module.Name).psd1"
