@@ -1045,6 +1045,7 @@ function Install-ModuleFastHelper {
 
                     $installPath = $newInstallPath
                     $context.InstallPath = $installPath
+                    $context.Module.ModuleVersion = [string]$moduleManifestVersion #Some System.Version don't cast right
                     $originalModuleVersion > (Join-Path $installPath '.originalModuleVersion')
                     $installIndicatorPath = Join-Path $installPath '.incomplete'
                 } else {

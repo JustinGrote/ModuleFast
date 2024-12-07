@@ -275,7 +275,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           Spec       = 'ImportExcel<2'
           ModuleName = 'ImportExcel'
           Check      = {
-            $actual.ModuleVersion | Should -Be '1.99'
+            $actual.ModuleVersion | Should -Be '1.99.0' #Nuget changes this to 1.99
           }
         },
         @{
@@ -283,6 +283,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           ModuleName = 'PnP.PowerShell'
           Check      = {
             $actual.ModuleVersion | Should -Be '2.2.0'
+          }
+        },
+        @{
+          Spec       = 'ConnectWiseManageAPI=0.4.15.0'
+          ModuleName = 'ConnectWiseManageAPI'
+          Check      = {
+            $actual.ModuleVersion | Should -Be '0.4.15' #Install module version is 0.4.15.0 but nuget truncates this
           }
         }
       )
@@ -377,7 +384,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
   }
   It 'Gets multiple modules' {
     Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' }, @{ModuleName = 'VMWare.PowerCli'; RequiredVersion = '13.2.0.22746353' }
-    | Should -HaveCount 168
+    | Should -HaveCount 170
   }
 
   It 'Casts to ModuleSpecification' {
