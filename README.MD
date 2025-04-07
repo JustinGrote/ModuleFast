@@ -2,8 +2,14 @@
 
 # ModuleFast
 
-This is a PowerShell module installer that is optimized for high performance and no external dependencies so it can be
-used as a bootstrap to quickly install and update modules in a declarative fashion.
+This is a PowerShell module installer that is optimized for:
+
+- ⚡ high performance parallel module installation
+- 🚀 Fast Custom PowerShell Gallery mirror by default - [pwsh.gallery](https://github.com/justingrote/gallerysync)
+- 📄 declarative syntax
+- 👢 bootstrappable with no external dependencies
+- ❓ WhatIf Support
+- 📃 Manifest/Requires/etc. support
 
 ## Bootstrap Quick Start
 
@@ -41,7 +47,32 @@ The bit.ly link will always point to the latest release of ModuleFast by default
 & ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Release 'v0.2.0' -Specification ImportExcel
 ```
 
-### Module Specification Syntax
+### Specify Specific Modules with Module Specification Syntax
+
+```powershell
+Install-ModuleFast 'ImportExcel>7.1.0','Az.Resources','IPNetwork=0.1.0'
+```
+
+### Specify Modules via #requires syntax
+```powershell
+#require -module ImportExcel,Az.Resources.IPNetwork
+```
+
+## ![alt text](images/README/image.png) GitHub Action
+
+ModuleFast provides a [GitHub Action](https://github.com/marketplace/actions/modulefast). Details for usage are on the GitHub Marketplace page.
+
+## AnyPackage
+
+ModuleFast is supported with [AnyPackage](https://github.com/anypackage/anypackage), a cross-platform PowerShell unified package management interface. Shorthand specifications are supported. More information is available on the provider page.
+
+```powershell
+& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Specification AnyPackage.ModuleFast
+Import-Module AnyPackage.ModuleFast
+AnyPackage\Install-Package -provider ModuleFast -Name 'ImportExcel<4','Pester<4'
+```
+
+## Module Specification Syntax
 
 ModuleFast introduces a shorthand string syntax for defining module specifications. It generally takes the form of `<ModuleName><Operator><Version>`. The version supports SemVer 2 and prerelease tags.
 
@@ -54,36 +85,19 @@ The available operators are:
 - `!`: A prerelease operator that can be present at the beginning or end of a module name to indicate that prerelease versions are acceptable. Example: `ImportExcel!`, `!ImportExcel`. It can be combined with the other operators like so: 'ImportExcel!>7.1.0'
 - `:`: Lets you specify a NuGet version range. Example: `ImportExcel:(7.0.0, 7.2.1-preview]`
 
-For more information about NuGet version range syntax used with the ':' operator: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. 'ImportExcel:3.2.*' will install the latest 3.2.x version.
+For more information about NuGet version range syntax used with the ':' operator: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning#version-ranges. Wilcards are supported with this syntax e.g. `ImportExcel:3.2.*` will install the latest 3.2.x version.
 
-ModuleFast also fully supports the ModuleSpecification object and hashtable-like string syntaxes that are used by Install-Module and Install-PSResource. More information on this format: https://learn.microsoft.com/en-us/dotnet/api/microsoft.powershell.commands.modulespecification?view=powershellsdk-7.4.0
+ModuleFast also fully supports the [ModuleSpecification object and hashtable-like string syntaxes](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_requires?view=powershell-7.5#-modules-module-name--hashtable) that are used by Install-Module and Install-PSResource. More information on this format: https://learn.microsoft.com/en-us/dotnet/api/microsoft.powershell.commands.modulespecification?view=powershellsdk-7.4.0
 
-### Logging
-Modulefast has extensive Verbose and Debug information available if you specify the -Verbose and/or -Debug parameters. This can be useful for troubleshooting or understanding how ModuleFast is working. Verbose level provides a high level "what" view of the process of module selection, while Debug level provides a much more detailed "Why" information about the module selection and installation process that can be useful in troubleshooting issues.
+## Logging
+ModuleFast has extensive Verbose and Debug information available if you specify the -Verbose and/or -Debug parameters. This can be useful for troubleshooting or understanding how ModuleFast is working. Verbose level provides a high level "what" view of the process of module selection, while Debug level provides a much more detailed "Why" information about the module selection and installation process that can be useful in troubleshooting issues.
 
-### ![alt text](images/README/image.png) GitHub Action
+## Dependency Resolution
 
-ModuleFast provides a [GitHub Action](https://github.com/marketplace/actions/modulefast). Details for usage are on the GitHub Marketplace page.
-
-### AnyPackage
-
-ModuleFast is supported with [AnyPackage](https://github.com/anypackage/anypackage), a cross-platform PowerShell unified package management interface. Shorthand specifications are supported. More information is available on the provider page.
-
-```powershell
-& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) -Specification AnyPackage.ModuleFast
-Import-Module AnyPackage.ModuleFast
-AnyPackage\Install-Package -provider ModuleFast -Name 'ImportExcel<4','Pester<4'
-```
-
-### ModuleSpecification Install
-
-You can specify a set of `ModuleSpecification` hashtables to Install-ModuleFast for explicit version constraints. For instance,
-you can have only a very specific version to be installed, or only versions below a certain to be installed as well.
-
-```powershell
-#Installs the latest ImportExcel lower than 7.7.0
-& ([scriptblock]::Create((iwr 'bit.ly/modulefast'))) @{ModuleName='ImportExcel';MaximumVersion='7.7.0'}
-```
+This module uses a custom dependency resolution algorithm that selects the newest available modules that satisfy all the
+dependency criteria. If a version of a locally installed module satisfies the "latest" criteria of the dependency graph,
+it will be used rather than fetching what is newest on the gallery. This can be overriden with the `-Update` switch that
+will recheck whats available in the remote.
 
 ### Requires Spec Installation
 
@@ -92,6 +106,7 @@ ModuleFast can read a variety of files for module specifications:
 1. .ps1 PowerShell Scripts with #Requires comment
 1. .psm1 PowerShell Modules with #Requires comment
 1. .psd1 Module Manifest with a RequiredModules property
+1. .psd1 File in [PSDepend](https://github.com/RamblingCookieMonster/PSDepend) format
 1. .psd1 file with module/version pairs
 1. .json file with module/version pairs
 1. .json file with array of Module Specification strings
@@ -136,11 +151,11 @@ PSGetv3 is compatibility, the focus with ModuleFast is speed of installation/upd
 1. Takes your module specifications and builds a declarative dependency tree, following a IaC plan/apply approach to installing modules. By default it will evaluate locally installed modules in all of your configured PSModulePath to determine if an already-installed module meets the criteria.
 1. Uses a custom HTTPClient and async tasks to build the dependency tree quickly, querying with minimal data possible and using batch queries where possible to optimize for performance. This is all done in native PowerShell, no C# required (though C# would allow for certain operations to be even more parallelizable by chaining tasks).
 1. Uses HTTP/2 to run all queries in a single TCP conversation where possible (PSGallery supports it)
-1. For PowerShell Gallery, uses an optimized [CloudFlare Worker](https://github.com/justingrote/pwshgallery) to resolve dependencies as fast as possible.
+1. A custom nuget v3 mirror of PowerShell Gallery called pwsh.gallery uses Sleet to mirror all PowerShell Gallery packages and is fronted by Cloudflare for high performance, high availability, and data locality.
 
 ## What this script is not
 
-This is an example of how fast things *can* be, with certain assumptions. It is *not* a replacement for
+ModuleFast is an implementation focusing on of how fast things *can* be, with certain assumptions. It is *not* a replacement for
 PowerShellGet, which has much broader support for multiple repos, authentication, etc.
 
 It makes a lot of very bad assumptions, most of which are safe for PowerShell Gallery at least
@@ -160,21 +175,14 @@ It makes a lot of very bad assumptions, most of which are safe for PowerShell Ga
 1. Initially the logic would fetch the main page and resolve dependencies by fetching individual versions. Turns out its only barely slower to return all versions of a module in single call, probably because the PSGallery server-side filtering doesnt cache, so we instead fetch all versions of a module in a reduced way from our Cloudflare worker and use that as a cache.
 1. Parallel dependency lookups (lots of Az dependencies require Az.Account) resulted in lots of duplicate calls for Az.Account. Since all task calls bottleneck through our main async loop logic, we can safely inspect existing dependency calls just before execution to determine if the existing call will satisfy it, and then add the context on to the existing object to prevent the duplicate calls.
 
-## Dependency Resolution
+# Development
 
-This module uses a custom dependency resolution algorithm that selects the newest available modules that satisfy all the
-dependency criteria. If a version of a locally installed module satisfies the "latest" criteria of the dependency graph,
-it will be used rather than fetching what is newest on the gallery. This can be overriden with the `-Update` switch that
-will recheck whats available in the remote.
+Run `.\build.ps1` which will install all prerequisites (using ModuleFast!) and compile/test the package. After running it once, you can simply use `Invoke-Build` to start a new build. The module will be output into the `Build` Directory by default.
 
-### Testing Latest Commit
+## Testing Latest Commit
 
 This script will use the latest unstable main commit and configure the instance of Modulefast to use `preview.pwsh.gallery` as the default repository (you can still override this with the Source parameter). It supports all the same methods and parameters as normal ModuleFast.
 
 ```powershell
 & ([scriptblock]::Create((iwr 'bit.ly/modulefastmain'))) -UseMain
 ```
-
-# Development
-
-Run `.\build.ps1` which will install all prerequisites (using ModuleFast!) and compile/test the package. After running it once, you can simply use `Invoke-Build` to start a new build. The module will be output into the `Build` Directory by default.
