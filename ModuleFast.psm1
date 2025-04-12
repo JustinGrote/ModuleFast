@@ -250,7 +250,9 @@ function Install-ModuleFast {
     #Setting this to "CurrentUser" is the same as specifying the destination as 'Current'. This is a usability convenience.
     [InstallScope]$Scope,
     #The timeout for HTTP requests. This is set to 30 seconds by default. This is generally sufficient for most requests, but you may need to increase this if you are on a slow connection or are downloading large modules.
-    [int]$Timeout = 30
+    [int]$Timeout = 30,
+    #ModuleFast performs some friendly operations that aren't strictly SemVer compliant. For example, if you ask for Module!<3.0.0, technically 3.0.0-alpha should be returned via the SemVer spec, but typically that's not what people actually want, they want what would effectively be Module!<2.999.999, so we exclude these prereleases for good UX. Specify this switch to enforce strict SemVer behavior and return the prerelease in this scenario.
+    [switch]$StrictSemVer
   )
   begin {
     trap {$PSCmdlet.ThrowTerminatingError($PSItem)}
@@ -395,7 +397,18 @@ function Install-ModuleFast {
           $ModulesToInstall.ToArray()
         } else {
           Write-Progress -Id 1 -Activity 'Install-ModuleFast' -Status 'Plan' -PercentComplete 1
-          Get-ModuleFastPlan -Specification $ModulesToInstall -HttpClient $httpClient -Source $Source -Update:$Update -PreRelease:$Prerelease.IsPresent -DestinationOnly:$DestinationOnly -Destination $Destination -Timeout $Timeout
+          $getPlanParams = @{
+            Specification   = $ModulesToInstall
+            HttpClient      = $httpClient
+            Source          = $Source
+            Update          = $Update
+            PreRelease      = $Prerelease.IsPresent
+            DestinationOnly = $DestinationOnly
+            Destination     = $Destination
+            Timeout         = $Timeout
+            StrictSemVer    = $StrictSemVer
+          }
+          Get-ModuleFastPlan @getPlanParams
         }
       }
 
@@ -520,7 +533,8 @@ function Get-ModuleFastPlan {
     [int]$ParentProgress,
     [string]$Destination,
     [switch]$DestinationOnly,
-    [CancellationToken]$CancellationToken
+    [CancellationToken]$CancellationToken,
+    [switch]$StrictSemVer
   )
 
   BEGIN {
@@ -669,7 +683,7 @@ function Get-ModuleFastPlan {
               continue
             }
 
-            if ($currentModuleSpec.SatisfiedBy($candidate)) {
+            if ($currentModuleSpec.SatisfiedBy($candidate, $StrictSemVer)) {
               Write-Debug "${ModuleSpec}: Found satisfying version $candidate in the inlined index."
               $matchingEntry = $entries | Where-Object version -EQ $candidate
               if ($matchingEntry.count -gt 1) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
@@ -729,7 +743,7 @@ function Get-ModuleFastPlan {
                   continue
                 }
 
-                if ($currentModuleSpec.SatisfiedBy($candidate)) {
+                if ($currentModuleSpec.SatisfiedBy($candidate, $StrictSemVer)) {
                   Write-Debug "${currentModuleSpec}: Found satisfying version $candidate in the additional pages."
                   $matchingEntry = $entries | Where-Object version -EQ $candidate
                   if (-not $matchingEntry) { throw 'Multiple matching Entries found for a specific version. This is a bug and should not happen' }
@@ -816,7 +830,7 @@ function Get-ModuleFastPlan {
             | Where-Object Name -EQ $dependency.Name
             | Sort-Object ModuleVersion -Descending
             | ForEach-Object {
-              if ($dependency.SatisfiedBy($PSItem.ModuleVersion)) {
+              if ($dependency.SatisfiedBy($PSItem.ModuleVersion, $StrictSemVer)) {
                 Write-Debug "Dependency $dependency satisfied by existing planned install item $PSItem"
                 return $false
               }
@@ -1309,6 +1323,7 @@ function Add-Getters ([Parameter(Mandatory, ValueFromPipeline)][Type]$Type) {
 }
 
 #Information about a module, whether local or remote
+[NoRunspaceAffinity()]
 class ModuleFastInfo: IComparable {
   [string]$Name
   #Sometimes the module version is not the same as the folder version, such as in the case of prerelease versions
@@ -1387,6 +1402,8 @@ $ModuleFastInfoTypeData = @{
 Update-TypeData -TypeName ModuleFastInfo @ModuleFastInfoTypeData -Force
 Update-TypeData -TypeName Nuget.Versioning.NugetVersion -SerializationMethod String -Force
 
+
+[NoRunspaceAffinity()]
 class ModuleFastSpec {
   #These properties are effectively read only thanks to some getter wizardy
 
@@ -1551,15 +1568,46 @@ class ModuleFastSpec {
   }
 
   #region Methods
+
   [bool] SatisfiedBy([version]$Version) {
-    return $this.SatisfiedBy([NuGetVersion]::new($Version))
+    return $this.SatisfiedBy([NuGetVersion]::new($Version, $false))
+  }
+  [bool] SatisfiedBy([version]$Version, [bool]$strictSemVer) {
+    return $this.SatisfiedBy([NuGetVersion]::new($Version, $strictSemVer))
   }
 
   [bool] SatisfiedBy([NugetVersion]$Version) {
-    if ($this._VersionRange.IsFloating) {
-      return $this._VersionRange.Float.Satisfies($Version)
+    return $this.SatisfiedBy($Version, $false)
+  }
+
+  #strictSemVer means [1.0.0,2.0.0) will match 2.0.0-alpha1. Most people don't want this.
+  [bool] SatisfiedBy([NugetVersion]$Version, [bool]$strictSemVer) {
+    $range = $this._VersionRange
+    $strictSatisfies = $range.IsFloating ?
+      $range.Float.Satisfies($Version) :
+      $range.Satisfies($Version)
+
+    if ($strictSemVer) {
+      return $strictSatisfies
     }
-    return $this._VersionRange.Satisfies($Version)
+
+    if (-not $range.MaxVersion) {return $strictSatisfies}
+    $max = $range.MaxVersion
+
+    if (
+      #Example: Version is 2.0.0-alpha1 and the spec is module:[1.0.0,2.0.0)
+      $Version.IsPrerelease -and
+      -not $range.IsMaxInclusive -and
+      ($max.Major -eq $Version.Major) -and
+      ($max.Minor -eq $Version.Minor) -and
+      ($max.Patch -eq $Version.Patch)
+    )
+    {
+      Write-Verbose "ModuleFastSpec: $this is being compared to $Version. We are excluding this prerelease for ease of use as it is assumed you did not want prereleases when specifying a major-exclusive release. Specify -StrictSemVer to override this behavior."
+      return $false
+    }
+
+    return $strictSatisfies
   }
 
   [bool] Overlap([ModuleFastSpec]$other) {
@@ -1568,7 +1616,7 @@ class ModuleFastSpec {
 
   [bool] Overlap([VersionRange]$other) {
     [List[VersionRange]]$ranges = @($this._VersionRange, $other)
-    $subset = [versionrange]::CommonSubset($ranges)
+    $subset = [VersionRange]::CommonSubset($ranges)
     #If the subset has an explicit version of 0.0.0, this means there was no overlap.
     return '(0.0.0, 0.0.0)' -ne $subset
   }
@@ -1932,7 +1980,7 @@ function Find-LocalModule {
       }
       $candidateVersion = $manifestCandidate.ModuleVersion
 
-      if ($ModuleSpec.SatisfiedBy($candidateVersion)) {
+      if ($ModuleSpec.SatisfiedBy($candidateVersion, $StrictSemVer)) {
         if ($Update -and ($ModuleSpec.Max -ne $candidateVersion)) {
           Write-Debug "${ModuleSpec}: Skipping $candidateVersion because -Update was specified and the version does not exactly meet the upper bound of the spec or no upper bound was specified at all, meaning there is a possible newer version remotely."
           #We can use this ref later to find out if our best remote version matches what is installed without having to read the manifest again
