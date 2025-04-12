@@ -252,10 +252,10 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           ModuleName = 'PrereleaseTest'
         },
         @{
-          Spec       = 'PrereleaseTest!<0.0.1'
+          Spec       = 'PrereleaseTest!<=0.0.1'
           Check      = {
             $actual.Name | Should -Be 'PrereleaseTest'
-            $actual.ModuleVersion | Should -Be '0.0.1-prerelease'
+            $actual.ModuleVersion | Should -Be '0.0.1'
           }
           ModuleName = 'PrereleaseTest'
         },
@@ -278,6 +278,22 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
             $actual.ModuleVersion | Should -Be '1.99.0' #Nuget changes this to 1.99
           }
         },
+        # Special cases where the upper bound is specified as exclusive, ignore prereleases
+        @{
+          Spec       = 'PrereleaseTest!<0.0.2'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            $actual.ModuleVersion | Should -Be '0.0.1' #Install module version is 0.4.15.0 but nuget truncates this
+          }
+        },
+        @{
+          Spec       = 'PrereleaseTest!<=0.0.2'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            $actual.ModuleVersion | Should -Be '0.0.2-prerelease' #Install module version is 0.4.15.0 but nuget truncates this
+          }
+        },
+        #End special cases
         @{
           Spec       = 'PnP.PowerShell:2.2.*'
           ModuleName = 'PnP.PowerShell'

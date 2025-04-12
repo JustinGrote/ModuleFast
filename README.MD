@@ -89,6 +89,8 @@ For more information about NuGet version range syntax used with the ':' operator
 
 ModuleFast also fully supports the [ModuleSpecification object and hashtable-like string syntaxes](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_requires?view=powershell-7.5#-modules-module-name--hashtable) that are used by Install-Module and Install-PSResource. More information on this format: https://learn.microsoft.com/en-us/dotnet/api/microsoft.powershell.commands.modulespecification?view=powershellsdk-7.4.0
 
+NOTE: ModuleFast does not strictly conform to SemVer without the `-StrictSemVer` parameter. For example, for ergonomics, we exclude 2.0 prereleases from `Module<2.0`, since most people who do this do not want 2.0 prereleases which might contain breaking changes, even though by semver definition, `Module 2.0-alpha1` is less than 2.0
+
 ## Logging
 ModuleFast has extensive Verbose and Debug information available if you specify the -Verbose and/or -Debug parameters. This can be useful for troubleshooting or understanding how ModuleFast is working. Verbose level provides a high level "what" view of the process of module selection, while Debug level provides a much more detailed "Why" information about the module selection and installation process that can be useful in troubleshooting issues.
 
