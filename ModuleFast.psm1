@@ -1603,7 +1603,7 @@ class ModuleFastSpec {
       ($max.Patch -eq $Version.Patch)
     )
     {
-      Write-Verbose "ModuleFastSpec: $this is being compared to $Version. We are excluding this prerelease for ease of use as it is assumed you did not want prereleases when specifying a major-exclusive release. Specify -StrictSemVer to override this behavior."
+      Write-Verbose "ModuleFastSpec: $this is being compared to $Version. We are excluding this prerelease for ease of use as it is assumed you did not want prereleases when specifying a max exclusive bound. Specify -StrictSemVer to override this behavior."
       return $false
     }
 
