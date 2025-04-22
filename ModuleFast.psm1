@@ -1593,20 +1593,36 @@ class ModuleFastSpec {
 
     if (-not $range.MaxVersion) {return $strictSatisfies}
     $max = $range.MaxVersion
+    $min = $range.MinVersion
 
     if (
       #Example: Version is 2.0.0-alpha1 and the spec is module:[1.0.0,2.0.0)
       $Version.IsPrerelease -and
       -not $range.IsMaxInclusive -and
+      -not $max.IsPrerelease -and
       ($max.Major -eq $Version.Major) -and
       ($max.Minor -eq $Version.Minor) -and
       ($max.Patch -eq $Version.Patch)
+      #If the minimum matches the maximum and has a prerelease, that means it's a range like (3.0.0-alpha,3.0.0-beta and we want strict matching)
     )
     {
+      #In a special case like (3.0.0-alpha,3.0.0-beta) where the min and max are the same version, we want normal strict semver behavior
+      if (
+        $min -and
+        $min.Major -eq $max.Major -and
+        $min.Minor -eq $max.Minor -and
+        $min.Patch -eq $max.Patch -and
+        $min.IsPrerelease
+      ) {
+        Write-Debug "ModuleFastSpec: $this is being compared to $Version. It was not excluded because the min matches the max and both are prereleases, so normal behavior occured."
+        return $strictSatisfies
+      }
+
       Write-Verbose "ModuleFastSpec: $this is being compared to $Version. We are excluding this prerelease for ease of use as it is assumed you did not want prereleases when specifying an exclusive upper bound. Specify -StrictSemVer to override this behavior."
       return $false
     }
 
+    #Last resort is to use strict matching
     return $strictSatisfies
   }
 
