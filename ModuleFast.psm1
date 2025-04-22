@@ -1618,7 +1618,7 @@ class ModuleFastSpec {
         return $strictSatisfies
       }
 
-      Write-Verbose "ModuleFastSpec: $this is being compared to $Version. We are excluding this prerelease for ease of use as it is assumed you did not want prereleases when specifying an exclusive upper bound. Specify -StrictSemVer to override this behavior."
+      Write-Verbose "ModuleFastSpec: $this is typically satisfied by $Version, but this prerelease of the exclusive maximum version specification was ignored for ease of use. Specify -StrictSemVer to allow pre-releases of excluded versions."
       return $false
     }
 
