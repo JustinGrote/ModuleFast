@@ -159,6 +159,21 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       } -TestCases $moduleSpecTestCases
     }
 
+    Context 'StrictSemVer Parameter' {
+      It 'StrictSemVer matches prereleases with exclusive upper bound' {
+        $actual = Get-ModuleFastPlan 'PrereleaseTest!<0.0.2' -StrictSemVer
+        $actual | Should -HaveCount 1
+        $actual.ModuleVersion.IsPrerelease | Should -Be $true
+        $actual.ModuleVersion.Patch | Should -Be 2
+      }
+      It 'StrictSemVer not specified does not match prereleases with exclusive upper bound' {
+        $actual = Get-ModuleFastPlan 'PrereleaseTest!<0.0.2'
+        $actual | Should -HaveCount 1
+        $actual.ModuleVersion.IsPrerelease | Should -Be $false
+        $actual.ModuleVersion.Patch | Should -Be 1
+      }
+    }
+
     Context 'ModuleFastSpec String' {
       $stringTestCases = (
         @{
@@ -252,10 +267,10 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
           ModuleName = 'PrereleaseTest'
         },
         @{
-          Spec       = 'PrereleaseTest!<0.0.1'
+          Spec       = 'PrereleaseTest!<=0.0.1'
           Check      = {
             $actual.Name | Should -Be 'PrereleaseTest'
-            $actual.ModuleVersion | Should -Be '0.0.1-prerelease'
+            $actual.ModuleVersion | Should -Be '0.0.1'
           }
           ModuleName = 'PrereleaseTest'
         },
@@ -278,6 +293,51 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
             $actual.ModuleVersion | Should -Be '1.99.0' #Nuget changes this to 1.99
           }
         },
+        # Special cases where the upper bound is specified as exclusive, ignore prereleases
+        @{
+          Spec       = 'PrereleaseTest!<0.0.2'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            $actual.ModuleVersion | Should -Be '0.0.1'
+          }
+        },
+        @{
+          Spec       = 'PrereleaseTest!<=0.0.2'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
+          }
+        },
+        @{
+          # Test lexical matching. This should not match the 'prerelease' version because r is after p
+          Spec       = 'PrereleaseTest!:(0.0.2-rIsAfterP,0.0.2)'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            [string]$actual | Should -Match 'a matching module was not found'
+          }
+        },
+        @{
+          Spec       = 'PrereleaseTest!<0.0.2-prerelease'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            [string]$actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+          }
+        },
+        @{
+          Spec       = 'PrereleaseTest!:(0.0.2-alpha,0.0.2)'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            [string]$actual.ModuleVersion | Should -Be '0.0.2-prerelease'
+          }
+        },
+        @{
+          Spec       = 'PrereleaseTest!:(0.0.2-alpha,0.0.2-prerelease)'
+          ModuleName = 'PrereleaseTest'
+          Check      = {
+            [string]$actual.ModuleVersion | Should -Be '0.0.2-newerversion'
+          }
+        },
+        #End special cases
         @{
           Spec       = 'PnP.PowerShell:2.2.*'
           ModuleName = 'PnP.PowerShell'
@@ -300,18 +360,27 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       }
 
       It 'Gets Module with String Parameter: <Spec>' {
-        $actual = Get-ModuleFastPlan $Spec
-        $actual | Should -HaveCount 1
-        $ModuleName | Should -Be $actual.Name
-        $actual.ModuleVersion | Should -Not -BeNullOrEmpty
+        try {
+          $actual = Get-ModuleFastPlan $Spec
+          $actual | Should -HaveCount 1
+          $ModuleName | Should -Be $actual.Name
+          $actual.ModuleVersion | Should -Not -BeNullOrEmpty
+        } catch {
+          $actual = $PSItem
+        }
         if ($Check) { . $Check }
+
       } -TestCases $stringTestCases
 
       It 'Gets Module with String Pipeline: <Spec>' {
-        $actual = $Spec | Get-ModuleFastPlan
-        $actual | Should -HaveCount 1
-        $ModuleName | Should -Be $actual.Name
-        $actual.ModuleVersion | Should -Not -BeNullOrEmpty
+        try {
+          $actual = $Spec | Get-ModuleFastPlan
+          $actual | Should -HaveCount 1
+          $ModuleName | Should -Be $actual.Name
+          $actual.ModuleVersion | Should -Not -BeNullOrEmpty
+        } catch {
+          $actual = $PSItem
+        }
         if ($Check) { . $Check }
       } -TestCases $stringTestCases
     }
