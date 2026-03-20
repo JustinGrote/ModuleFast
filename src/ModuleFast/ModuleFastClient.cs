@@ -5,13 +5,13 @@ namespace ModuleFast;
 
 public static class ModuleFastClient
 {
-    public static HttpClient Create(string? credential = null, int timeoutSeconds = 30)
+    public static HttpClient Create(int timeoutSeconds = 30)
     {
         var handler = new SocketsHttpHandler
         {
             MaxConnectionsPerServer = 10,
             InitialHttp2StreamWindowSize = 16777216,
-            AutomaticDecompression = DecompressionMethods.All
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
         };
         var client = new HttpClient(handler)
         {

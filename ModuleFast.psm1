@@ -30,6 +30,13 @@ if (Test-Path $binaryModulePath) {
     if (-not $accelerators::Get.ContainsKey('ModuleFastInfo')) {
         $accelerators::Add('ModuleFastInfo', [ModuleFast.ModuleFastInfo])
     }
+
+    # Clean up type accelerators when this module is removed
+    $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
+        $accelerators = [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')
+        $accelerators::Remove('ModuleFastSpec')
+        $accelerators::Remove('ModuleFastInfo')
+    }
 }
 
 #Because we are changing state, we want to be safe

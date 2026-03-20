@@ -227,7 +227,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     public bool Overlap(VersionRange other)
     {
         var subset = VersionRange.CommonSubSet(new List<VersionRange> { _versionRange, other });
-        return subset.ToString() != "(0.0.0, 0.0.0)";
+        return !subset.Equals(VersionRange.None);
     }
 
     // --- Interface implementations ---
@@ -263,8 +263,8 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
         }
 
         if (_versionRange.Satisfies(version!)) return 0;
-        if (_versionRange.MinVersion != null && _versionRange.MinVersion > version) return 1;
-        if (_versionRange.MaxVersion != null && _versionRange.MaxVersion < version) return -1;
+        if (_versionRange.MinVersion != null && _versionRange.MinVersion > version!) return 1;
+        if (_versionRange.MaxVersion != null && _versionRange.MaxVersion < version!) return -1;
         throw new InvalidOperationException("Could not compare. This is a bug.");
     }
 
