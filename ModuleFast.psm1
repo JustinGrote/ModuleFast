@@ -1322,7 +1322,6 @@ enum SpecFileType {
   PSDepend
 }
 
-Update-TypeData -TypeName ModuleFast.ModuleFastInfo -MemberType AliasProperty -MemberName Location -Value Location -Force 2>$null
 Update-TypeData -TypeName Nuget.Versioning.NugetVersion -SerializationMethod String -Force
 
 #endRegion Classes

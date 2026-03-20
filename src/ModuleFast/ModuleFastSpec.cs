@@ -269,10 +269,10 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     }
 
     private static bool IsRequiredVersion(VersionRange version) =>
-        !(version.MinVersion != version.MaxVersion ||
-          !version.HasLowerAndUpperBounds ||
-          !version.IsMinInclusive ||
-          !version.IsMaxInclusive);
+        version.MinVersion == version.MaxVersion &&
+        version.HasLowerAndUpperBounds &&
+        version.IsMinInclusive &&
+        version.IsMaxInclusive;
 
     public override string ToString()
     {
