@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!-- Central Package Management: all NuGet versions defined here -->
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.PowerShell.SDK" Version="7.4.6" />
+    <PackageVersion Include="NuGet.Versioning" Version="6.8.0" />
+  </ItemGroup>
+</Project>

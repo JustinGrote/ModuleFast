@@ -36,8 +36,8 @@ Task Clean {
 
 Task BuildCSharp {
   $csprojPath = Join-Path $PSScriptRoot 'src' 'ModuleFast' 'ModuleFast.csproj'
-  $binOutPath = Join-Path $ModuleOutFolderPath 'bin' 'ModuleFast'
-  dotnet build $csprojPath -o $binOutPath --nologo -c Release
+  # Artifacts Output Layout managed by Directory.Build.props — no -o needed
+  dotnet build $csprojPath --nologo -c Release
 }
 
 Task CopyFiles {
@@ -47,6 +47,12 @@ Task CopyFiles {
     'LICENSE'
   ) -Destination $ModuleOutFolderPath
   Copy-Item @c -Path 'ModuleFast.ps1' -Destination $Destination
+
+  # Copy DLL and its dependencies from Artifacts Output to the module bin folder
+  $artifactsBinPath = Join-Path $PSScriptRoot 'artifacts' 'bin' 'ModuleFast' 'release'
+  $moduleBinPath    = Join-Path $ModuleOutFolderPath 'bin' 'ModuleFast'
+  New-Item -ItemType Directory -Path $moduleBinPath -Force | Out-Null
+  Copy-Item @c -Path (Join-Path $artifactsBinPath '*') -Destination $moduleBinPath -Recurse
 }
 
 Task Version {

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Use the .NET SDK Artifacts Output Layout: all bin/obj go to artifacts/ -->
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+  </PropertyGroup>
+</Project>
