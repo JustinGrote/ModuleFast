@@ -34,6 +34,12 @@ Task Clean {
   }
 }
 
+Task BuildCSharp {
+  $csprojPath = Join-Path $PSScriptRoot 'src' 'ModuleFast' 'ModuleFast.csproj'
+  $binOutPath = Join-Path $ModuleOutFolderPath 'bin' 'ModuleFast'
+  dotnet build $csprojPath -o $binOutPath --nologo -c Release
+}
+
 Task CopyFiles {
   Copy-Item @c -Path @(
     'ModuleFast.psd1'
@@ -93,6 +99,7 @@ Task Package Package.Nuget, Package.Zip
 #Supported High Level Tasks
 Task Build @(
   'Clean'
+  'BuildCSharp'
   'CopyFiles'
   'Version'
   'GetNugetVersioningAssembly'
