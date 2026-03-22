@@ -6,9 +6,19 @@
     <AssemblyName>ModuleFast</AssemblyName>
     <RootNamespace>ModuleFast</RootNamespace>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <DebugSymbols>false</DebugSymbols>
+    <PublishDir>$(MSBuildProjectDirectory)\..\..\Build\</PublishDir>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.PowerShell.SDK" ExcludeAssets="runtime" />
+    <None Include="..\..\ModuleFast.psd1" Link="ModuleFast.psd1" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Management.Automation" PrivateAssets="all" />
     <PackageReference Include="NuGet.Versioning" />
   </ItemGroup>
+  <Target Name="RemoveDepsJsonFromPublishOutput" AfterTargets="Publish">
+    <Delete Files="$(PublishDir)$(AssemblyName).deps.json" />
+    <Delete Files="$(PublishDir)$(AssemblyName).pdb" />
+  </Target>
 </Project>
