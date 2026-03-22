@@ -15,7 +15,9 @@ if (-not $binaryModulePath) {
     Write-Warning "Binary module DLL not found in expected paths. The module will be imported without the binary component, which will likely cause it to not function. Expected paths were: 'artifacts/bin/ModuleFast/debug/ModuleFast.dll', 'artifacts/bin/ModuleFast/release/ModuleFast.dll', and 'bin/ModuleFast/ModuleFast.dll' relative to the module root."
 }
 
+Write-Debug "Importing binary module from path: $binaryModulePath"
 Import-Module $binaryModulePath -Force
+
 # Register type accelerators so [ModuleFastSpec], [ModuleFastInfo], etc. work without namespace
 $accelerators = [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')
 foreach ($pair in @{
