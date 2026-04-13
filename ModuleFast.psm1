@@ -1023,7 +1023,24 @@ function Install-ModuleFastHelper {
 
               #We are going to extract these straight out of memory, so we don't need to write the nupkg to disk
               $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
-              [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
+              # NuGet packages may URL-encode file names (e.g. spaces as %20), so we must decode each
+              # entry's FullName before using it as a file path. See:
+              # https://github.com/NuGet/NuGet.Client/blob/d2887cd591059fd675d397b48c79cdc30ee2b6ba/src/NuGet.Core/NuGet.Packaging/PackageArchiveReader.cs#L317
+              foreach ($entry in $zip.Entries) {
+                $decodedEntryName = [Uri]::UnescapeDataString($entry.FullName)
+                $destPath = Join-Path $installPath $decodedEntryName
+                if ($decodedEntryName.EndsWith('/') -or $decodedEntryName.EndsWith('\')) {
+                  # Directory entry — ensure the directory exists
+                  New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+                } else {
+                  # File entry — ensure parent directory exists, then extract
+                  $destDir = [Path]::GetDirectoryName($destPath)
+                  if (-not (Test-Path $destDir)) {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+                  }
+                  [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
+                }
+              }
 
               $manifestPath = Join-Path $installPath "$($context.Module.Name).psd1"
 
