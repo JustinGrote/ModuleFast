@@ -1029,6 +1029,7 @@ function Install-ModuleFastHelper {
               foreach ($entry in $zip.Entries) {
                 $decodedEntryName = [Uri]::UnescapeDataString($entry.FullName)
                 $destPath = Join-Path $installPath $decodedEntryName
+                # ZIP spec uses '/' but some tools emit '\'; treat both as directory entries
                 if ($decodedEntryName.EndsWith('/') -or $decodedEntryName.EndsWith('\')) {
                   # Directory entry — ensure the directory exists
                   New-Item -ItemType Directory -Path $destPath -Force | Out-Null

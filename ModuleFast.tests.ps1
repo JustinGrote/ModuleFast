@@ -85,10 +85,13 @@ InModuleScope 'ModuleFast' {
 
   Describe 'URL-decoding zip entry names during extraction' {
     It 'Decodes URL-encoded file names (e.g. spaces as %20) when extracting a zip archive' {
-      # Build an in-memory ZIP that has a percent-encoded entry name
+      # Build an in-memory ZIP that has a percent-encoded entry name and an explicit directory entry
       $memStream = [System.IO.MemoryStream]::new()
       $zipWrite = [System.IO.Compression.ZipArchive]::new($memStream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
-      $entry = $zipWrite.CreateEntry('subfolder/file%20with%20spaces.txt')
+      # Explicit directory entry with percent-encoded name
+      $zipWrite.CreateEntry('sub%20folder/') | Out-Null
+      # File entry inside the percent-encoded directory
+      $entry = $zipWrite.CreateEntry('sub%20folder/file%20with%20spaces.txt')
       $writer = [System.IO.StreamWriter]::new($entry.Open())
       $writer.Write('hello')
       $writer.Dispose()
@@ -102,18 +105,26 @@ InModuleScope 'ModuleFast' {
       foreach ($zipEntry in $zipRead.Entries) {
         $decodedEntryName = [Uri]::UnescapeDataString($zipEntry.FullName)
         $destPath = Join-Path $extractPath $decodedEntryName
-        $destDir = [System.IO.Path]::GetDirectoryName($destPath)
-        if (-not (Test-Path $destDir)) {
-          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        if ($decodedEntryName.EndsWith('/') -or $decodedEntryName.EndsWith('\')) {
+          New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+        } else {
+          $destDir = [System.IO.Path]::GetDirectoryName($destPath)
+          if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+          }
+          [System.IO.Compression.ZipFileExtensions]::ExtractToFile($zipEntry, $destPath, $true)
         }
-        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($zipEntry, $destPath, $true)
       }
       $zipRead.Dispose()
       $memStream.Dispose()
 
+      # The decoded directory should exist
+      Test-Path (Join-Path $extractPath 'sub folder') | Should -BeTrue
+      Test-Path (Join-Path $extractPath 'sub%20folder') | Should -BeFalse
+
       # The extracted file should use the decoded name, not the percent-encoded one
-      Test-Path (Join-Path $extractPath 'subfolder' 'file with spaces.txt') | Should -BeTrue
-      Test-Path (Join-Path $extractPath 'subfolder' 'file%20with%20spaces.txt') | Should -BeFalse
+      Test-Path (Join-Path $extractPath 'sub folder' 'file with spaces.txt') | Should -BeTrue
+      Test-Path (Join-Path $extractPath 'sub folder' 'file%20with%20spaces.txt') | Should -BeFalse
     }
   }
 }
