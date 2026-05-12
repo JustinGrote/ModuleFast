@@ -1,11 +1,7 @@
 using System.IO.Compression;
 using System.Management.Automation;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
 
 using NuGet.Versioning;
-
 namespace ModuleFast;
 
 public class ModuleFastInstaller
@@ -24,6 +20,7 @@ public class ModuleFastInstaller
       CancellationToken ct,
       PSCmdlet? cmdlet = null)
   {
+
     var tasks = modules.Select(m => InstallSingleAsync(m, destination, update, ct, cmdlet));
     var results = await Task.WhenAll(tasks).ConfigureAwait(false);
     return results.Where(r => r != null).Cast<ModuleFastInfo>().ToList();

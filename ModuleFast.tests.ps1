@@ -5,6 +5,7 @@ using namespace System.Diagnostics.CodeAnalysis
 using namespace NuGet.Versioning
 using namespace ModuleFast
 
+$env:MODULEFASTDEBUG = $true
 Import-Module $PSScriptRoot/ModuleFast.psd1 -Force
 
 BeforeAll {

@@ -11,9 +11,11 @@
     <PublishDir>$(MSBuildProjectDirectory)\..\..\Build\</PublishDir>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="..\..\ModuleFast.psd1" Link="ModuleFast.psd1" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\ModuleFast.psd1" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\ModuleFast.psm1" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="NuGet.CommandLine" />
     <PackageReference Include="System.Management.Automation" PrivateAssets="all" />
     <PackageReference Include="NuGet.Versioning" />
   </ItemGroup>

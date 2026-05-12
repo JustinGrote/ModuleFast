@@ -1,6 +1,6 @@
 using System.Collections;
 using System.Management.Automation;
-using System.Management.Automation.Runspaces;
+using System.Management.Automation.Language;
 
 using NuGet.Versioning;
 
@@ -13,17 +13,22 @@ public static class ModuleManifestReader
   /// </summary>
   public static Hashtable ImportModuleManifest(string path, PSCmdlet? cmdlet = null)
   {
+    if (!File.Exists(path))
+      throw new FileNotFoundException($"Manifest file was not found: {path}", path);
+
+    Token[] tokens;
+    ParseError[] errors;
+    var ast = Parser.ParseFile(path, out tokens, out errors);
+    if (errors.Length > 0)
+      throw new InvalidDataException($"The manifest at {path} could not be parsed as a PowerShell data file");
+
+    HashtableAst dataAst = ast.Find(a => a is HashtableAst, false) as HashtableAst
+        ?? throw new InvalidDataException($"The manifest at {path} does not contain a valid hashtable structure");
+
     try
     {
-      using var ps = PowerShell.Create(RunspaceMode.CurrentRunspace);
-      ps.AddCommand("Import-PowerShellDataFile").AddParameter("Path", path);
-      var result = ps.Invoke();
-      if (ps.HadErrors)
-      {
-        var err = ps.Streams.Error.FirstOrDefault();
-        if (err != null) throw err.Exception ?? new InvalidOperationException(err.ToString());
-      }
-      return ToHashtable(result[0].BaseObject) ?? throw new InvalidOperationException("Unexpected null manifest");
+      var rawResult = dataAst.SafeGetValue();
+      return ToHashtable(rawResult) ?? throw new InvalidOperationException("Unexpected null manifest");
     }
     catch (Exception ex) when (IsDynamicExpressionsError(ex))
     {
@@ -49,10 +54,10 @@ public static class ModuleManifestReader
     if (obj == null) return null;
     if (obj is Hashtable ht) return ht;
     if (obj is PSObject pso) return ToHashtable(pso.BaseObject);
-    if (obj is System.Collections.IDictionary dict)
+    if (obj is IDictionary dict)
     {
       var result = new Hashtable(StringComparer.OrdinalIgnoreCase);
-      foreach (System.Collections.DictionaryEntry kv in dict)
+      foreach (DictionaryEntry kv in dict)
         result[kv.Key] = kv.Value;
       return result;
     }
