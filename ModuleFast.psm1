@@ -280,6 +280,9 @@ function Install-ModuleFast {
         Write-Debug "Windows Documents module folder detected. Changing to $defaultRepoPath"
         $Destination = $defaultRepoPath
       }
+    } else {
+      #Non-standard destination specified. Don't update profile
+      $NoProfileUpdate = $true
     }
 
     if (-not $Destination) {
@@ -1836,6 +1839,15 @@ function Add-DestinationToPSModulePath {
 
   #TODO: Support other profiles?
   $myProfile = $profile.CurrentUserAllHosts
+  if (-not $myProfile) {
+    Write-Verbose "CurrentUserAllHosts profile path is $myProfile"
+  } elseif ($host.Name -eq 'Visual Studio Code Host') {
+    Write-Verbose "Visual Studio Code Host detected."
+    $myProfileBase = $isWindows ?
+      [Environment]::GetFolderPath('MyDocuments') :
+      [Environment]::GetFolderPath('ApplicationData')
+    $myProfile = Join-Path $myProfileBase 'powershell' 'profile.ps1'
+  }
 
   if (-not (Test-Path $myProfile)) {
     if (-not (Approve-Action $myProfile "Allow ModuleFast to work by creating a profile at $myProfile.")) { return }
