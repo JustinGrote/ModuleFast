@@ -3,9 +3,10 @@ using namespace Microsoft.PowerShell.Commands
 using namespace System.Collections.Generic
 using namespace System.Diagnostics.CodeAnalysis
 using namespace NuGet.Versioning
+using namespace ModuleFast
 
-. $PSScriptRoot/ModuleFast.ps1 -ImportNuGetVersioning
-Import-Module $PSScriptRoot/ModuleFast.psm1 -Force
+$env:MODULEFASTDEBUG = $true
+Import-Module $PSScriptRoot/ModuleFast.psd1 -Force
 
 BeforeAll {
   if ($env:MFURI) {
@@ -13,74 +14,74 @@ BeforeAll {
   }
 }
 
-InModuleScope 'ModuleFast' {
-  Describe 'ModuleFastSpec' {
-    Context 'Constructors' {
-      It 'Getters' {
-        $spec = [ModuleFastSpec]'Test'
-        'Name', 'Guid', 'Min', 'Max', 'Required' | ForEach-Object {
-          $spec.PSObject.Properties.name | Should -Contain $PSItem
-        }
-      }
-
-      It 'Name' {
-        $spec = [ModuleFastSpec]'Test'
-        $spec.Name | Should -Be 'Test'
-        $spec.Guid | Should -Be ([Guid]::Empty)
-        $spec.Min | Should -BeNull
-        $spec.Max | Should -BeNull
-        $spec.Required | Should -BeNull
-      }
-
-      It 'Has non-settable properties' {
-        $spec = [ModuleFastSpec]'Test'
-        { $spec.Min = '1' } | Should -Throw
-        { $spec.Max = '1' } | Should -Throw
-        { $spec.Required = '1' } | Should -Throw
-        { $spec.Name = 'fake' } | Should -Throw
-        { $spec.Guid = New-Guid } | Should -Throw
-      }
-
-      It 'ModuleSpecification' {
-        $in = [ModuleSpecification]@{
-          ModuleName    = 'Test'
-          ModuleVersion = '2.1.5'
-        }
-        $spec = [ModuleFastSpec]$in
-        $spec.Name | Should -Be 'Test'
-        $spec.Guid | Should -Be ([Guid]::Empty)
-        $spec.Min | Should -Be '2.1.5'
-        $spec.Max | Should -BeNull
-        $spec.Required | Should -BeNull
+# ModuleFastSpec is a public C# class — no InModuleScope needed
+Describe 'ModuleFastSpec' {
+  Context 'Constructors' {
+    It 'Getters' {
+      $spec = [ModuleFastSpec]'Test'
+      'Name', 'Guid', 'Min', 'Max', 'Required' | ForEach-Object {
+        $spec.PSObject.Properties.name | Should -Contain $PSItem
       }
     }
 
-    Context 'ModuleSpecification Conversion' {
-      It 'Name' {
-        $spec = [ModuleSpecification][ModuleFastSpec]'Test'
-        $spec.Name | Should -Be 'Test'
-        $spec.Version | Should -Be '0.0'
-        $spec.RequiredVersion | Should -BeNull
-        $spec.MaximumVersion | Should -BeNull
+    It 'Name' {
+      $spec = [ModuleFastSpec]'Test'
+      $spec.Name | Should -Be 'Test'
+      $spec.Guid | Should -Be ([Guid]::Empty)
+      $spec.Min | Should -BeNull
+      $spec.Max | Should -BeNull
+      $spec.Required | Should -BeNull
+    }
+
+    It 'Has non-settable properties' {
+      $spec = [ModuleFastSpec]'Test'
+      { $spec.Min = '1' } | Should -Throw
+      { $spec.Max = '1' } | Should -Throw
+      { $spec.Required = '1' } | Should -Throw
+      { $spec.Name = 'fake' } | Should -Throw
+      { $spec.Guid = New-Guid } | Should -Throw
+    }
+
+    It 'ModuleSpecification' {
+      $in = [ModuleSpecification]@{
+        ModuleName    = 'Test'
+        ModuleVersion = '2.1.5'
       }
-      It 'RequiredVersion' {
-        $spec = [ModuleSpecification][ModuleFastSpec]::new('Test', '1.2.3')
-        $spec.Name | Should -Be 'Test'
-        $spec.RequiredVersion | Should -Be '1.2.3.0'
-        $spec.Version | Should -BeNull
-        $spec.MaximumVersion | Should -BeNull
-      }
+      $spec = [ModuleFastSpec]$in
+      $spec.Name | Should -Be 'Test'
+      $spec.Guid | Should -Be ([Guid]::Empty)
+      $spec.Min | Should -Be '2.1.5'
+      $spec.Max | Should -BeNull
+      $spec.Required | Should -BeNull
     }
   }
 
-  Describe 'Import-ModuleManifest' {
-    It 'Reads Dynamic Manifest' {
-      $Mocks = "$PSScriptRoot/Test/Mocks"
-      $manifest = Import-ModuleManifest "$Mocks/Dynamic.psd1"
-      $manifest | Should -BeOfType [System.Collections.Hashtable]
-      $manifest.ModuleVersion | Should -Be '1.0.0'
-      $manifest.RootModule | Should -Be 'coreclr\PrtgAPI.PowerShell.dll'
+  Context 'ModuleSpecification Conversion' {
+    It 'Name' {
+      $spec = [ModuleSpecification][ModuleFastSpec]'Test'
+      $spec.Name | Should -Be 'Test'
+      $spec.Version | Should -Be '0.0'
+      $spec.RequiredVersion | Should -BeNull
+      $spec.MaximumVersion | Should -BeNull
     }
+    It 'RequiredVersion' {
+      $spec = [ModuleSpecification][ModuleFastSpec]::new('Test', '1.2.3')
+      $spec.Name | Should -Be 'Test'
+      $spec.RequiredVersion | Should -Be '1.2.3.0'
+      $spec.Version | Should -BeNull
+      $spec.MaximumVersion | Should -BeNull
+    }
+  }
+}
+
+# Import-ModuleManifest is now a binary cmdlet — no InModuleScope needed
+Describe 'Import-ModuleManifest' {
+  It 'Reads Dynamic Manifest' {
+    $Mocks = "$PSScriptRoot/Test/Mocks"
+    $manifest = Import-ModuleManifest "$Mocks/Dynamic.psd1"
+    $manifest | Should -BeOfType [System.Collections.Hashtable]
+    $manifest.ModuleVersion | Should -Be '1.0.0'
+    $manifest.RootModule | Should -Be 'coreclr\PrtgAPI.PowerShell.dll'
   }
 }
 

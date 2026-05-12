@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ModuleFast</AssemblyName>
+    <RootNamespace>ModuleFast</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <DebugSymbols>false</DebugSymbols>
+    <PublishDir>$(MSBuildProjectDirectory)\..\..\Build\</PublishDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\..\ModuleFast.psd1" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\ModuleFast.psm1" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NuGet.CommandLine" />
+    <PackageReference Include="System.Management.Automation" PrivateAssets="all" />
+    <PackageReference Include="NuGet.Versioning" />
+  </ItemGroup>
+  <Target Name="RemoveDepsJsonFromPublishOutput" AfterTargets="Publish">
+    <Delete Files="$(PublishDir)$(AssemblyName).deps.json" />
+    <Delete Files="$(PublishDir)$(AssemblyName).pdb" />
+  </Target>
+</Project>

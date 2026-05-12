@@ -4,7 +4,6 @@ using namespace System.IO.Compression
 using namespace System.Reflection
 
 #requires -version 7.2
-
 # This is the bootstrap script for Modules
 
 #We cannot use CmdletBinding here because we need the special $args variable for passthrough to Install-ModuleFast
