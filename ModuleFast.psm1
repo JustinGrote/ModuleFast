@@ -1025,7 +1025,14 @@ function Install-ModuleFastHelper {
               $zip = [IO.Compression.ZipArchive]::new($stream, 'Read')
               [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $installPath)
 
-              $manifestPath = Join-Path $installPath "$($context.Module.Name).psd1"
+              #Perform a case insensitive search for the manifest file
+              $manifestPath = Get-ChildItem -Path $installPath -File -Filter '*.psd1' -ErrorAction Ignore |
+                Where-Object { $_.BaseName -ieq $context.Module.Name } |
+                Select-Object -First 1 -ExpandProperty FullName
+
+              if (-not $manifestPath) {
+                throw [IO.FileNotFoundException]"$($context.Module): Could not find manifest file matching '$($context.Module.Name).psd1' in $installPath"
+              }
 
               # Try to read the manifest with a streamreader just to ModuleVersion.
               # This makes a glaring but reasonable assumption that the moduleVersion is not dynamic and has no newlines.
