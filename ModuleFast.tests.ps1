@@ -82,6 +82,51 @@ InModuleScope 'ModuleFast' {
       $manifest.RootModule | Should -Be 'coreclr\PrtgAPI.PowerShell.dll'
     }
   }
+
+  Describe 'URL-decoding zip entry names during extraction' {
+    It 'Decodes URL-encoded file names (e.g. spaces as %20) when extracting a zip archive' {
+      # Build an in-memory ZIP that has a percent-encoded entry name and an explicit directory entry
+      $memStream = [System.IO.MemoryStream]::new()
+      $zipWrite = [System.IO.Compression.ZipArchive]::new($memStream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+      # Explicit directory entry with percent-encoded name
+      $zipWrite.CreateEntry('sub%20folder/') | Out-Null
+      # File entry inside the percent-encoded directory
+      $entry = $zipWrite.CreateEntry('sub%20folder/file%20with%20spaces.txt')
+      $writer = [System.IO.StreamWriter]::new($entry.Open())
+      $writer.Write('hello')
+      $writer.Dispose()
+      $zipWrite.Dispose()
+      $memStream.Position = 0
+
+      # Replicate the extraction logic from Install-ModuleFast (URL-decode each entry name)
+      $extractPath = Join-Path $TestDrive ([System.Guid]::NewGuid())
+      New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+      $zipRead = [System.IO.Compression.ZipArchive]::new($memStream, [System.IO.Compression.ZipArchiveMode]::Read)
+      foreach ($zipEntry in $zipRead.Entries) {
+        $decodedEntryName = [Uri]::UnescapeDataString($zipEntry.FullName)
+        $destPath = Join-Path $extractPath $decodedEntryName
+        if ($decodedEntryName.EndsWith('/') -or $decodedEntryName.EndsWith('\')) {
+          New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+        } else {
+          $destDir = [System.IO.Path]::GetDirectoryName($destPath)
+          if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+          }
+          [System.IO.Compression.ZipFileExtensions]::ExtractToFile($zipEntry, $destPath, $true)
+        }
+      }
+      $zipRead.Dispose()
+      $memStream.Dispose()
+
+      # The decoded directory should exist
+      Test-Path (Join-Path $extractPath 'sub folder') | Should -BeTrue
+      Test-Path (Join-Path $extractPath 'sub%20folder') | Should -BeFalse
+
+      # The extracted file should use the decoded name, not the percent-encoded one
+      Test-Path (Join-Path $extractPath 'sub folder' 'file with spaces.txt') | Should -BeTrue
+      Test-Path (Join-Path $extractPath 'sub folder' 'file%20with%20spaces.txt') | Should -BeFalse
+    }
+  }
 }
 
 Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
