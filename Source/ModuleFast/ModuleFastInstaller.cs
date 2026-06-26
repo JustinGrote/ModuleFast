@@ -8,6 +8,12 @@ public class ModuleFastInstaller
 {
   private readonly HttpClient _httpClient;
 
+  /// <summary>Maximum MemoryStream pre-allocation for a single package download (512 MB).</summary>
+  private const int MaxPreallocatedBufferSize = 512 * 1024 * 1024;
+
+  /// <summary>Buffer size used when writing individual zip entries to disk (64 KB).</summary>
+  private const int DefaultFileStreamBufferSize = 65536;
+
   public ModuleFastInstaller(HttpClient httpClient)
   {
     _httpClient = httpClient;
@@ -112,7 +118,7 @@ public class ModuleFastInstaller
     await using var httpStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
 
     using var packageStream = contentLength.HasValue
-        ? new MemoryStream((int)Math.Min(contentLength.Value, 512 * 1024 * 1024))
+        ? new MemoryStream((int)Math.Min(contentLength.Value, MaxPreallocatedBufferSize))
         : new MemoryStream();
     await httpStream.CopyToAsync(packageStream, ct).ConfigureAwait(false);
     packageStream.Position = 0;
@@ -213,9 +219,11 @@ public class ModuleFastInstaller
 
       var entryPath = Path.GetFullPath(Path.Combine(destinationPath, entry.FullName));
 
-      // Zip-slip protection: ensure the resolved path stays within the destination.
-      if (!entryPath.StartsWith(destinationPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
-          !entryPath.Equals(destinationPath, StringComparison.OrdinalIgnoreCase))
+      // Zip-slip protection: verify the resolved path stays inside destinationPath.
+      // Path.GetRelativePath handles cross-platform separator differences and
+      // correctly identifies any ".." escapes after full normalisation.
+      var relative = Path.GetRelativePath(destinationPath, entryPath);
+      if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
         throw new InvalidDataException(
             $"Zip entry '{entry.FullName}' resolves outside the destination directory and was rejected.");
 
@@ -236,7 +244,7 @@ public class ModuleFastInstaller
           FileMode.Create,
           FileAccess.Write,
           FileShare.None,
-          bufferSize: 65536,
+          bufferSize: DefaultFileStreamBufferSize,
           FileOptions.Asynchronous);
       await entryStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
     }
