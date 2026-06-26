@@ -104,31 +104,34 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   {
     _workerTask = Task.Run(WorkerLoopAsync, PipelineStopToken);
     PreBegin();
-    EnqueueAndDrain(Begin);
+    ExecuteStep(Begin);
     PostBegin();
   }
 
   protected sealed override void ProcessRecord()
   {
     PreProcess();
-    EnqueueAndDrain(Process);
+    ExecuteStep(Process);
     PostProcess();
   }
 
   protected sealed override void EndProcessing()
   {
     PreEnd();
-    EnqueueAndDrain(End);
+    ExecuteStep(End);
 
     // Signal no more work; the worker will complete the output collection
     _workQueue.CompleteAdding();
+
     // Drain any final items (e.g. if worker adds output after the sentinel race)
     foreach (var item in _output.GetConsumingEnumerable(PipelineStopToken))
     {
       ProcessOutput(item);
     }
+
     // Wait for the worker to finish and clean up
     _workerTask?.GetAwaiter().GetResult();
+
     PostEnd();
   }
 
@@ -137,7 +140,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// Enqueues an async work item to the persistent worker and drains output on the
   /// main thread until the step signals completion via a <see cref="StepComplete"/> sentinel.
   /// </summary>
-  private void EnqueueAndDrain(Func<Task> work)
+  private void ExecuteStep(Func<Task> work)
   {
     _workQueue.Add(work, PipelineStopToken);
 
