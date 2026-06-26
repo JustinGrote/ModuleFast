@@ -287,7 +287,7 @@ public class InstallModuleFastCommand : PSCmdlet
         WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing: {finalInstallPlan.Length} Modules") { PercentComplete = 50 });
 
         var installer = new ModuleFastInstaller(_httpClient!);
-        var installTask = installer.InstallModulesAsync(finalInstallPlan, Destination!, Update || ParameterSetName == "ModuleFastInfo", ct, this);
+        var installTask = installer.InstallModulesAsync(finalInstallPlan, Destination!, Update || ParameterSetName == "ModuleFastInfo", ct, this, ThrottleLimit);
         var installedModules = installTask.GetAwaiter().GetResult();
 
         WriteProgress(new ProgressRecord(1, "Install-ModuleFast", "Completed") { RecordType = ProgressRecordType.Completed });

@@ -143,17 +143,14 @@ public class ModuleFastPlanner
         var depSpec = new ModuleFastSpec(dep.Id, depRange);
 
         // Check if already satisfied by planned installs
-        var moduleNames = new HashSet<string>(modulesToInstall.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
-        if (moduleNames.Contains(depSpec.Name))
+        var existing = modulesToInstall
+            .Where(m => string.Equals(m.Name, depSpec.Name, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(m => m.ModuleVersion)
+            .FirstOrDefault();
+        if (existing != null && depSpec.SatisfiedBy(existing.ModuleVersion, strictSemVer))
         {
-          var existing = modulesToInstall.Where(m => string.Equals(m.Name, depSpec.Name, StringComparison.OrdinalIgnoreCase))
-              .OrderByDescending(m => m.ModuleVersion)
-              .FirstOrDefault();
-          if (existing != null && depSpec.SatisfiedBy(existing.ModuleVersion, strictSemVer))
-          {
-            cmdlet?.WriteDebug($"Dependency {depSpec} satisfied by existing planned install {existing}");
-            continue;
-          }
+          cmdlet?.WriteDebug($"Dependency {depSpec} satisfied by existing planned install {existing}");
+          continue;
         }
 
         var depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
@@ -243,19 +240,24 @@ public class ModuleFastPlanner
 
     cmdlet?.WriteDebug($"{spec}: Found {pages.Length} additional pages to query.");
 
-    foreach (var page in pages)
+    // Fetch all candidate pages concurrently — they are independent HTTP GETs and the cache
+    // deduplicates any overlap, so firing them all at once beats sequential round-trips.
+    var pageJsonTasks = pages.Select(p => GetCachedStringAsync(p.Id, ct)).ToArray();
+    var pageJsons = await Task.WhenAll(pageJsonTasks).ConfigureAwait(false);
+
+    // Evaluate pages from highest to lowest (already ordered by descending Upper).
+    for (int i = 0; i < pages.Length; i++)
     {
-      var pageJson = await GetCachedStringAsync(page.Id, ct).ConfigureAwait(false);
       RegistrationPage pageData;
       try
       {
-        pageData = JsonSerializer.Deserialize<RegistrationPage>(pageJson, _jsonOpts)
+        pageData = JsonSerializer.Deserialize<RegistrationPage>(pageJsons[i], _jsonOpts)
             ?? throw new InvalidDataException("Invalid page response");
       }
       catch (JsonException)
       {
         // Some servers return RegistrationResponse for page URLs too
-        var pageResponse = JsonSerializer.Deserialize<RegistrationResponse>(pageJson, _jsonOpts);
+        var pageResponse = JsonSerializer.Deserialize<RegistrationResponse>(pageJsons[i], _jsonOpts);
         pageData = pageResponse?.Items?.FirstOrDefault() ?? new RegistrationPage();
       }
 
@@ -308,14 +310,11 @@ public class ModuleFastPlanner
     return registrationBase;
   }
 
-  private Task<string> GetCachedStringAsync(string uri, CancellationToken ct)
-  {
-    var cached = ModuleFastCache.Instance.Get(uri);
-    if (cached != null)
-      return cached;
-
-    var task = _httpClient.GetStringAsync(uri, ct);
-    ModuleFastCache.Instance.Set(uri, task);
-    return task;
-  }
+  /// <summary>
+  /// Returns the cached task for <paramref name="uri"/>, or atomically starts — and caches — a new
+  /// HTTP GET. Using <see cref="ModuleFastCache.GetOrAdd"/> means concurrent callers that race for
+  /// the same URI will always share a single in-flight request rather than firing duplicates.
+  /// </summary>
+  private Task<string> GetCachedStringAsync(string uri, CancellationToken ct) =>
+      ModuleFastCache.Instance.GetOrAdd(uri, _ => _httpClient.GetStringAsync(uri, ct));
 }

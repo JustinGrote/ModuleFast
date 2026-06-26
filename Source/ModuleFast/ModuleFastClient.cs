@@ -13,9 +13,14 @@ public static class ModuleFastClient
     AppContext.SetSwitch("System.Net.SocketsHttpHandler.Http3Support", true);
     var handler = new SocketsHttpHandler
     {
-      MaxConnectionsPerServer = 10,
+      // Allow more parallel connections to the same host (registry + CDN).
+      MaxConnectionsPerServer = 20,
+      // Allow an additional TCP connection when all HTTP/2 streams on the first are consumed.
+      EnableMultipleHttp2Connections = true,
       InitialHttp2StreamWindowSize = 16777216,
-      AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+      AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
+      // Recycle connections after 5 minutes so stale long-lived connections don't silently fail.
+      PooledConnectionLifetime = TimeSpan.FromMinutes(5),
     };
     var client = new HttpClient(handler)
     {

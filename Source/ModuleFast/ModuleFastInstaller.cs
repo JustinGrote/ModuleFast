@@ -13,15 +13,35 @@ public class ModuleFastInstaller
     _httpClient = httpClient;
   }
 
+  /// <summary>
+  /// Installs all <paramref name="modules"/> in parallel, capping concurrency at
+  /// <paramref name="maxConcurrency"/> simultaneous operations so that large install
+  /// plans don't overwhelm the file system or connection pool.
+  /// </summary>
   public async Task<List<ModuleFastInfo>> InstallModulesAsync(
       IEnumerable<ModuleFastInfo> modules,
       string destination,
       bool update,
       CancellationToken ct,
-      PSCmdlet? cmdlet = null)
+      PSCmdlet? cmdlet = null,
+      int maxConcurrency = 0)
   {
+    if (maxConcurrency <= 0)
+      maxConcurrency = Environment.ProcessorCount;
 
-    var tasks = modules.Select(m => InstallSingleAsync(m, destination, update, ct, cmdlet));
+    using var semaphore = new SemaphoreSlim(maxConcurrency);
+    var tasks = modules.Select(async m =>
+    {
+      await semaphore.WaitAsync(ct).ConfigureAwait(false);
+      try
+      {
+        return await InstallSingleAsync(m, destination, update, ct, cmdlet).ConfigureAwait(false);
+      }
+      finally
+      {
+        semaphore.Release();
+      }
+    });
     var results = await Task.WhenAll(tasks).ConfigureAwait(false);
     return results.Where(r => r != null).Cast<ModuleFastInfo>().ToList();
   }
@@ -81,13 +101,27 @@ public class ModuleFastInstaller
     if (module.Location == null)
       throw new InvalidOperationException($"{module}: No Download Link found. This is a bug.");
 
-    await using var stream = await _httpClient.GetStreamAsync(module.Location, ct).ConfigureAwait(false);
+    // Use ResponseHeadersRead so we can read Content-Length and pre-allocate the MemoryStream,
+    // avoiding repeated buffer resizing for large packages while keeping the download truly async.
+    using var response = await _httpClient
+        .GetAsync(module.Location, HttpCompletionOption.ResponseHeadersRead, ct)
+        .ConfigureAwait(false);
+    response.EnsureSuccessStatusCode();
+
+    var contentLength = response.Content.Headers.ContentLength;
+    await using var httpStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+
+    using var packageStream = contentLength.HasValue
+        ? new MemoryStream((int)Math.Min(contentLength.Value, 512 * 1024 * 1024))
+        : new MemoryStream();
+    await httpStream.CopyToAsync(packageStream, ct).ConfigureAwait(false);
+    packageStream.Position = 0;
 
     Directory.CreateDirectory(installPath);
-    File.WriteAllText(installIndicatorPath, "");
+    await File.WriteAllTextAsync(installIndicatorPath, "", ct).ConfigureAwait(false);
 
-    using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
-    zip.ExtractToDirectory(installPath, overwriteFiles: true);
+    using var zip = new ZipArchive(packageStream, ZipArchiveMode.Read);
+    await ExtractZipAsync(zip, installPath, ct).ConfigureAwait(false);
 
     // Fast scan for manifest version
     var manifestPath = Path.Combine(installPath, $"{module.Name}.psd1");
@@ -114,7 +148,8 @@ public class ModuleFastInstaller
 
         // Update indicator path
         installIndicatorPath = Path.Combine(installPath, ".incomplete");
-        File.WriteAllText(Path.Combine(installPath, ".originalModuleVersion"), originalModuleVersion);
+        await File.WriteAllTextAsync(Path.Combine(installPath, ".originalModuleVersion"), originalModuleVersion, ct)
+            .ConfigureAwait(false);
 
         module.ModuleVersion = new NuGetVersion(moduleManifestVersion.ToString());
       }
@@ -161,5 +196,49 @@ public class ModuleFastInstaller
 
     module.Location = new Uri(installPath);
     return module;
+  }
+
+  /// <summary>
+  /// Extracts all entries of <paramref name="zip"/> to <paramref name="destinationPath"/> using
+  /// async file I/O (<see cref="FileOptions.Asynchronous"/>) so that writing large files does not
+  /// block thread-pool threads and other concurrent install tasks can make progress on the same
+  /// threads while I/O is in flight. Entries are processed sequentially within a single archive
+  /// because <see cref="ZipArchive"/> shares one underlying seekable stream across all entries.
+  /// </summary>
+  private static async Task ExtractZipAsync(ZipArchive zip, string destinationPath, CancellationToken ct)
+  {
+    foreach (var entry in zip.Entries)
+    {
+      ct.ThrowIfCancellationRequested();
+
+      var entryPath = Path.GetFullPath(Path.Combine(destinationPath, entry.FullName));
+
+      // Zip-slip protection: ensure the resolved path stays within the destination.
+      if (!entryPath.StartsWith(destinationPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+          !entryPath.Equals(destinationPath, StringComparison.OrdinalIgnoreCase))
+        throw new InvalidDataException(
+            $"Zip entry '{entry.FullName}' resolves outside the destination directory and was rejected.");
+
+      if (string.IsNullOrEmpty(entry.Name))
+      {
+        // Directory entry
+        Directory.CreateDirectory(entryPath);
+        continue;
+      }
+
+      var parentDir = Path.GetDirectoryName(entryPath);
+      if (!string.IsNullOrEmpty(parentDir))
+        Directory.CreateDirectory(parentDir);
+
+      await using var entryStream = entry.Open();
+      await using var fileStream = new FileStream(
+          entryPath,
+          FileMode.Create,
+          FileAccess.Write,
+          FileShare.None,
+          bufferSize: 65536,
+          FileOptions.Asynchronous);
+      await entryStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
+    }
   }
 }
