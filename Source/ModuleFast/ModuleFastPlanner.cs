@@ -14,7 +14,6 @@ public class ModuleFastPlanner
 {
   private readonly HttpClient _httpClient;
   private readonly string _source;
-  private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
 
   public ModuleFastPlanner(HttpClient httpClient, string source)
   {
@@ -51,118 +50,130 @@ public class ModuleFastPlanner
       pendingTasks[task] = spec;
     }
 
+    // Task.WhenEach (introduced in .NET 9) yields tasks as they complete with O(1)
+    // overhead per completion, avoiding the O(n²) cost of repeated Task.WhenAny calls.
+    // Dependency tasks added to pendingTasks mid-flight are not in the current snapshot;
+    // the outer while loop creates a new snapshot to pick them up once the current batch
+    // is drained. The TryGetValue guard skips tasks not (or no longer) in pendingTasks.
     while (pendingTasks.Count > 0)
     {
-      var completed = await Task.WhenAny(pendingTasks.Keys).ConfigureAwait(false);
-      var currentSpec = pendingTasks[completed];
-      pendingTasks.Remove(completed);
+      // Take a snapshot so that WhenEach sees a stable collection for this batch.
+      var snapshot = pendingTasks.Keys.ToArray();
 
-      if (currentSpec.Guid != Guid.Empty)
-        cmdlet?.WriteWarning($"{currentSpec}: A GUID constraint was found. GUIDs will only be verified after installation.");
-
-      cmdlet?.WriteDebug($"{currentSpec}: Processing Response");
-
-      string json;
-      try
+      await foreach (var completed in Task.WhenEach(snapshot).WithCancellation(ct).ConfigureAwait(false))
       {
-        json = await completed.ConfigureAwait(false);
-      }
-      catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-      {
-        throw new InvalidOperationException($"{currentSpec}: module was not found in the {_source} repository. Check the spelling and try again.");
-      }
-      catch (HttpRequestException ex)
-      {
-        throw new InvalidOperationException($"{currentSpec}: Failed to fetch module from {_source}. Error: {ex.Message}", ex);
-      }
+        if (!pendingTasks.TryGetValue(completed, out var currentSpec))
+          continue;
 
-      RegistrationResponse response;
-      try
-      {
-        response = JsonSerializer.Deserialize<RegistrationResponse>(json, _jsonOpts)
-            ?? throw new InvalidDataException($"{currentSpec}: Invalid response from {_source}");
-      }
-      catch (JsonException ex)
-      {
-        throw new InvalidDataException($"{currentSpec}: Invalid JSON response from {_source}: {ex.Message}", ex);
-      }
+        pendingTasks.Remove(completed);
 
-      if (response.Count == 0 && response.Items.Length == 0)
-        throw new InvalidDataException($"{currentSpec}: invalid result received from {_source}.");
+        if (currentSpec.Guid != Guid.Empty)
+          cmdlet?.WriteWarning($"{currentSpec}: A GUID constraint was found. GUIDs will only be verified after installation.");
 
-      var selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, cmdlet);
-      if (selectedEntry == null)
-      {
-        // Try non-inlined pages
-        selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, cmdlet)
-            .ConfigureAwait(false);
-      }
+        cmdlet?.WriteDebug($"{currentSpec}: Processing Response");
 
-      if (selectedEntry == null)
-        throw new InvalidOperationException($"{currentSpec}: a matching module was not found in the {_source} repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints.");
-
-      if (string.IsNullOrEmpty(selectedEntry.PackageContent))
-        throw new InvalidDataException($"No package location found for {currentSpec}. This is a bug.");
-
-      if (selectedEntry.Tags != null && Array.Exists(selectedEntry.Tags, t => t == "ItemType:Script"))
-        throw new NotImplementedException($"{currentSpec}: Script installations are currently not supported.");
-
-      var selectedModule = new ModuleFastInfo(
-          selectedEntry.Id,
-          NuGetVersion.Parse(selectedEntry.Version),
-          new Uri(selectedEntry.PackageContent));
-
-      if (currentSpec.Guid != Guid.Empty)
-        selectedModule.Guid = currentSpec.Guid;
-
-      // If -Update was specified, check if best local candidate matches
-      if (update && bestLocalCandidates.TryGetValue(currentSpec, out var bestLocal) &&
-          bestLocal.ModuleVersion == selectedModule.ModuleVersion)
-      {
-        cmdlet?.WriteDebug($"{selectedModule}: ✅ -Update specified and best remote matches local. Skipping.");
-        continue;
-      }
-
-      if (!modulesToInstall.Add(selectedModule))
-      {
-        cmdlet?.WriteDebug($"{selectedModule} already exists in the install plan. Skipping...");
-        continue;
-      }
-
-      cmdlet?.WriteVerbose($"{selectedModule}: Added to install plan");
-
-      // Queue dependency tasks
-      var allDeps = selectedEntry.DependencyGroups?
-          .SelectMany(g => g.Dependencies ?? []) ?? [];
-
-      foreach (var dep in allDeps)
-      {
-        var depRange = string.IsNullOrWhiteSpace(dep.Range)
-            ? VersionRange.All
-            : VersionRange.Parse(dep.Range);
-        var depSpec = new ModuleFastSpec(dep.Id, depRange);
-
-        // Check if already satisfied by planned installs
-        var existing = modulesToInstall
-            .Where(m => string.Equals(m.Name, depSpec.Name, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(m => m.ModuleVersion)
-            .FirstOrDefault();
-        if (existing != null && depSpec.SatisfiedBy(existing.ModuleVersion, strictSemVer))
+        string json;
+        try
         {
-          cmdlet?.WriteDebug($"Dependency {depSpec} satisfied by existing planned install {existing}");
+          json = await completed.ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+          throw new InvalidOperationException($"{currentSpec}: module was not found in the {_source} repository. Check the spelling and try again.");
+        }
+        catch (HttpRequestException ex)
+        {
+          throw new InvalidOperationException($"{currentSpec}: Failed to fetch module from {_source}. Error: {ex.Message}", ex);
+        }
+
+        RegistrationResponse response;
+        try
+        {
+          response = JsonSerializer.Deserialize(json, ModuleFastJsonContext.Default.RegistrationResponse)
+              ?? throw new InvalidDataException($"{currentSpec}: Invalid response from {_source}");
+        }
+        catch (JsonException ex)
+        {
+          throw new InvalidDataException($"{currentSpec}: Invalid JSON response from {_source}: {ex.Message}", ex);
+        }
+
+        if (response.Count == 0 && response.Items.Length == 0)
+          throw new InvalidDataException($"{currentSpec}: invalid result received from {_source}.");
+
+        var selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, cmdlet);
+        if (selectedEntry == null)
+        {
+          // Try non-inlined pages
+          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, cmdlet)
+              .ConfigureAwait(false);
+        }
+
+        if (selectedEntry == null)
+          throw new InvalidOperationException($"{currentSpec}: a matching module was not found in the {_source} repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints.");
+
+        if (string.IsNullOrEmpty(selectedEntry.PackageContent))
+          throw new InvalidDataException($"No package location found for {currentSpec}. This is a bug.");
+
+        if (selectedEntry.Tags != null && Array.Exists(selectedEntry.Tags, t => t == "ItemType:Script"))
+          throw new NotImplementedException($"{currentSpec}: Script installations are currently not supported.");
+
+        var selectedModule = new ModuleFastInfo(
+            selectedEntry.Id,
+            NuGetVersion.Parse(selectedEntry.Version),
+            new Uri(selectedEntry.PackageContent));
+
+        if (currentSpec.Guid != Guid.Empty)
+          selectedModule.Guid = currentSpec.Guid;
+
+        // If -Update was specified, check if best local candidate matches
+        if (update && bestLocalCandidates.TryGetValue(currentSpec, out var bestLocal) &&
+            bestLocal.ModuleVersion == selectedModule.ModuleVersion)
+        {
+          cmdlet?.WriteDebug($"{selectedModule}: ✅ -Update specified and best remote matches local. Skipping.");
           continue;
         }
 
-        var depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
-        if (depLocal != null)
+        if (!modulesToInstall.Add(selectedModule))
         {
-          cmdlet?.WriteDebug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
+          cmdlet?.WriteDebug($"{selectedModule} already exists in the install plan. Skipping...");
           continue;
         }
 
-        cmdlet?.WriteDebug($"{currentSpec}: Fetching dependency {depSpec}");
-        var depTask = GetModuleInfoAsync(depSpec.Name, _source, ct);
-        pendingTasks[depTask] = depSpec;
+        cmdlet?.WriteVerbose($"{selectedModule}: Added to install plan");
+
+        // Queue dependency tasks
+        var allDeps = selectedEntry.DependencyGroups?
+            .SelectMany(g => g.Dependencies ?? []) ?? [];
+
+        foreach (var dep in allDeps)
+        {
+          var depRange = string.IsNullOrWhiteSpace(dep.Range)
+              ? VersionRange.All
+              : VersionRange.Parse(dep.Range);
+          var depSpec = new ModuleFastSpec(dep.Id, depRange);
+
+          // Check if already satisfied by planned installs
+          var existing = modulesToInstall
+              .Where(m => string.Equals(m.Name, depSpec.Name, StringComparison.OrdinalIgnoreCase))
+              .OrderByDescending(m => m.ModuleVersion)
+              .FirstOrDefault();
+          if (existing != null && depSpec.SatisfiedBy(existing.ModuleVersion, strictSemVer))
+          {
+            cmdlet?.WriteDebug($"Dependency {depSpec} satisfied by existing planned install {existing}");
+            continue;
+          }
+
+          var depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
+          if (depLocal != null)
+          {
+            cmdlet?.WriteDebug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
+            continue;
+          }
+
+          cmdlet?.WriteDebug($"{currentSpec}: Fetching dependency {depSpec}");
+          var depTask = GetModuleInfoAsync(depSpec.Name, _source, ct);
+          pendingTasks[depTask] = depSpec;
+        }
       }
     }
 
@@ -251,13 +262,13 @@ public class ModuleFastPlanner
       RegistrationPage pageData;
       try
       {
-        pageData = JsonSerializer.Deserialize<RegistrationPage>(pageJsons[i], _jsonOpts)
+        pageData = JsonSerializer.Deserialize(pageJsons[i], ModuleFastJsonContext.Default.RegistrationPage)
             ?? throw new InvalidDataException("Invalid page response");
       }
       catch (JsonException)
       {
         // Some servers return RegistrationResponse for page URLs too
-        var pageResponse = JsonSerializer.Deserialize<RegistrationResponse>(pageJsons[i], _jsonOpts);
+        var pageResponse = JsonSerializer.Deserialize(pageJsons[i], ModuleFastJsonContext.Default.RegistrationResponse);
         pageData = pageResponse?.Items?.FirstOrDefault() ?? new RegistrationPage();
       }
 
@@ -297,7 +308,7 @@ public class ModuleFastPlanner
   private async Task<string> GetRegistrationBaseAsync(string endpoint, CancellationToken ct)
   {
     var indexJson = await GetCachedStringAsync(endpoint, ct).ConfigureAwait(false);
-    var index = JsonSerializer.Deserialize<RegistrationIndex>(indexJson, _jsonOpts)
+    var index = JsonSerializer.Deserialize(indexJson, ModuleFastJsonContext.Default.RegistrationIndex)
         ?? throw new InvalidDataException("Invalid registration index from " + endpoint);
 
     var registrationBase = index.Resources

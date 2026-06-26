@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Management.Automation;
 
@@ -11,18 +12,15 @@ public class ModuleFastInstaller
   /// <summary>Maximum MemoryStream pre-allocation for a single package download (512 MB).</summary>
   private const int MaxPreallocatedBufferSize = 512 * 1024 * 1024;
 
-  /// <summary>Buffer size used when writing individual zip entries to disk (64 KB).</summary>
-  private const int DefaultFileStreamBufferSize = 65536;
-
   public ModuleFastInstaller(HttpClient httpClient)
   {
     _httpClient = httpClient;
   }
 
   /// <summary>
-  /// Installs all <paramref name="modules"/> in parallel, capping concurrency at
-  /// <paramref name="maxConcurrency"/> simultaneous operations so that large install
-  /// plans don't overwhelm the file system or connection pool.
+  /// Installs all <paramref name="modules"/> in parallel using
+  /// <see cref="Parallel.ForEachAsync"/>, capping concurrency at
+  /// <paramref name="maxConcurrency"/> simultaneous operations.
   /// </summary>
   public async Task<List<ModuleFastInfo>> InstallModulesAsync(
       IEnumerable<ModuleFastInfo> modules,
@@ -35,21 +33,16 @@ public class ModuleFastInstaller
     if (maxConcurrency <= 0)
       maxConcurrency = Environment.ProcessorCount;
 
-    using var semaphore = new SemaphoreSlim(maxConcurrency);
-    var tasks = modules.Select(async m =>
+    var results = new ConcurrentBag<ModuleFastInfo>();
+    var opts = new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = ct };
+
+    await Parallel.ForEachAsync(modules, opts, async (m, ct) =>
     {
-      await semaphore.WaitAsync(ct).ConfigureAwait(false);
-      try
-      {
-        return await InstallSingleAsync(m, destination, update, ct, cmdlet).ConfigureAwait(false);
-      }
-      finally
-      {
-        semaphore.Release();
-      }
-    });
-    var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-    return results.Where(r => r != null).Cast<ModuleFastInfo>().ToList();
+      var result = await InstallSingleAsync(m, destination, update, ct, cmdlet).ConfigureAwait(false);
+      if (result != null) results.Add(result);
+    }).ConfigureAwait(false);
+
+    return results.ToList();
   }
 
   private async Task<ModuleFastInfo?> InstallSingleAsync(
@@ -130,8 +123,10 @@ public class ModuleFastInstaller
     Directory.CreateDirectory(installPath);
     await File.WriteAllTextAsync(installIndicatorPath, "", ct).ConfigureAwait(false);
 
-    using var zip = new ZipArchive(packageStream, ZipArchiveMode.Read);
-    await ExtractZipAsync(zip, installPath, ct).ConfigureAwait(false);
+    // ZipFile.ExtractToDirectoryAsync (.NET 10) uses async file I/O internally and
+    // includes built-in zip-slip protection, replacing the custom ExtractZipAsync method.
+    await ZipFile.ExtractToDirectoryAsync(packageStream, installPath, overwriteFiles: false, ct)
+        .ConfigureAwait(false);
 
     // Fast scan for manifest version
     var manifestPath = Path.Combine(installPath, $"{module.Name}.psd1");
@@ -206,60 +201,5 @@ public class ModuleFastInstaller
 
     module.Location = new Uri(installPath);
     return module;
-  }
-
-  /// <summary>
-  /// Extracts all entries of <paramref name="zip"/> to <paramref name="destinationPath"/> using
-  /// async file I/O (<see cref="FileOptions.Asynchronous"/>) so that writing large files does not
-  /// block thread-pool threads and other concurrent install tasks can make progress on the same
-  /// threads while I/O is in flight. Entries are processed sequentially within a single archive
-  /// because <see cref="ZipArchive"/> shares one underlying seekable stream across all entries.
-  /// </summary>
-  private static async Task ExtractZipAsync(ZipArchive zip, string destinationPath, CancellationToken ct)
-  {
-    // Canonicalise the destination once so every entry comparison is against the same base.
-    var destFull = Path.GetFullPath(destinationPath);
-
-    foreach (var entry in zip.Entries)
-    {
-      ct.ThrowIfCancellationRequested();
-
-      // Normalise the entry's separator to the current OS before combining.
-      // Replace both '/' and '\' explicitly so archives created on a different OS
-      // (e.g. Windows-originating archives on Unix) are handled correctly on every platform.
-      var normalizedEntry = entry.FullName
-          .Replace('/', Path.DirectorySeparatorChar)
-          .Replace('\\', Path.DirectorySeparatorChar);
-      var entryPath = Path.GetFullPath(Path.Combine(destFull, normalizedEntry));
-
-      // Zip-slip protection: the fully-normalised entry path must remain within the destination.
-      // Appending the separator prevents a false prefix match against a sibling directory
-      // (e.g. /dest matching /dest-other).
-      if (!entryPath.StartsWith(destFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
-          !entryPath.Equals(destFull, StringComparison.OrdinalIgnoreCase))
-        throw new InvalidDataException(
-            $"Zip entry '{entry.FullName}' resolves outside the destination directory and was rejected.");
-
-      if (string.IsNullOrEmpty(entry.Name))
-      {
-        // Directory entry
-        Directory.CreateDirectory(entryPath);
-        continue;
-      }
-
-      var parentDir = Path.GetDirectoryName(entryPath);
-      if (!string.IsNullOrEmpty(parentDir))
-        Directory.CreateDirectory(parentDir);
-
-      await using var entryStream = entry.Open();
-      await using var fileStream = new FileStream(
-          entryPath,
-          FileMode.Create,
-          FileAccess.Write,
-          FileShare.None,
-          bufferSize: DefaultFileStreamBufferSize,
-          FileOptions.Asynchronous);
-      await entryStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
-    }
   }
 }

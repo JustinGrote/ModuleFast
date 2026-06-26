@@ -52,3 +52,17 @@ public class Dependency
   [JsonPropertyName("id")] public string Id { get; set; } = "";
   public string? Range { get; set; }
 }
+
+/// <summary>
+/// Compile-time JSON source generation context for NuGet v3 registration models.
+/// Avoids runtime reflection and enables AOT-compatible deserialization.
+/// </summary>
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+[JsonSerializable(typeof(RegistrationIndex))]
+[JsonSerializable(typeof(RegistrationResponse))]
+[JsonSerializable(typeof(RegistrationPage))]
+[JsonSerializable(typeof(RegistrationLeaf))]
+[JsonSerializable(typeof(CatalogEntry))]
+[JsonSerializable(typeof(DependencyGroup))]
+[JsonSerializable(typeof(Dependency))]
+internal partial class ModuleFastJsonContext : JsonSerializerContext { }
