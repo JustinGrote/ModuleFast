@@ -1,4 +1,5 @@
 using System.Management.Automation;
+using System.Linq;
 using System.Reflection;
 
 namespace ModuleFast;
@@ -11,24 +12,57 @@ public static class PathHelper
   {
     try
     {
-      var scopeType = Type.GetType("System.Management.Automation.Configuration.ConfigScope, System.Management.Automation")
-          ?? typeof(PSCmdlet).Assembly.GetType("System.Management.Automation.Configuration.ConfigScope");
-      if (scopeType == null) return null;
+      var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+      var modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
+          .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+          .Select(p =>
+          {
+            try { return Path.GetFullPath(p); }
+            catch { return p; }
+          })
+          .ToArray();
 
-      var pscType = scopeType.Assembly.GetType("System.Management.Automation.Configuration.PowerShellConfig");
-      if (pscType == null) return null;
+      if (modulePaths.Length > 0)
+      {
+        if (allUsers)
+        {
+          var allUsersPath = modulePaths.FirstOrDefault(p =>
+              !p.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase));
+          if (!string.IsNullOrWhiteSpace(allUsersPath)) return allUsersPath;
+        }
+        else
+        {
+          var currentUserPath = modulePaths.FirstOrDefault(p =>
+              p.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase));
+          if (!string.IsNullOrWhiteSpace(currentUserPath)) return currentUserPath;
+        }
+      }
 
-      var instance = pscType.GetField("Instance", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
-      if (instance == null) return null;
+      if (OperatingSystem.IsWindows())
+      {
+        if (allUsers)
+        {
+          var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+          return string.IsNullOrWhiteSpace(programFiles)
+              ? null
+              : Path.Combine(programFiles, "PowerShell", "Modules");
+        }
 
-      var method = pscType.GetMethod("GetModulePath", BindingFlags.Instance | BindingFlags.NonPublic);
-      if (method == null) return null;
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        return string.IsNullOrWhiteSpace(documents)
+            ? null
+            : Path.Combine(documents, "PowerShell", "Modules");
+      }
 
-      var scopeValue = allUsers
-          ? Enum.Parse(scopeType, "AllUsers")
-          : Enum.Parse(scopeType, "CurrentUser");
+      var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+      if (!allUsers)
+      {
+        return string.IsNullOrWhiteSpace(home)
+            ? null
+            : Path.Combine(home, ".local", "share", "powershell", "Modules");
+      }
 
-      return method.Invoke(instance, [scopeValue]) as string;
+      return "/usr/local/share/powershell/Modules";
     }
     catch
     {
