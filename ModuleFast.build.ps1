@@ -35,7 +35,7 @@ Task Clean {
 }
 
 Task BuildCSharp {
-  $csprojPath = Join-Path $PSScriptRoot 'src' 'ModuleFast' 'ModuleFast.csproj'
+  $csprojPath = Join-Path $PSScriptRoot 'Source' 'ModuleFast' 'ModuleFast.csproj'
   # Artifacts Output Layout managed by Directory.Build.props — no -o needed
   dotnet build $csprojPath --nologo -c Release
 }
