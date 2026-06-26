@@ -117,9 +117,13 @@ public class ModuleFastInstaller
     var contentLength = response.Content.Headers.ContentLength;
     await using var httpStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
 
-    using var packageStream = contentLength.HasValue
-        ? new MemoryStream((int)Math.Min(contentLength.Value, MaxPreallocatedBufferSize))
-        : new MemoryStream();
+    // Pre-allocate the MemoryStream using Content-Length when available to avoid repeated
+    // internal buffer resizing. Cap at MaxPreallocatedBufferSize to guard against absurdly
+    // large or malicious Content-Length values; also guard against overflow when casting to int.
+    var preAllocSize = contentLength.HasValue && contentLength.Value > 0
+        ? (int)Math.Min(contentLength.Value, MaxPreallocatedBufferSize)
+        : 0;
+    using var packageStream = preAllocSize > 0 ? new MemoryStream(preAllocSize) : new MemoryStream();
     await httpStream.CopyToAsync(packageStream, ct).ConfigureAwait(false);
     packageStream.Position = 0;
 
@@ -213,17 +217,25 @@ public class ModuleFastInstaller
   /// </summary>
   private static async Task ExtractZipAsync(ZipArchive zip, string destinationPath, CancellationToken ct)
   {
+    // Canonicalise the destination once so every entry comparison is against the same base.
+    var destFull = Path.GetFullPath(destinationPath);
+
     foreach (var entry in zip.Entries)
     {
       ct.ThrowIfCancellationRequested();
 
-      var entryPath = Path.GetFullPath(Path.Combine(destinationPath, entry.FullName));
+      // Normalise the entry's separator to the current OS before combining, so that
+      // mixed-separator paths (e.g. Unix-style forward slashes in an archive opened on Windows)
+      // are resolved unambiguously by Path.GetFullPath.
+      var normalizedEntry = entry.FullName.Replace(
+          Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+      var entryPath = Path.GetFullPath(Path.Combine(destFull, normalizedEntry));
 
-      // Zip-slip protection: verify the resolved path stays inside destinationPath.
-      // Path.GetRelativePath handles cross-platform separator differences and
-      // correctly identifies any ".." escapes after full normalisation.
-      var relative = Path.GetRelativePath(destinationPath, entryPath);
-      if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+      // Zip-slip protection: the fully-normalised entry path must remain within the destination.
+      // Appending the separator prevents a false prefix match against a sibling directory
+      // (e.g. /dest matching /dest-other).
+      if (!entryPath.StartsWith(destFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+          !entryPath.Equals(destFull, StringComparison.OrdinalIgnoreCase))
         throw new InvalidDataException(
             $"Zip entry '{entry.FullName}' resolves outside the destination directory and was rejected.");
 
