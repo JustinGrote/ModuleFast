@@ -118,10 +118,10 @@ public class ModuleFastInstaller
     await using var httpStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
 
     // Pre-allocate the MemoryStream using Content-Length when available to avoid repeated
-    // internal buffer resizing. Cap at MaxPreallocatedBufferSize to guard against absurdly
-    // large or malicious Content-Length values; also guard against overflow when casting to int.
+    // internal buffer resizing. Guard against overflow: clamp to int.MaxValue before the
+    // cast so that this stays correct even if MaxPreallocatedBufferSize is ever raised above 2 GB.
     var preAllocSize = contentLength.HasValue && contentLength.Value > 0
-        ? (int)Math.Min(contentLength.Value, MaxPreallocatedBufferSize)
+        ? (int)Math.Min(Math.Min(contentLength.Value, MaxPreallocatedBufferSize), int.MaxValue)
         : 0;
     using var packageStream = preAllocSize > 0 ? new MemoryStream(preAllocSize) : new MemoryStream();
     await httpStream.CopyToAsync(packageStream, ct).ConfigureAwait(false);
@@ -224,11 +224,12 @@ public class ModuleFastInstaller
     {
       ct.ThrowIfCancellationRequested();
 
-      // Normalise the entry's separator to the current OS before combining, so that
-      // mixed-separator paths (e.g. Unix-style forward slashes in an archive opened on Windows)
-      // are resolved unambiguously by Path.GetFullPath.
-      var normalizedEntry = entry.FullName.Replace(
-          Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+      // Normalise the entry's separator to the current OS before combining.
+      // Replace both '/' and '\' explicitly so archives created on a different OS
+      // (e.g. Windows-originating archives on Unix) are handled correctly on every platform.
+      var normalizedEntry = entry.FullName
+          .Replace('/', Path.DirectorySeparatorChar)
+          .Replace('\\', Path.DirectorySeparatorChar);
       var entryPath = Path.GetFullPath(Path.Combine(destFull, normalizedEntry));
 
       // Zip-slip protection: the fully-normalised entry path must remain within the destination.
