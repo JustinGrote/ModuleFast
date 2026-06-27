@@ -74,8 +74,8 @@ public class InstallModuleFastCommand : PSCmdlet
   private readonly HashSet<ModuleFastSpec> _modulesToInstall = new();
   private readonly List<ModuleFastInfo> _installPlan = new();
   private readonly ModuleFastMessageBuffer _messages = new();
-  private CancellationTokenSource? _cancelSource;
-  private System.Net.Http.HttpClient? _httpClient;
+  private CancellationTokenSource? _timeoutSource;
+  private HttpClient? _httpClient;
 
   protected override void BeginProcessing()
   {
@@ -160,8 +160,8 @@ public class InstallModuleFastCommand : PSCmdlet
     }
 
     _httpClient = ModuleFastClient.Create(Credential, Timeout);
-    _cancelSource = new CancellationTokenSource();
-    _cancelSource.CancelAfter(TimeSpan.FromSeconds(Timeout * 10)); // overall timeout
+    _timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(PipelineStopToken);
+    _timeoutSource.CancelAfter(TimeSpan.FromSeconds(Timeout * 10)); // overall timeout
   }
 
   protected override void ProcessRecord()
@@ -209,7 +209,7 @@ public class InstallModuleFastCommand : PSCmdlet
   {
     try
     {
-      var ct = _cancelSource?.Token ?? CancellationToken.None;
+      var ct = _timeoutSource?.Token ?? PipelineStopToken;
 
       ModuleFastInfo[] finalInstallPlan;
 
@@ -327,7 +327,7 @@ public class InstallModuleFastCommand : PSCmdlet
     {
       // Ensure progress is always completed
       WriteProgress(new ProgressRecord(1, "Install-ModuleFast", "Done") { RecordType = ProgressRecordType.Completed });
-      _cancelSource?.Dispose();
+      _timeoutSource?.Dispose();
     }
   }
 }
