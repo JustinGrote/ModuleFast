@@ -509,7 +509,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
       Destination          = $installTempPath
       NoProfileUpdate      = $true
       NoPSModulePathUpdate = $true
-      Confirm              = $false
+      # Confirm              = $false
     }
   }
   AfterAll {
@@ -546,7 +546,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'lots of dependencies (Az)' {
     Install-ModuleFast @imfParams 'Az'
-		(Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
+    (Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
   }
   It 'specific requiredVersion' {
     Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
@@ -575,9 +575,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Only installs once when Update is specified and latest has not changed' {
     Install-ModuleFast @imfParams 'Az.Accounts' -Update
-    Install-ModuleFast @imfParams 'Az.Accounts' -Update -Debug *>&1
+    $debugpreference = 'continue'
+    Install-ModuleFast @imfParams 'Az.Accounts' -Update *>&1
     | Select-String 'best remote candidate matches what is locally installed'
-    | Should -Not -BeNullOrEmpty
+    | Should -BeLike '*best remote candidate matches what is locally installed*'
+    $debugpreference = 'silentlycontinue'
   }
   It 'Only installs once when Update is specified and latest has not changed for multiple modules' {
     Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update

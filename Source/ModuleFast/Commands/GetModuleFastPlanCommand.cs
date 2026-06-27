@@ -1,6 +1,4 @@
-using System.Collections.Generic;
 using System.Management.Automation;
-using System.Threading;
 
 namespace ModuleFast.Commands;
 
@@ -40,6 +38,7 @@ public class GetModuleFastPlanCommand : PSCmdlet
   public SwitchParameter StrictSemVer { get; set; }
 
   private readonly HashSet<ModuleFastSpec> _specs = new();
+  private readonly ModuleFastMessageBuffer _messages = new();
 
   protected override void ProcessRecord()
   {
@@ -88,9 +87,10 @@ public class GetModuleFastPlanCommand : PSCmdlet
           StrictSemVer,
           DestinationOnly,
           CancellationToken.None,
-          this);
+          _messages);
 
       var plan = task.GetAwaiter().GetResult();
+      _messages.Flush(this);
       foreach (var info in plan)
         WriteObject(info);
     }

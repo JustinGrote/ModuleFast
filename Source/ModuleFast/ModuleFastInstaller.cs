@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
-using System.Management.Automation;
 
 using NuGet.Versioning;
 namespace ModuleFast;
@@ -27,7 +26,7 @@ public class ModuleFastInstaller
       string destination,
       bool update,
       CancellationToken ct,
-      PSCmdlet? cmdlet = null,
+      ModuleFastMessageBuffer? messages = null,
       int maxConcurrency = 0)
   {
     if (maxConcurrency <= 0)
@@ -38,7 +37,7 @@ public class ModuleFastInstaller
 
     await Parallel.ForEachAsync(modules, opts, async (m, ct) =>
     {
-      var result = await InstallSingleAsync(m, destination, update, ct, cmdlet).ConfigureAwait(false);
+      var result = await InstallSingleAsync(m, destination, update, ct, messages).ConfigureAwait(false);
       if (result != null) results.Add(result);
     }).ConfigureAwait(false);
 
@@ -50,7 +49,7 @@ public class ModuleFastInstaller
       string destination,
       bool update,
       CancellationToken ct,
-      PSCmdlet? cmdlet)
+      ModuleFastMessageBuffer? messages)
   {
     var installPath = Path.Combine(destination, module.Name,
         LocalModuleFinder.ResolveFolderVersion(module.ModuleVersion).ToString());
@@ -58,7 +57,7 @@ public class ModuleFastInstaller
 
     if (File.Exists(installIndicatorPath))
     {
-      cmdlet?.WriteWarning($"{module}: Incomplete installation found at {installPath}. Will delete and retry.");
+      messages?.Warning($"{module}: Incomplete installation found at {installPath}. Will delete and retry.");
       Directory.Delete(installPath, true);
     }
 
@@ -68,7 +67,9 @@ public class ModuleFastInstaller
       if (!File.Exists(existingManifestPath))
         throw new InvalidOperationException($"{module}: Existing module folder found at {installPath} but the manifest could not be found.");
 
-      var existingManifestData = ModuleManifestReader.ImportModuleManifest(existingManifestPath, cmdlet);
+      var existingManifestData = messages != null
+        ? ModuleManifestReader.ImportModuleManifest(existingManifestPath, messages)
+        : ModuleManifestReader.ImportModuleManifest(existingManifestPath, cmdlet: null);
       var existingVersionStr = existingManifestData["ModuleVersion"]?.ToString() ?? "0.0.0";
       var prerelease = (existingManifestData["PrivateData"] as System.Collections.Hashtable)?["PSData"] is System.Collections.Hashtable psData
           ? psData["Prerelease"]?.ToString() : null;
@@ -80,7 +81,7 @@ public class ModuleFastInstaller
       {
         if (update)
         {
-          cmdlet?.WriteDebug($"{module}: Existing module found at {installPath} and version matches. -Update was specified so assuming same version and skipping.");
+          messages?.Debug($"{module}: Existing module found at {installPath} and version matches. -Update was specified so assuming same version and skipping.");
           return null;
         }
         else
@@ -92,11 +93,11 @@ public class ModuleFastInstaller
       if (module.ModuleVersion < existingVersion)
         throw new NotSupportedException($"{module}: Existing module found at {installPath} and its version {existingVersion} is newer than the requested version {module.ModuleVersion}. If you wish to continue, remove the existing folder or modify your specification.");
 
-      cmdlet?.WriteWarning($"{module}: Planned version {module.ModuleVersion} is newer than existing version {existingVersion} so we will overwrite.");
+      messages?.Warning($"{module}: Planned version {module.ModuleVersion} is newer than existing version {existingVersion} so we will overwrite.");
       Directory.Delete(installPath, true);
     }
 
-    cmdlet?.WriteVerbose($"{module}: Downloading from {module.Location}");
+    messages?.Verbose($"{module}: Downloading from {module.Location}");
     if (module.Location == null)
       throw new InvalidOperationException($"{module}: No Download Link found. This is a bug.");
 
@@ -134,14 +135,14 @@ public class ModuleFastInstaller
 
     if (moduleManifestVersion == null)
     {
-      cmdlet?.WriteWarning($"{module}: Could not detect the module manifest version. This module may not install properly if it has trailing zeros.");
+      messages?.Warning($"{module}: Could not detect the module manifest version. This module may not install properly if it has trailing zeros.");
     }
     else
     {
       var originalModuleVersion = Path.GetFileName(installPath);
       if (originalModuleVersion != moduleManifestVersion.ToString())
       {
-        cmdlet?.WriteDebug($"{module}: Module Manifest Version {moduleManifestVersion} differs from package version {originalModuleVersion}, moving...");
+        messages?.Debug($"{module}: Module Manifest Version {moduleManifestVersion} differs from package version {originalModuleVersion}, moving...");
         var installPathRoot = Path.GetDirectoryName(installPath)!;
         var newInstallPath = Path.Combine(installPathRoot, moduleManifestVersion.ToString());
 
@@ -160,16 +161,17 @@ public class ModuleFastInstaller
       }
       else
       {
-        cmdlet?.WriteDebug($"{module}: Module Manifest version matches the expected version.");
+        messages?.Debug($"{module}: Module Manifest version matches the expected version.");
       }
     }
 
     // Verify GUID if specified
     if (module.Guid != Guid.Empty)
     {
-      cmdlet?.WriteDebug($"{module}: GUID was specified. Verifying manifest.");
-      var manifestData = ModuleManifestReader.ImportModuleManifest(
-          Path.Combine(installPath, $"{module.Name}.psd1"), cmdlet);
+      messages?.Debug($"{module}: GUID was specified. Verifying manifest.");
+      var manifestData = messages != null
+          ? ModuleManifestReader.ImportModuleManifest(Path.Combine(installPath, $"{module.Name}.psd1"), messages)
+        : ModuleManifestReader.ImportModuleManifest(Path.Combine(installPath, $"{module.Name}.psd1"), cmdlet: null);
       if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out var manifestGuid) ||
           manifestGuid != module.Guid)
       {
@@ -180,7 +182,7 @@ public class ModuleFastInstaller
     }
 
     // Clean up NuGet files
-    cmdlet?.WriteDebug($"Cleanup Nuget Files in {installPath}");
+    messages?.Debug($"Cleanup Nuget Files in {installPath}");
     if (string.IsNullOrEmpty(installPath))
       throw new InvalidOperationException("ModuleDestination was not set. This is a bug.");
 

@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Management.Automation;
-
 using Microsoft.PowerShell.Commands;
 
 using NuGet.Versioning;
@@ -73,7 +69,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     if (name.Contains(">=", StringComparison.Ordinal))
     {
       var parts = name.Split(">=", 2);
-      moduleName = parts[0];
+      moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out var lower)
           ? new VersionRange(lower, true)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
@@ -81,7 +77,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     else if (name.Contains("<=", StringComparison.Ordinal))
     {
       var parts = name.Split("<=", 2);
-      moduleName = parts[0];
+      moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out var upper)
           ? new VersionRange(null, false, upper, true)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
@@ -89,19 +85,19 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     else if (name.Contains('='))
     {
       var parts = name.Split('=', 2);
-      moduleName = parts[0];
+      moduleName = parts[0].Trim('!');
       range = VersionRange.Parse($"[{parts[1]}]");
     }
     else if (name.Contains(':'))
     {
       var parts = name.Split(':', 2);
-      moduleName = parts[0];
+      moduleName = parts[0].Trim('!');
       range = VersionRange.Parse(parts[1]);
     }
     else if (name.Contains('>'))
     {
       var parts = name.Split('>', 2);
-      moduleName = parts[0];
+      moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out var lowerExcl)
           ? new VersionRange(lowerExcl, false)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
@@ -109,14 +105,14 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     else if (name.Contains('<'))
     {
       var parts = name.Split('<', 2);
-      moduleName = parts[0];
+      moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out var upperExcl)
           ? new VersionRange(null, false, upperExcl, false)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
     }
     else
     {
-      moduleName = name;
+      moduleName = name.Trim('!');
       range = VersionRange.All;
     }
 

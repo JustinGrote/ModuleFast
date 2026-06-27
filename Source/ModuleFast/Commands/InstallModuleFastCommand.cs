@@ -1,12 +1,9 @@
-using System.Collections.Generic;
 using System.Management.Automation;
 using System.Text.Json;
-using System.Threading;
 
 namespace ModuleFast.Commands;
 
 [Cmdlet(VerbsLifecycle.Install, "ModuleFast",
-    SupportsShouldProcess = true,
     DefaultParameterSetName = "Specification")]
 [OutputType(typeof(ModuleFastInfo))]
 public class InstallModuleFastCommand : PSCmdlet
@@ -77,6 +74,7 @@ public class InstallModuleFastCommand : PSCmdlet
 
   private readonly HashSet<ModuleFastSpec> _modulesToInstall = new();
   private readonly List<ModuleFastInfo> _installPlan = new();
+  private readonly ModuleFastMessageBuffer _messages = new();
   private CancellationTokenSource? _cancelSource;
   private System.Net.Http.HttpClient? _httpClient;
 
@@ -263,8 +261,9 @@ public class InstallModuleFastCommand : PSCmdlet
 
         var planner = new ModuleFastPlanner(_httpClient!, Source);
         var planTask = planner.GetPlanAsync(
-            _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, this);
+          _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, _messages);
         var planSet = planTask.GetAwaiter().GetResult();
+        _messages.Flush(this);
         finalInstallPlan = planSet.ToArray();
       }
 
@@ -287,8 +286,9 @@ public class InstallModuleFastCommand : PSCmdlet
         WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing: {finalInstallPlan.Length} Modules") { PercentComplete = 50 });
 
         var installer = new ModuleFastInstaller(_httpClient!);
-        var installTask = installer.InstallModulesAsync(finalInstallPlan, Destination!, Update || ParameterSetName == "ModuleFastInfo", ct, this, ThrottleLimit);
+        var installTask = installer.InstallModulesAsync(finalInstallPlan, Destination!, Update || ParameterSetName == "ModuleFastInfo", ct, _messages, ThrottleLimit);
         var installedModules = installTask.GetAwaiter().GetResult();
+        _messages.Flush(this);
 
         WriteProgress(new ProgressRecord(1, "Install-ModuleFast", "Completed") { RecordType = ProgressRecordType.Completed });
         WriteVerbose("✅ All required modules installed! Exiting.");

@@ -65,15 +65,6 @@ Task Version {
   $manifestContent | Set-Content -Path $manifestPath
 }
 
-Task GetNugetVersioningAssembly {
-  PackageManagement\Install-Package @c -Name Nuget.Versioning -RequiredVersion $NuGetVersioning -Destination $tempPath -Force | Out-Null
-  Copy-Item @c -Path "$tempPath/NuGet.Versioning.$NuGetVersioning/lib/netstandard2.0/NuGet.Versioning.dll" -Destination $libPath -Recurse -Force
-}
-
-Task AddNugetVersioningAssemblyRequired {
-  (Get-Content -Raw -Path $ModuleOutFolderPath\ModuleFast.psd1) -replace [Regex]::Escape('# RequiredAssemblies = @()'), 'RequiredAssemblies = @(".\lib\netstandard2.0\NuGet.Versioning.dll")' | Set-Content -Path $ModuleOutFolderPath\ModuleFast.psd1
-}
-
 Task Package.Nuget {
   [string]$repoName = 'ModuleFastBuild-' + (New-Guid)
   Get-ChildItem $ModuleOutFolderPath -Recurse -Include '*.nupkg' | Remove-Item @c -Force
@@ -108,8 +99,6 @@ Task Build @(
   'BuildCSharp'
   'CopyFiles'
   'Version'
-  'GetNugetVersioningAssembly'
-  'AddNugetVersioningAssemblyRequired'
 )
 
 Task Test Build, Pester

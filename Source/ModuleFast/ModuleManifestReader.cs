@@ -12,6 +12,12 @@ public static class ModuleManifestReader
   /// Imports a module manifest (psd1), handling dynamic expression manifests as well.
   /// </summary>
   public static Hashtable ImportModuleManifest(string path, PSCmdlet? cmdlet = null)
+    => ImportModuleManifest(path, cmdlet, null);
+
+  public static Hashtable ImportModuleManifest(string path, ModuleFastMessageBuffer? messages)
+    => ImportModuleManifest(path, null, messages);
+
+  private static Hashtable ImportModuleManifest(string path, PSCmdlet? cmdlet, ModuleFastMessageBuffer? messages)
   {
     if (!File.Exists(path))
       throw new FileNotFoundException($"Manifest file was not found: {path}", path);
@@ -32,6 +38,7 @@ public static class ModuleManifestReader
     }
     catch (Exception ex) when (IsDynamicExpressionsError(ex))
     {
+      messages?.Debug($"{path} is a Manifest with dynamic expressions. Attempting to safe evaluate...");
       cmdlet?.WriteDebug($"{path} is a Manifest with dynamic expressions. Attempting to safe evaluate...");
       var scriptBlock = ScriptBlock.Create(File.ReadAllText(path));
       scriptBlock.CheckRestrictedLanguage([], ["PSEdition", "PSScriptRoot"], true);
@@ -68,9 +75,15 @@ public static class ModuleManifestReader
   /// Converts a manifest file path to a ModuleFastInfo object.
   /// </summary>
   public static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, PSCmdlet? cmdlet = null)
+    => ConvertFromModuleManifest(manifestPath, cmdlet, null);
+
+  public static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, ModuleFastMessageBuffer? messages)
+    => ConvertFromModuleManifest(manifestPath, null, messages);
+
+  private static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, PSCmdlet? cmdlet, ModuleFastMessageBuffer? messages)
   {
     var manifestName = Path.GetFileNameWithoutExtension(manifestPath);
-    var manifestData = ImportModuleManifest(manifestPath, cmdlet);
+    var manifestData = messages != null ? ImportModuleManifest(manifestPath, messages) : ImportModuleManifest(manifestPath, cmdlet);
 
     if (!Version.TryParse(manifestData["ModuleVersion"]?.ToString() ?? "", out var manifestVersionData))
       throw new InvalidDataException($"The manifest at {manifestPath} has an invalid ModuleVersion. This is probably an invalid or corrupt manifest");

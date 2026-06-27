@@ -1,10 +1,5 @@
-using System.Collections.Generic;
-using System.Management.Automation;
 using System.Net;
-using System.Net.Http;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 
 using NuGet.Versioning;
 
@@ -29,35 +24,29 @@ public class ModuleFastPlanner
       bool strictSemVer,
       bool destinationOnly,
       CancellationToken ct,
-      PSCmdlet? cmdlet = null)
+      ModuleFastMessageBuffer? messages = null)
   {
     var modulesToInstall = new HashSet<ModuleFastInfo>();
     var bestLocalCandidates = new Dictionary<ModuleFastSpec, ModuleFastInfo>();
     var pendingTasks = new Dictionary<Task<string>, ModuleFastSpec>();
 
-    // Seed initial tasks
     foreach (var spec in specs)
     {
-      cmdlet?.WriteVerbose($"{spec}: Evaluating Module Specification");
-      var localMatch = LocalModuleFinder.FindLocalModule(spec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
+      messages?.Verbose($"{spec}: Evaluating Module Specification");
+      var localMatch = LocalModuleFinder.FindLocalModule(spec, modulePaths, update, bestLocalCandidates, strictSemVer, null, messages);
       if (localMatch != null && !update)
       {
-        cmdlet?.WriteDebug($"{localMatch}: 🎯 FOUND satisfying version {localMatch.ModuleVersion} at {localMatch.Location}. Skipping remote search.");
+        messages?.Debug($"{localMatch}: 🎯 FOUND satisfying version {localMatch.ModuleVersion} at {localMatch.Location}. Skipping remote search.");
         continue;
       }
-      cmdlet?.WriteDebug($"{spec}: 🔍 No installed versions matched. Will check remotely.");
+
+      messages?.Debug($"{spec}: 🔍 No installed versions matched. Will check remotely.");
       var task = GetModuleInfoAsync(spec.Name, _source, ct);
       pendingTasks[task] = spec;
     }
 
-    // Task.WhenEach (introduced in .NET 9) yields tasks as they complete with O(1)
-    // overhead per completion, avoiding the O(n²) cost of repeated Task.WhenAny calls.
-    // Dependency tasks added to pendingTasks mid-flight are not in the current snapshot;
-    // the outer while loop creates a new snapshot to pick them up once the current batch
-    // is drained. The TryGetValue guard skips tasks not (or no longer) in pendingTasks.
     while (pendingTasks.Count > 0)
     {
-      // Take a snapshot so that WhenEach sees a stable collection for this batch.
       var snapshot = pendingTasks.Keys.ToArray();
 
       await foreach (var completed in Task.WhenEach(snapshot).WithCancellation(ct).ConfigureAwait(false))
@@ -68,9 +57,9 @@ public class ModuleFastPlanner
         pendingTasks.Remove(completed);
 
         if (currentSpec.Guid != Guid.Empty)
-          cmdlet?.WriteWarning($"{currentSpec}: A GUID constraint was found. GUIDs will only be verified after installation.");
+          messages?.Warning($"{currentSpec}: A GUID constraint was found. GUIDs will only be verified after installation.");
 
-        cmdlet?.WriteDebug($"{currentSpec}: Processing Response");
+        messages?.Debug($"{currentSpec}: Processing Response");
 
         string json;
         try
@@ -100,11 +89,10 @@ public class ModuleFastPlanner
         if (response.Count == 0 && response.Items.Length == 0)
           throw new InvalidDataException($"{currentSpec}: invalid result received from {_source}.");
 
-        var selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, cmdlet);
+        var selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, messages);
         if (selectedEntry == null)
         {
-          // Try non-inlined pages
-          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, cmdlet)
+          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, messages)
               .ConfigureAwait(false);
         }
 
@@ -125,23 +113,21 @@ public class ModuleFastPlanner
         if (currentSpec.Guid != Guid.Empty)
           selectedModule.Guid = currentSpec.Guid;
 
-        // If -Update was specified, check if best local candidate matches
         if (update && bestLocalCandidates.TryGetValue(currentSpec, out var bestLocal) &&
             bestLocal.ModuleVersion == selectedModule.ModuleVersion)
         {
-          cmdlet?.WriteDebug($"{selectedModule}: ✅ -Update specified and best remote matches local. Skipping.");
+          messages?.Debug($"{selectedModule}: -Update specified and best remote candidate matches what is locally installed. Skipping install.");
           continue;
         }
 
         if (!modulesToInstall.Add(selectedModule))
         {
-          cmdlet?.WriteDebug($"{selectedModule} already exists in the install plan. Skipping...");
+          messages?.Debug($"{selectedModule} already exists in the install plan. Skipping...");
           continue;
         }
 
-        cmdlet?.WriteVerbose($"{selectedModule}: Added to install plan");
+        messages?.Verbose($"{selectedModule}: Added to install plan");
 
-        // Queue dependency tasks
         var allDeps = selectedEntry.DependencyGroups?
             .SelectMany(g => g.Dependencies ?? []) ?? [];
 
@@ -152,25 +138,24 @@ public class ModuleFastPlanner
               : VersionRange.Parse(dep.Range);
           var depSpec = new ModuleFastSpec(dep.Id, depRange);
 
-          // Check if already satisfied by planned installs
           var existing = modulesToInstall
               .Where(m => string.Equals(m.Name, depSpec.Name, StringComparison.OrdinalIgnoreCase))
               .OrderByDescending(m => m.ModuleVersion)
               .FirstOrDefault();
           if (existing != null && depSpec.SatisfiedBy(existing.ModuleVersion, strictSemVer))
           {
-            cmdlet?.WriteDebug($"Dependency {depSpec} satisfied by existing planned install {existing}");
+            messages?.Debug($"Dependency {depSpec} satisfied by existing planned install {existing}");
             continue;
           }
 
-          var depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
+          var depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, null, messages);
           if (depLocal != null)
           {
-            cmdlet?.WriteDebug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
+            messages?.Debug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
             continue;
           }
 
-          cmdlet?.WriteDebug($"{currentSpec}: Fetching dependency {depSpec}");
+          messages?.Debug($"{currentSpec}: Fetching dependency {depSpec}");
           var depTask = GetModuleInfoAsync(depSpec.Name, _source, ct);
           pendingTasks[depTask] = depSpec;
         }
@@ -185,7 +170,7 @@ public class ModuleFastPlanner
       ModuleFastSpec spec,
       bool prerelease,
       bool strictSemVer,
-      PSCmdlet? cmdlet)
+      ModuleFastMessageBuffer? messages)
   {
     var inlinedLeaves = response.Items
         .Where(p => p.Items != null)
@@ -194,7 +179,6 @@ public class ModuleFastPlanner
 
     if (inlinedLeaves.Length == 0) return null;
 
-    // Normalize packageContent
     foreach (var leaf in inlinedLeaves)
     {
       if (!string.IsNullOrEmpty(leaf.PackageContent) && string.IsNullOrEmpty(leaf.CatalogEntry.PackageContent))
@@ -211,16 +195,18 @@ public class ModuleFastPlanner
     {
       if ((candidate.IsPrerelease || candidate.HasMetadata) && !(spec.PreRelease || prerelease))
       {
-        cmdlet?.WriteDebug($"{spec}: skipping candidate {candidate} - prerelease not requested.");
+        messages?.Debug($"{spec}: skipping candidate {candidate} - prerelease not requested.");
         continue;
       }
+
       if (spec.SatisfiedBy(candidate, strictSemVer))
       {
-        cmdlet?.WriteDebug($"{spec}: Found satisfying version {candidate} in inlined index.");
+        messages?.Debug($"{spec}: Found satisfying version {candidate} in inlined index.");
         return entries.First(e => e.Version == candidate.OriginalVersion ||
             NuGetVersion.TryParse(e.Version, out var v) && v == candidate);
       }
     }
+
     return null;
   }
 
@@ -230,9 +216,9 @@ public class ModuleFastPlanner
       bool prerelease,
       bool strictSemVer,
       CancellationToken ct,
-      PSCmdlet? cmdlet)
+      ModuleFastMessageBuffer? messages)
   {
-    cmdlet?.WriteDebug($"{spec}: not found in inlined index. Determining appropriate page(s) to query.");
+    messages?.Debug($"{spec}: not found in inlined index. Determining appropriate page(s) to query.");
 
     var pages = response.Items
         .Where(p => p.Items == null)
@@ -249,14 +235,11 @@ public class ModuleFastPlanner
     if (pages.Length == 0)
       throw new InvalidOperationException($"{spec}: a matching module was not found in the {_source} repository that satisfies the requested version constraints. You may need to specify -PreRelease or adjust your version constraints.");
 
-    cmdlet?.WriteDebug($"{spec}: Found {pages.Length} additional pages to query.");
+    messages?.Debug($"{spec}: Found {pages.Length} additional pages to query.");
 
-    // Fetch all candidate pages concurrently — they are independent HTTP GETs and the cache
-    // deduplicates any overlap, so firing them all at once beats sequential round-trips.
     var pageJsonTasks = pages.Select(p => GetCachedStringAsync(p.Id, ct)).ToArray();
     var pageJsons = await Task.WhenAll(pageJsonTasks).ConfigureAwait(false);
 
-    // Evaluate pages from highest to lowest (already ordered by descending Upper).
     for (int i = 0; i < pages.Length; i++)
     {
       RegistrationPage pageData;
@@ -267,7 +250,6 @@ public class ModuleFastPlanner
       }
       catch (JsonException)
       {
-        // Some servers return RegistrationResponse for page URLs too
         var pageResponse = JsonSerializer.Deserialize(pageJsons[i], ModuleFastJsonContext.Default.RegistrationResponse);
         pageData = pageResponse?.Items?.FirstOrDefault() ?? new RegistrationPage();
       }
@@ -288,13 +270,15 @@ public class ModuleFastPlanner
       {
         if ((candidate.IsPrerelease || candidate.HasMetadata) && !(spec.PreRelease || prerelease))
           continue;
+
         if (spec.SatisfiedBy(candidate, strictSemVer))
         {
-          cmdlet?.WriteDebug($"{spec}: Found satisfying version {candidate} in additional pages.");
+          messages?.Debug($"{spec}: Found satisfying version {candidate} in additional pages.");
           return entries.First(e => NuGetVersion.TryParse(e.Version, out var v) && v == candidate);
         }
       }
     }
+
     return null;
   }
 
@@ -321,11 +305,9 @@ public class ModuleFastPlanner
     return registrationBase;
   }
 
-  /// <summary>
-  /// Returns the cached task for <paramref name="uri"/>, or atomically starts — and caches — a new
-  /// HTTP GET. Using <see cref="ModuleFastCache.GetOrAdd"/> means concurrent callers that race for
-  /// the same URI will always share a single in-flight request rather than firing duplicates.
-  /// </summary>
-  private Task<string> GetCachedStringAsync(string uri, CancellationToken ct) =>
-      ModuleFastCache.Instance.GetOrAdd(uri, _ => _httpClient.GetStringAsync(uri, ct));
+  private async Task<string> GetCachedStringAsync(string url, CancellationToken ct)
+  {
+    return await ModuleFastCache.Instance.GetOrAdd(url, async _ =>
+        await _httpClient.GetStringAsync(url, ct).ConfigureAwait(false)).ConfigureAwait(false);
+  }
 }
