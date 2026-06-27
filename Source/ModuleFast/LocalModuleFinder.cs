@@ -5,15 +5,17 @@ using NuGet.Versioning;
 
 namespace ModuleFast;
 
-public static class LocalModuleFinder
+public static partial class LocalModuleFinder
 {
+  [GeneratedRegex(@"^\d+\.\d+\.\d+\.\d+$", RegexOptions.Compiled)]
+  private static partial Regex FourPartVersionRegex();
   /// <summary>
   /// Resolves the folder version from a NuGetVersion: 4-part stays as-is, 3-part strips trailing .0.
   /// </summary>
   public static Version ResolveFolderVersion(NuGetVersion version)
   {
     if (version.IsLegacyVersion ||
-        Regex.IsMatch(version.OriginalVersion ?? "", @"^\d+\.\d+\.\d+\.\d+$"))
+        FourPartVersionRegex().IsMatch(version.OriginalVersion ?? ""))
       return version.Version;
     return new Version(version.Major, version.Minor, version.Patch);
   }
@@ -48,8 +50,8 @@ public static class LocalModuleFinder
       }
 
       // Case-insensitive search for module base dir
-      var moduleDirs = Directory.GetDirectories(modulePath, spec.Name,
-          new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive });
+      var moduleDirs = Directory.EnumerateDirectories(modulePath, spec.Name,
+          new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive }).ToArray();
 
       if (moduleDirs.Length > 1)
         throw new InvalidOperationException($"{spec.Name} folder is ambiguous, please delete one: {string.Join(", ", moduleDirs)}");
@@ -69,14 +71,13 @@ public static class LocalModuleFinder
       {
         var moduleVersion = ResolveFolderVersion(required);
         var moduleFolder = Path.Combine(moduleBaseDir, moduleVersion.ToString());
-        var manifestPath = Path.Combine(moduleFolder, manifestName);
         if (Directory.Exists(moduleFolder))
           candidatePaths.Add((moduleVersion, moduleFolder));
       }
       else
       {
         // Enumerate versioned sub-folders
-        foreach (var folder in Directory.GetDirectories(moduleBaseDir))
+        foreach (var folder in Directory.EnumerateDirectories(moduleBaseDir))
         {
           var leafName = Path.GetFileName(folder);
           if (!Version.TryParse(leafName, out var version))
@@ -149,7 +150,15 @@ public static class LocalModuleFinder
         {
           messages?.Warning($"{spec}: Incomplete installation detected at {folder}. Deleting and ignoring.");
           cmdlet?.WriteWarning($"{spec}: Incomplete installation detected at {folder}. Deleting and ignoring.");
-          Directory.Delete(folder, true);
+          try
+          {
+            Directory.Delete(folder, true);
+          }
+          catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+          {
+            messages?.Warning($"{spec}: Failed to delete incomplete installation at {folder}: {ex.Message}");
+            cmdlet?.WriteWarning($"{spec}: Failed to delete incomplete installation at {folder}: {ex.Message}");
+          }
           continue;
         }
 

@@ -868,4 +868,39 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
       Test-Path $installTempPath\PreReleaseTest | Should -BeFalse
     }
   }
+
+  Describe 'LocalModuleFinder' {
+    It 'Skips and deletes .incomplete folders' {
+      # Install a module, then mark it incomplete and try to re-install
+      Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+      $moduleDir = Get-ChildItem $installTempPath\PrereleaseTest -Directory | Select-Object -First 1
+      New-Item -Path (Join-Path $moduleDir.FullName '.incomplete') -ItemType File | Out-Null
+
+      # Should ignore the incomplete install and re-download
+      $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -Plan
+      $plan | Should -Not -BeNullOrEmpty
+      # The incomplete folder should have been deleted
+      Test-Path $moduleDir.FullName | Should -BeFalse
+    }
+
+    It 'Detects module with 3-part version folder' {
+      Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+      # The folder should be 3-part (0.0.1) not 4-part
+      $versionFolder = Get-ChildItem $installTempPath\PrereleaseTest -Directory | Select-Object -First 1
+      $versionFolder.Name | Should -Be '0.0.1'
+      # Second install should detect it and produce no plan
+      $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -Plan
+      $plan | Should -BeNullOrEmpty
+    }
+
+    It 'Handles missing manifest gracefully' {
+      Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+      $moduleDir = Get-ChildItem $installTempPath\PrereleaseTest -Directory | Select-Object -First 1
+      # Remove the manifest to simulate corruption
+      Remove-Item (Join-Path $moduleDir.FullName '*.psd1')
+      # Should produce a plan since the local module is unreadable
+      $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -Plan
+      $plan | Should -Not -BeNullOrEmpty
+    }
+  }
 }
