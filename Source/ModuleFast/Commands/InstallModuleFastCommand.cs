@@ -51,8 +51,7 @@ public class InstallModuleFastCommand : PSCmdlet
   public int ThrottleLimit { get; set; } = Environment.ProcessorCount;
 
   [Parameter]
-  public string CILockFilePath { get; set; } = System.IO.Path.Combine(
-      Environment.CurrentDirectory, "requires.lock.json");
+  public string CILockFilePath { get; set; } = "requires.lock.json";
 
   [Parameter(Mandatory = true, ValueFromPipeline = true, ParameterSetName = "ModuleFastInfo")]
   public ModuleFastInfo[]? ModuleFastInfo { get; set; }
@@ -80,6 +79,13 @@ public class InstallModuleFastCommand : PSCmdlet
 
   protected override void BeginProcessing()
   {
+    // Resolve CILockFilePath relative to PowerShell's current location
+    if (!System.IO.Path.IsPathRooted(CILockFilePath))
+    {
+      CILockFilePath = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+          SessionState.Path.CurrentFileSystemLocation.Path, CILockFilePath));
+    }
+
     if (Update) ModuleFastCache.Instance.Clear();
 
     // Normalize source
@@ -290,7 +296,6 @@ public class InstallModuleFastCommand : PSCmdlet
         var installedModules = installTask.GetAwaiter().GetResult();
         _messages.Flush(this);
 
-        WriteProgress(new ProgressRecord(1, "Install-ModuleFast", "Completed") { RecordType = ProgressRecordType.Completed });
         WriteVerbose("✅ All required modules installed! Exiting.");
 
         if (PassThru)
@@ -315,6 +320,8 @@ public class InstallModuleFastCommand : PSCmdlet
     }
     finally
     {
+      // Ensure progress is always completed
+      WriteProgress(new ProgressRecord(1, "Install-ModuleFast", "Done") { RecordType = ProgressRecordType.Completed });
       _cancelSource?.Dispose();
     }
   }

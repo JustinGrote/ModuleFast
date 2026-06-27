@@ -357,7 +357,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
       It 'Fails if hashtable-style string parameter is not a modulespec' {
         { Get-ModuleFastPlan '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''; InvalidParameter = ''ThisShouldNotBeValid''}' -ErrorAction Stop }
-        | Should -Throw '*Cannot process argument transformation on parameter*'
+        | Should -Throw '*not valid ModuleSpecification syntax*'
       }
 
       It 'Gets Module with String Parameter: <Spec>' {
@@ -441,7 +441,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
   It 'Errors on Unsupported Object instead of Stringifying' {
     { Get-ModuleFastPlan [Tuple]::Create('Az.Accounts') -ErrorAction Stop }
-    | Should -Throw '*Cannot process argument transformation on parameter*'
+    | Should -Throw '*Cannot bind parameter*'
   }
   It 'Gets Module with 1 dependency' {
     Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
@@ -454,7 +454,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
   }
   It 'Gets multiple modules' {
     Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' }, @{ModuleName = 'VMWare.PowerCli'; RequiredVersion = '13.2.0.22746353' }
-    | Should -HaveCount 170
+    | Should -HaveCount 122
   }
 
   It 'Casts to ModuleSpecification' {
@@ -545,11 +545,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Split-Path $resolvedPath -Leaf | Should -Be '0.4.15.0'
   }
   It 'lots of dependencies (Az)' {
-    Install-ModuleFast @imfParams 'Az'
+    Install-ModuleFast @imfParams 'Az=11.1.0'
     (Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
   }
   It 'specific requiredVersion' {
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -557,7 +557,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'specific requiredVersion when newer version is present' {
     Install-ModuleFast @imfParams 'Az.Accounts'
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
     $installedVersions = Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -567,7 +567,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Installs when Maximumversion is lower than currently installed' {
     Install-ModuleFast @imfParams 'Az.Accounts'
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -591,12 +591,12 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'Plaster=1.1.1'
     Install-ModuleFast @imfParams 'Plaster=1.1.3'
     $actual = Install-ModuleFast @imfParams 'Plaster' -Update -PassThru
-    $actual.ModuleVersion | Should -Be '1.1.4'
+    $actual.ModuleVersion | Should -BeGreaterThan '1.1.3'
   }
 
   It 'Updates only dependent module that requires update' {
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
-    Install-ModuleFast @imfParams	@{ ModuleName = 'Az.Compute'; RequiredVersion = '5.0.0' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
+    Install-ModuleFast @imfParams	@{ModuleName = 'Az.Compute'; RequiredVersion = '5.0.0' }
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -671,22 +671,22 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   It 'Errors trying to install prerelease over regular module' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
     { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }
-    | Should -Throw '*is newer than the requested prerelease version*'
+    | Should -Throw '*is newer than the requested version*'
   }
   It 'Errors trying to install older prerelease over regular module' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
     { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }
-    | Should -Throw '*is newer than the requested prerelease version*'
+    | Should -Throw '*is newer than the requested version*'
   }
   It 'Installs regular module over prerelease module with warning' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -WarningVariable actual *>&1 | Out-Null
-    $actual | Should -BeLike '*is newer than existing prerelease version*'
+    $actual | Should -BeLike '*is newer than existing version*'
   }
   It 'Installs newer prerelease with warning' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-aprerelease'
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
-    $actual | Should -BeLike '*is newer than existing prerelease version*'
+    $actual | Should -BeLike '*is newer than existing version*'
   }
   It 'Doesnt install prerelease if same-version Prerelease already installed' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'

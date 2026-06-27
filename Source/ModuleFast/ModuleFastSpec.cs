@@ -57,10 +57,10 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
 
     // Prerelease flag
     bool preReleaseName = false;
-    if (name.StartsWith('!') || name.EndsWith('!'))
+    if (name.Contains('!'))
     {
       preReleaseName = true;
-      name = name.Trim('!');
+      name = name.Replace("!", "");
     }
 
     string moduleName;
@@ -146,6 +146,11 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
   public ModuleFastSpec(ModuleSpecification spec)
   {
     (_name, _versionRange, _guid, _preReleaseName) = InitFromModuleSpec(spec);
+  }
+
+  public ModuleFastSpec(System.Collections.Hashtable hashtable)
+      : this(new ModuleSpecification(hashtable))
+  {
   }
 
   // --- Private helpers ---

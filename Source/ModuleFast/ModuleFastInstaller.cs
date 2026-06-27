@@ -133,6 +133,18 @@ public class ModuleFastInstaller
     var manifestPath = Path.Combine(installPath, $"{module.Name}.psd1");
     var moduleManifestVersion = ModuleManifestReader.TryReadModuleVersionFast(manifestPath);
 
+    if (moduleManifestVersion == null && File.Exists(manifestPath))
+    {
+      // Fast reader failed, fall back to full manifest import
+      try
+      {
+        var fallbackData = ModuleManifestReader.ImportModuleManifest(manifestPath, messages);
+        if (Version.TryParse(fallbackData["ModuleVersion"]?.ToString() ?? "", out var fallbackVersion))
+          moduleManifestVersion = fallbackVersion;
+      }
+      catch { /* Fall through to warning */ }
+    }
+
     if (moduleManifestVersion == null)
     {
       messages?.Warning($"{module}: Could not detect the module manifest version. This module may not install properly if it has trailing zeros.");
