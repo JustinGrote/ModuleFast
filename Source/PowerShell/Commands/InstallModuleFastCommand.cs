@@ -127,6 +127,11 @@ public class InstallModuleFastCommand : PSCmdlet
         }
       }
     }
+    else
+    {
+      // User explicitly specified a non-standard destination; don't touch the profile.
+      NoProfileUpdate = true;
+    }
 
     if (string.IsNullOrEmpty(Destination))
       ThrowTerminatingError(new ErrorRecord(

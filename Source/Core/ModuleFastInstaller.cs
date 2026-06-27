@@ -11,6 +11,24 @@ public class ModuleFastInstaller
   /// <summary>Maximum MemoryStream pre-allocation for a single package download (512 MB).</summary>
   private const int MaxPreallocatedBufferSize = 512 * 1024 * 1024;
 
+  /// <summary>
+  /// Performs a case-insensitive search for a .psd1 manifest whose base name matches
+  /// <paramref name="moduleName"/> inside <paramref name="directory"/>.
+  /// Returns the full path on success, or <see langword="null"/> when no match is found.
+  /// </summary>
+  private static string? FindManifestPath(string directory, string moduleName)
+  {
+    var options = new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive };
+    var matches = Directory.GetFiles(directory, "*.psd1", options)
+        .Where(f => string.Equals(Path.GetFileNameWithoutExtension(f), moduleName,
+            StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+    return matches.Length == 1 ? matches[0]
+         : matches.Length > 1 ? throw new InvalidOperationException(
+               $"Ambiguous manifest in {directory}: {string.Join(", ", matches)}")
+         : null;
+  }
+
   public ModuleFastInstaller(HttpClient httpClient)
   {
     _httpClient = httpClient;
@@ -63,9 +81,10 @@ public class ModuleFastInstaller
 
     if (Directory.Exists(installPath))
     {
-      var existingManifestPath = Path.Combine(installPath, $"{module.Name}.psd1");
-      if (!File.Exists(existingManifestPath))
-        throw new InvalidOperationException($"{module}: Existing module folder found at {installPath} but the manifest could not be found.");
+      var existingManifestPath = FindManifestPath(installPath, module.Name)
+          ?? throw new FileNotFoundException(
+              $"{module}: Existing module folder found at {installPath} but no manifest matching '{module.Name}.psd1' could be found.",
+              Path.Combine(installPath, $"{module.Name}.psd1"));
 
       var existingManifestData = messages != null
         ? ModuleManifestReader.ImportModuleManifest(existingManifestPath, messages)
@@ -122,18 +141,29 @@ public class ModuleFastInstaller
     packageStream.Position = 0;
 
     Directory.CreateDirectory(installPath);
-    await File.WriteAllTextAsync(installIndicatorPath, "", ct).ConfigureAwait(false);
+    // WriteThrough ensures the .incomplete marker reaches the OS immediately —
+    // critical because it guards against partial installations on crash.
+    await using (var indicatorFs = new FileStream(installIndicatorPath, new FileStreamOptions
+    {
+      Mode = FileMode.Create,
+      Access = FileAccess.Write,
+      Share = FileShare.None,
+      Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
+    })) { /* zero-byte sentinel; just creating the file is enough */ }
 
     // ZipFile.ExtractToDirectoryAsync (.NET 10) uses async file I/O internally and
     // includes built-in zip-slip protection, replacing the custom ExtractZipAsync method.
     await ZipFile.ExtractToDirectoryAsync(packageStream, installPath, overwriteFiles: false, ct)
         .ConfigureAwait(false);
 
-    // Fast scan for manifest version
-    var manifestPath = Path.Combine(installPath, $"{module.Name}.psd1");
+    // Fast scan for manifest version — use case-insensitive search on Linux/macOS
+    var manifestPath = FindManifestPath(installPath, module.Name)
+        ?? throw new FileNotFoundException(
+            $"{module}: Could not find manifest matching '{module.Name}.psd1' in {installPath}.",
+            Path.Combine(installPath, $"{module.Name}.psd1"));
     var moduleManifestVersion = ModuleManifestReader.TryReadModuleVersionFast(manifestPath);
 
-    if (moduleManifestVersion == null && File.Exists(manifestPath))
+    if (moduleManifestVersion == null)
     {
       // Fast reader failed, fall back to full manifest import
       try
@@ -166,8 +196,18 @@ public class ModuleFastInstaller
 
         // Update indicator path
         installIndicatorPath = Path.Combine(installPath, ".incomplete");
-        await File.WriteAllTextAsync(Path.Combine(installPath, ".originalModuleVersion"), originalModuleVersion, ct)
-            .ConfigureAwait(false);
+        // WriteThrough + Asynchronous: durable write that doesn't block the thread on I/O
+        await using var origVerFs = new FileStream(
+            Path.Combine(installPath, ".originalModuleVersion"),
+            new FileStreamOptions
+            {
+              Mode = FileMode.Create,
+              Access = FileAccess.Write,
+              Share = FileShare.None,
+              Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
+            });
+        await using var origVerWriter = new StreamWriter(origVerFs);
+        await origVerWriter.WriteAsync(originalModuleVersion).ConfigureAwait(false);
 
         module.ModuleVersion = new NuGetVersion(moduleManifestVersion.ToString());
       }
@@ -181,24 +221,28 @@ public class ModuleFastInstaller
     if (module.Guid != Guid.Empty)
     {
       messages?.Debug($"{module}: GUID was specified. Verifying manifest.");
+      var guidManifestPath = FindManifestPath(installPath, module.Name)
+          ?? throw new FileNotFoundException(
+              $"{module}: Manifest not found in {installPath} for GUID verification.",
+              Path.Combine(installPath, $"{module.Name}.psd1"));
       var manifestData = messages != null
-          ? ModuleManifestReader.ImportModuleManifest(Path.Combine(installPath, $"{module.Name}.psd1"), messages)
-        : ModuleManifestReader.ImportModuleManifest(Path.Combine(installPath, $"{module.Name}.psd1"), cmdlet: null);
+          ? ModuleManifestReader.ImportModuleManifest(guidManifestPath, messages)
+          : ModuleManifestReader.ImportModuleManifest(guidManifestPath, cmdlet: null);
       if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out var manifestGuid) ||
           manifestGuid != module.Guid)
       {
         Directory.Delete(installPath, true);
         throw new InvalidOperationException(
-            $"{module}: The installed package GUID does not match. Expected {module.Guid} but found {manifestGuid} in {manifestPath}.");
+            $"{module}: The installed package GUID does not match. Expected {module.Guid} but found {manifestGuid} in {guidManifestPath}.");
       }
     }
 
-    // Clean up NuGet files
+    // Clean up NuGet files — use EnumerateFileSystemEntries to avoid buffering the full listing
     messages?.Debug($"Cleanup Nuget Files in {installPath}");
     if (string.IsNullOrEmpty(installPath))
       throw new InvalidOperationException("ModuleDestination was not set. This is a bug.");
 
-    foreach (var item in Directory.GetFileSystemEntries(installPath))
+    foreach (var item in Directory.EnumerateFileSystemEntries(installPath))
     {
       var name = Path.GetFileName(item);
       if (name is "_rels" or "package" or "[Content_Types].xml" ||

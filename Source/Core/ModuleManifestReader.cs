@@ -103,11 +103,19 @@ public static class ModuleManifestReader
 
   /// <summary>
   /// Fast scan of a .psd1 file to read only the ModuleVersion line without full parse.
+  /// Uses <see cref="FileOptions.SequentialScan"/> to hint sequential access to the OS.
   /// </summary>
   public static Version? TryReadModuleVersionFast(string manifestPath)
   {
     if (!File.Exists(manifestPath)) return null;
-    using var reader = new StreamReader(manifestPath);
+    var streamOptions = new FileStreamOptions
+    {
+      Mode = FileMode.Open,
+      Access = FileAccess.Read,
+      Share = FileShare.Read,
+      Options = FileOptions.SequentialScan,
+    };
+    using var reader = new StreamReader(manifestPath, streamOptions);
     string? line;
     while ((line = reader.ReadLine()) != null)
     {

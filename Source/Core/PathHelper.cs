@@ -98,6 +98,22 @@ public static class PathHelper
       PSObject pso => pso.Properties["CurrentUserAllHosts"]?.Value?.ToString() ?? pso.BaseObject?.ToString(),
       _ => null
     };
+
+    // VSCode's PowerShell extension uses a custom host whose $profile.CurrentUserAllHosts
+    // may be null or incorrect. Fall back to the standard filesystem location.
+    if (string.IsNullOrEmpty(myProfile))
+    {
+      cmdlet.WriteVerbose("CurrentUserAllHosts profile path is not set.");
+    }
+    else if (string.Equals(cmdlet.Host?.Name, "Visual Studio Code Host", StringComparison.OrdinalIgnoreCase))
+    {
+      cmdlet.WriteVerbose("Visual Studio Code Host detected; resolving profile path from filesystem.");
+      var profileBase = OperatingSystem.IsWindows()
+          ? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+          : Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+      myProfile = Path.Combine(profileBase, "powershell", "profile.ps1");
+    }
+
     if (string.IsNullOrEmpty(myProfile)) return;
 
     if (!File.Exists(myProfile))
@@ -106,7 +122,14 @@ public static class PathHelper
         return;
       cmdlet.WriteVerbose("User All Hosts profile not found, creating one.");
       Directory.CreateDirectory(Path.GetDirectoryName(myProfile) ?? ".");
-      File.WriteAllText(myProfile, "");
+      // Use FileStream with explicit options to avoid unnecessary buffering for a new empty file
+      using var _ = new FileStream(myProfile, new FileStreamOptions
+      {
+        Mode = FileMode.CreateNew,
+        Access = FileAccess.Write,
+        Share = FileShare.None,
+        Options = FileOptions.WriteThrough,
+      });
     }
 
     // Use relative destination if possible
@@ -126,13 +149,33 @@ public static class PathHelper
 
     var profileLine = $"if (\"{displayDestination}\" -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) {{ $env:PSModulePath = \"{displayDestination}\" + $([IO.Path]::PathSeparator + $env:PSModulePath) }} #Added by ModuleFast.";
 
-    var profileContent = File.ReadAllText(myProfile);
+    // Use FileStreamOptions with SequentialScan for reading (the profile is read top-to-bottom once)
+    string profileContent;
+    using (var fs = new FileStream(myProfile, new FileStreamOptions
+    {
+      Mode = FileMode.Open,
+      Access = FileAccess.Read,
+      Share = FileShare.Read,
+      Options = FileOptions.SequentialScan,
+    }))
+    using (var reader = new StreamReader(fs))
+      profileContent = reader.ReadToEnd();
+
     if (!profileContent.Contains(profileLine))
     {
       if (!ApproveAction(myProfile, $"Allow ModuleFast to add {destination} to PSModulePath on startup.", cmdlet))
         return;
       cmdlet.WriteVerbose($"Adding {destination} to profile {myProfile}");
-      File.AppendAllText(myProfile, "\n\n" + profileLine + "\n");
+      // WriteThrough flushes each write directly to the OS, avoiding buffered-write data loss on crash
+      using var appendFs = new FileStream(myProfile, new FileStreamOptions
+      {
+        Mode = FileMode.Append,
+        Access = FileAccess.Write,
+        Share = FileShare.Read,
+        Options = FileOptions.WriteThrough,
+      });
+      using var writer = new StreamWriter(appendFs);
+      writer.Write("\n\n" + profileLine + "\n");
     }
     else
     {
