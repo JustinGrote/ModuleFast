@@ -2,6 +2,6 @@
   <PropertyGroup>
     <!-- Use the .NET SDK Artifacts Output Layout: all bin/obj go to artifacts/ -->
     <UseArtifactsOutput>true</UseArtifactsOutput>
-    <ArtifactsOutputDir>$(MSBuildProjectDirectory)/Artifacts</ArtifactsOutputDir>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)/Artifacts</ArtifactsPath>
   </PropertyGroup>
 </Project>

@@ -4,12 +4,9 @@ param(
   #Specify this to explicitly specify the version of the package
   [Management.Automation.SemanticVersion]$Version = '0.0.0-SOURCE',
   #You Generally do not need to modify these
-  $Destination = (Join-Path $PSScriptRoot 'Build'),
-  $ModuleOutFolderPath = (Join-Path $Destination 'ModuleFast'),
-  $TempPath = (Resolve-Path temp:).ProviderPath + '\ModuleFastBuild',
-  $LibPath = (Join-Path $ModuleOutFolderPath 'lib' 'netstandard2.0'),
-  $NugetVersioning = '6.8.0',
-  $NugetOutFolderPath = $Destination
+  $Destination = (Join-Path $PSScriptRoot 'Artifacts'),
+  $ModuleOutFolderPath = (Join-Path $Destination 'Module'),
+  $TempPath = (Resolve-Path temp:).ProviderPath + '\ModuleFastBuild'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,13 +22,8 @@ if ($DebugPreference -eq 'Continue') {
 }
 
 Task Clean {
-  foreach ($Path in $Destination, $NugetOutFolderPath, $ModuleOutFolderPath, $TempPath, $LibPath) {
-    if (Test-Path $Path) {
-      Remove-Item @c -Recurse -Force -Path $Path/*
-    } else {
-      New-Item @c -Type Directory -Path $Path | Out-Null
-    }
-  }
+  Write-Build -Color DarkCyan "Cleaning $Destination"
+  & git clean -fdX $Destination
 }
 
 Task BuildCSharp {
@@ -41,6 +33,7 @@ Task BuildCSharp {
 }
 
 Task CopyFiles {
+  New-Item -ItemType Directory -Path $ModuleOutFolderPath -Force | Out-Null
   Copy-Item @c -Path @(
     'ModuleFast.psd1'
     'ModuleFast.psm1'
@@ -50,9 +43,7 @@ Task CopyFiles {
 
   # Copy DLL and its dependencies from Artifacts Output to the module bin folder
   $artifactsBinPath = Join-Path $PSScriptRoot 'artifacts' 'bin' 'PowerShell' 'release'
-  $moduleBinPath    = Join-Path $ModuleOutFolderPath 'bin' 'ModuleFast'
-  New-Item -ItemType Directory -Path $moduleBinPath -Force | Out-Null
-  Copy-Item @c -Path (Join-Path $artifactsBinPath '*') -Destination $moduleBinPath -Recurse
+  Copy-Item @c -Path (Join-Path $artifactsBinPath '*') -Destination $ModuleOutFolderPath -Recurse
 }
 
 Task Version {
@@ -67,13 +58,7 @@ Task Version {
 
 Task Package.Nuget {
   [string]$repoName = 'ModuleFastBuild-' + (New-Guid)
-  Get-ChildItem $ModuleOutFolderPath -Recurse -Include '*.nupkg' | Remove-Item @c -Force
-  try {
-    Register-PSResourceRepository -Name $repoName -Uri $NugetOutFolderPath -ApiVersion local
-    Publish-PSResource -Repository $repoName -Path $ModuleOutFolderPath
-  } finally {
-    Unregister-PSResourceRepository -Name $repoName
-  }
+  Compress-PSResource @c -Path $ModuleOutFolderPath -DestinationPath $Destination
 }
 
 Task Package.Zip {
