@@ -1,5 +1,6 @@
 using System.Management.Automation;
 using System.Text.Json;
+using System.Threading;
 
 namespace ModuleFast.Commands;
 
@@ -299,10 +300,19 @@ public class InstallModuleFastCommand : PSCmdlet
       }
       else
       {
-        WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing: {finalInstallPlan.Length} Modules") { PercentComplete = 50 });
+        var total = finalInstallPlan.Length;
+        var completed = 0;
+        WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing 0/{total} Modules") { PercentComplete = 0 });
+
+        var installProgress = new Progress<ModuleFastInfo>(_ =>
+        {
+          var done = Interlocked.Increment(ref completed);
+          var pct = done * 100 / total;
+          WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing {done}/{total} Modules") { PercentComplete = pct });
+        });
 
         var installer = new ModuleFastInstaller(_httpClient!);
-        var installTask = installer.InstallModulesAsync(finalInstallPlan, Destination!, Update || ParameterSetName == "ModuleFastInfo", ct, _messages, ThrottleLimit);
+        var installTask = installer.InstallModulesAsync(finalInstallPlan, Destination!, Update || ParameterSetName == "ModuleFastInfo", ct, _messages, ThrottleLimit, installProgress);
         var installedModules = installTask.GetAwaiter().GetResult();
         _messages.Flush(this);
 

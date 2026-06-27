@@ -45,7 +45,8 @@ public class ModuleFastInstaller
       bool update,
       CancellationToken ct,
       ModuleFastMessageBuffer? messages = null,
-      int maxConcurrency = 0)
+      int maxConcurrency = 0,
+      IProgress<ModuleFastInfo>? progress = null)
   {
     if (maxConcurrency <= 0)
       maxConcurrency = Environment.ProcessorCount;
@@ -56,7 +57,11 @@ public class ModuleFastInstaller
     await Parallel.ForEachAsync(modules, opts, async (m, ct) =>
     {
       var result = await InstallSingleAsync(m, destination, update, ct, messages).ConfigureAwait(false);
-      if (result != null) results.Add(result);
+      if (result != null)
+      {
+        results.Add(result);
+        progress?.Report(result);
+      }
     }).ConfigureAwait(false);
 
     return [.. results];

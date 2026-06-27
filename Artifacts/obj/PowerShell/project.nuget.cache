@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "dgSpecHash": "Ulknyvk1zt8=",
+  "success": true,
+  "projectFilePath": "/home/runner/work/ModuleFast/ModuleFast/Source/PowerShell/PowerShell.csproj",
+  "expectedPackageFiles": [
+    "/home/runner/.nuget/packages/microsoft.applicationinsights/2.23.0/microsoft.applicationinsights.2.23.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.management.infrastructure/3.0.0/microsoft.management.infrastructure.3.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.management.infrastructure.runtime.unix/3.0.0/microsoft.management.infrastructure.runtime.unix.3.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.management.infrastructure.runtime.win/3.0.0/microsoft.management.infrastructure.runtime.win.3.0.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.powershell.coreclr.eventing/7.6.0/microsoft.powershell.coreclr.eventing.7.6.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.powershell.native/700.0.0-rc.1/microsoft.powershell.native.700.0.0-rc.1.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.security.extensions/1.4.0/microsoft.security.extensions.1.4.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/microsoft.win32.registry.accesscontrol/10.0.5/microsoft.win32.registry.accesscontrol.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/newtonsoft.json/13.0.4/newtonsoft.json.13.0.4.nupkg.sha512",
+    "/home/runner/.nuget/packages/nuget.versioning/7.6.0/nuget.versioning.7.6.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/polly.core/8.7.0/polly.core.8.7.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.codedom/10.0.5/system.codedom.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.configuration.configurationmanager/10.0.5/system.configuration.configurationmanager.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.diagnostics.eventlog/10.0.5/system.diagnostics.eventlog.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.directoryservices/10.0.5/system.directoryservices.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.management/10.0.5/system.management.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.management.automation/7.6.0/system.management.automation.7.6.0.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.security.cryptography.pkcs/10.0.5/system.security.cryptography.pkcs.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.security.cryptography.protecteddata/10.0.5/system.security.cryptography.protecteddata.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.security.permissions/10.0.5/system.security.permissions.10.0.5.nupkg.sha512",
+    "/home/runner/.nuget/packages/system.windows.extensions/10.0.5/system.windows.extensions.10.0.5.nupkg.sha512"
+  ],
+  "logs": []
+}
