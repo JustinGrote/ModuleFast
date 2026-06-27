@@ -1,3 +1,7 @@
 <Solution>
-  <Project Path="Source/ModuleFast/ModuleFast.csproj" />
+  <Folder Name="/Source/">
+    <Project Path="Source/Console/Console.csproj" />
+    <Project Path="Source/Core/Core.csproj" />
+    <Project Path="Source/PowerShell/PowerShell.csproj" />
+  </Folder>
 </Solution>

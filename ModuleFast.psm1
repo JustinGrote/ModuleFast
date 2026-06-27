@@ -9,9 +9,9 @@ $binaryModulePaths = @(
         # Loaded from the root folder after publishing
         (Join-Path $PSScriptRoot 'Build' 'ModuleFast.dll')
         # Artifacts Output Layout: dotnet build -c Release
-        (Join-Path $PSScriptRoot 'artifacts' 'bin' 'ModuleFast' 'release' 'ModuleFast.dll')
+        (Join-Path $PSScriptRoot 'artifacts' 'bin' 'PowerShell' 'release' 'ModuleFast.dll')
         # Artifacts Output Layout: dotnet build (debug, default)
-        (Join-Path $PSScriptRoot 'artifacts' 'bin' 'ModuleFast' 'debug' 'ModuleFast.dll')
+        (Join-Path $PSScriptRoot 'artifacts' 'bin' 'PowerShell' 'debug' 'ModuleFast.dll')
     }
     # Classic deployed layout in same folder
     (Join-Path $PSScriptRoot 'ModuleFast.dll')

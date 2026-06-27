@@ -15,6 +15,12 @@ public static class ModuleFastClient
 
   public static HttpClient Create(PSCredential? credential = null, int timeoutSeconds = 30, int maxRetries = DefaultMaxRetries)
   {
+    NetworkCredential? netCred = credential?.GetNetworkCredential();
+    return Create(netCred, timeoutSeconds, maxRetries);
+  }
+
+  public static HttpClient Create(NetworkCredential? credential, int timeoutSeconds = 30, int maxRetries = DefaultMaxRetries)
+  {
     AppContext.SetSwitch("System.Net.SocketsHttpHandler.Http3Support", true);
     var handler = new SocketsHttpHandler
     {
@@ -91,8 +97,13 @@ public static class ModuleFastClient
 
   public static AuthenticationHeaderValue ToAuthHeader(PSCredential credential)
   {
+    return ToAuthHeader(credential.GetNetworkCredential());
+  }
+
+  public static AuthenticationHeaderValue ToAuthHeader(NetworkCredential credential)
+  {
     var token = Convert.ToBase64String(
-        Encoding.UTF8.GetBytes($"{credential.UserName}:{credential.GetNetworkCredential().Password}"));
+        Encoding.UTF8.GetBytes($"{credential.UserName}:{credential.Password}"));
     return new AuthenticationHeaderValue("Basic", token);
   }
 }
