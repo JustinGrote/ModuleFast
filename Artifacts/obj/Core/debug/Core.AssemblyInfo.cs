@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ModuleFastCore")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bebdfdcc8c4fdf03acca970aba3f3aeb207c315e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+507821b8895859e9ba8ad80b63af2e642023955e")]
 [assembly: System.Reflection.AssemblyProductAttribute("ModuleFastCore")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ModuleFastCore")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

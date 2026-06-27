@@ -304,10 +304,12 @@ public class InstallModuleFastCommand : PSCmdlet
         var completed = 0;
         WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing 0/{total} Modules") { PercentComplete = 0 });
 
-        var installProgress = new Progress<ModuleFastInfo>(_ =>
+        // The callback is invoked synchronously on the completing thread pool thread.
+        // WriteProgress is thread-safe in PowerShell's runtime infrastructure.
+        var installProgress = new Action<ModuleFastInfo>(_ =>
         {
           var done = Interlocked.Increment(ref completed);
-          var pct = done * 100 / total;
+          var pct = (int)(done * 100.0 / total);
           WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing {done}/{total} Modules") { PercentComplete = pct });
         });
 

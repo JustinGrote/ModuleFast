@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "dgSpecHash": "XK1GQef3vJ4=",
+  "success": true,
+  "projectFilePath": "/home/runner/work/ModuleFast/ModuleFast/Source/Console/Console.csproj",
+  "expectedPackageFiles": [
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.dotnet.ilcompiler/10.0.9/microsoft.dotnet.ilcompiler.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.net.illink.tasks/10.0.9/microsoft.net.illink.tasks.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/nuget.versioning/7.6.0/nuget.versioning.7.6.0.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/polly.core/8.7.0/polly.core.8.7.0.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/runtime.linux-x64.microsoft.dotnet.ilcompiler/10.0.9/runtime.linux-x64.microsoft.dotnet.ilcompiler.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.netcore.app.ref/10.0.9/microsoft.netcore.app.ref.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.netcore.app.runtime.linux-x64/10.0.9/microsoft.netcore.app.runtime.linux-x64.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.aspnetcore.app.ref/10.0.9/microsoft.aspnetcore.app.ref.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.aspnetcore.app.runtime.linux-x64/10.0.9/microsoft.aspnetcore.app.runtime.linux-x64.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.netcore.app.runtime.nativeaot.linux-x64/10.0.9/microsoft.netcore.app.runtime.nativeaot.linux-x64.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/runtime.linux-x64.microsoft.dotnet.ilcompiler/10.0.9/runtime.linux-x64.microsoft.dotnet.ilcompiler.10.0.9.nupkg.sha512",
+    "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages/microsoft.netcore.app.host.linux-x64/10.0.9/microsoft.netcore.app.host.linux-x64.10.0.9.nupkg.sha512"
+  ],
+  "logs": []
+}

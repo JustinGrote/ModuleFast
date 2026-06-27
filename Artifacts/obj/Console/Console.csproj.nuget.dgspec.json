@@ -1,0 +1,223 @@
+{
+  "format": 1,
+  "restore": {
+    "/home/runner/work/ModuleFast/ModuleFast/Source/Console/Console.csproj": {}
+  },
+  "projects": {
+    "/home/runner/work/ModuleFast/ModuleFast/Source/Console/Console.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/home/runner/work/ModuleFast/ModuleFast/Source/Console/Console.csproj",
+        "projectName": "modulefast",
+        "projectPath": "/home/runner/work/ModuleFast/ModuleFast/Source/Console/Console.csproj",
+        "packagesPath": "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages",
+        "outputPath": "/home/runner/work/ModuleFast/ModuleFast/Artifacts/obj/Console/",
+        "projectStyle": "PackageReference",
+        "centralPackageVersionsManagementEnabled": true,
+        "configFilePaths": [
+          "/home/runner/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net10.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net10.0": {
+            "framework": "net10.0",
+            "targetAlias": "net10.0",
+            "projectReferences": {
+              "/home/runner/work/ModuleFast/ModuleFast/Source/Core/Core.csproj": {
+                "projectPath": "/home/runner/work/ModuleFast/ModuleFast/Source/Core/Core.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "all"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net10.0": {
+          "framework": "net10.0",
+          "targetAlias": "net10.0",
+          "dependencies": {
+            "Microsoft.DotNet.ILCompiler": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[10.0.9, )",
+              "autoReferenced": true
+            },
+            "Microsoft.NET.ILLink.Tasks": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[10.0.9, )",
+              "autoReferenced": true
+            }
+          },
+          "centralPackageVersions": {
+            "NuGet.Versioning": "7.6.0",
+            "Polly.Core": "8.7.0",
+            "System.Management.Automation": "7.6.0"
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.AspNetCore.App.Runtime.linux-x64",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.linux-x64",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.linux-x64",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.NativeAOT.linux-x64",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "runtime.linux-x64.Microsoft.DotNet.ILCompiler",
+              "version": "[10.0.9, 10.0.9]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "linux-x64": {
+          "#import": []
+        }
+      }
+    },
+    "/home/runner/work/ModuleFast/ModuleFast/Source/Core/Core.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/home/runner/work/ModuleFast/ModuleFast/Source/Core/Core.csproj",
+        "projectName": "ModuleFastCore",
+        "projectPath": "/home/runner/work/ModuleFast/ModuleFast/Source/Core/Core.csproj",
+        "packagesPath": "/tmp/codeql-scratch-cd7d2620706e747c/dbs/csharp/working/packages",
+        "outputPath": "/home/runner/work/ModuleFast/ModuleFast/Artifacts/obj/Core/",
+        "projectStyle": "PackageReference",
+        "centralPackageVersionsManagementEnabled": true,
+        "configFilePaths": [
+          "/home/runner/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net10.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net10.0": {
+            "framework": "net10.0",
+            "targetAlias": "net10.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "all"
+        },
+        "SdkAnalysisLevel": "10.0.300"
+      },
+      "frameworks": {
+        "net10.0": {
+          "framework": "net10.0",
+          "targetAlias": "net10.0",
+          "dependencies": {
+            "NuGet.Versioning": {
+              "target": "Package",
+              "version": "[7.6.0, )",
+              "versionCentrallyManaged": true
+            },
+            "Polly.Core": {
+              "target": "Package",
+              "version": "[8.7.0, )",
+              "versionCentrallyManaged": true
+            },
+            "System.Management.Automation": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[7.6.0, )",
+              "versionCentrallyManaged": true
+            }
+          },
+          "centralPackageVersions": {
+            "NuGet.Versioning": "7.6.0",
+            "Polly.Core": "8.7.0",
+            "System.Management.Automation": "7.6.0"
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[10.0.9, 10.0.9]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[10.0.9, 10.0.9]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/10.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

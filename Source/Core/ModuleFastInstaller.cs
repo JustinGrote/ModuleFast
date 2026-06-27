@@ -46,7 +46,7 @@ public class ModuleFastInstaller
       CancellationToken ct,
       ModuleFastMessageBuffer? messages = null,
       int maxConcurrency = 0,
-      IProgress<ModuleFastInfo>? progress = null)
+      Action<ModuleFastInfo>? onModuleInstalled = null)
   {
     if (maxConcurrency <= 0)
       maxConcurrency = Environment.ProcessorCount;
@@ -60,7 +60,7 @@ public class ModuleFastInstaller
       if (result != null)
       {
         results.Add(result);
-        progress?.Report(result);
+        onModuleInstalled?.Invoke(result);
       }
     }).ConfigureAwait(false);
 
