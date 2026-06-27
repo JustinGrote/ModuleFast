@@ -12,7 +12,4 @@
   <ItemGroup>
     <ProjectReference Include="..\Core\Core.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="System.Management.Automation" PrivateAssets="all" />
-  </ItemGroup>
 </Project>
