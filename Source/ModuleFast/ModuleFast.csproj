@@ -17,6 +17,7 @@
   <ItemGroup>
     <PackageReference Include="System.Management.Automation" PrivateAssets="all" />
     <PackageReference Include="NuGet.Versioning" />
+    <PackageReference Include="Polly.Core" />
   </ItemGroup>
   <Target Name="RemoveDepsJsonFromPublishOutput" AfterTargets="Publish">
     <Delete Files="$(PublishDir)$(AssemblyName).deps.json" />
