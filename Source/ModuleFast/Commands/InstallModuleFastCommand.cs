@@ -133,6 +133,13 @@ public class InstallModuleFastCommand : PSCmdlet
           new InvalidOperationException("Failed to determine destination path."),
           "DestinationNotFound", ErrorCategory.InvalidOperation, null));
 
+    // Resolve relative Destination against PowerShell's current location
+    if (!System.IO.Path.IsPathRooted(Destination))
+    {
+      Destination = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+          SessionState.Path.CurrentFileSystemLocation.Path, Destination));
+    }
+
     if (!Directory.Exists(Destination))
     {
       if (string.Equals(Destination, defaultRepoPath, StringComparison.OrdinalIgnoreCase) ||
@@ -141,8 +148,6 @@ public class InstallModuleFastCommand : PSCmdlet
         Directory.CreateDirectory(Destination!);
       }
     }
-
-    Destination = System.IO.Path.GetFullPath(Destination!);
 
     if (!NoPSModulePathUpdate)
     {
@@ -233,10 +238,10 @@ public class InstallModuleFastCommand : PSCmdlet
           }
           else
           {
-            var specFiles = SpecFileReader.FindRequiredSpecFiles(Environment.CurrentDirectory);
+            var specFiles = SpecFileReader.FindRequiredSpecFiles(SessionState.Path.CurrentFileSystemLocation.Path);
             if (specFiles == null || !specFiles.Any())
             {
-              WriteWarning($"No specfiles found in {Environment.CurrentDirectory}.");
+              WriteWarning($"No specfiles found in {SessionState.Path.CurrentFileSystemLocation}.");
             }
             else
             {

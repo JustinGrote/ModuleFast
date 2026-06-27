@@ -41,7 +41,7 @@ public class ModuleFastInstaller
       if (result != null) results.Add(result);
     }).ConfigureAwait(false);
 
-    return results.ToList();
+    return [.. results];
   }
 
   private async Task<ModuleFastInfo?> InstallSingleAsync(

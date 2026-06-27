@@ -91,8 +91,13 @@ public static class PathHelper
       return;
     }
 
-    var myProfile = (string?)cmdlet.GetVariableValue("profile.CurrentUserAllHosts")
-        ?? (string?)cmdlet.GetVariableValue("profile");
+    var profileValue = cmdlet.GetVariableValue("profile");
+    var myProfile = profileValue switch
+    {
+      string s => s,
+      PSObject pso => pso.Properties["CurrentUserAllHosts"]?.Value?.ToString() ?? pso.BaseObject?.ToString(),
+      _ => null
+    };
     if (string.IsNullOrEmpty(myProfile)) return;
 
     if (!File.Exists(myProfile))
