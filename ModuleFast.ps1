@@ -69,8 +69,13 @@ vL0HfFzFtQc8t+zdorZF2lUvbqy1K2FbuFPcjcG9U4wsS2t7saQVu5KxMTZSTO+OCcWBgMEkECCEGgiQ
     }
   }
 }
-Import-NuGetVersioningAssembly
+# The binary module bundles NuGet.Versioning, so only load the inline assembly for the script module path
+if ($PSVersionTable.PSVersion -lt [version]'7.6.0' -or $UseMain -or $Release -eq 'main') {
+  Import-NuGetVersioningAssembly
+}
 if ($ImportNugetVersioning) { return }
+
+$useBinaryModule = $PSVersionTable.PSVersion -ge [version]'7.6.0' -and -not ($UseMain -or $Release -eq 'main')
 
 if (-not (Get-Module $ModuleName)) {
   #Dont use a release, use the latest commit on main
@@ -78,20 +83,82 @@ if (-not (Get-Module $ModuleName)) {
     $Uri = "https://raw.githubusercontent.com/$User/$Repo/main/$ModuleName.psm1"
   }
 
-  Write-Debug "Fetching $ModuleName from $Uri"
-  $ProgressPreference = 'SilentlyContinue'
-  try {
-    $response = [HttpClient]::new().GetStringAsync($Uri).GetAwaiter().GetResult()
-  } catch {
-    $PSItem.ErrorDetails = "Failed to fetch $ModuleName from $Uri`: $PSItem"
-    $PSCmdlet.ThrowTerminatingError($PSItem)
-  }
-  Write-Debug 'Fetched response'
-  $scriptBlock = [ScriptBlock]::Create($response)
-  $ProgressPreference = 'Continue'
+  # PowerShell 7.6+ uses the binary module (nupkg from GitHub releases > v1.0)
+  if ($useBinaryModule) {
+    Write-Debug 'PowerShell 7.6+ detected, using binary module bootstrap'
 
-  $bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptblock
-  Write-Debug "Loaded Module $ModuleName"
+    $httpClient = [HttpClient]::new()
+    $httpClient.DefaultRequestHeaders.UserAgent.ParseAdd('ModuleFast-Bootstrap/1.0')
+
+    # Determine which release to fetch
+    if ($Release -eq 'latest') {
+      Write-Debug 'Fetching latest release > v1.0 from GitHub API'
+      $releasesUri = "https://api.github.com/repos/$User/$Repo/releases"
+      $releasesJson = $httpClient.GetStringAsync($releasesUri).GetAwaiter().GetResult()
+      $releases = $releasesJson | ConvertFrom-Json
+      $targetRelease = $releases | Where-Object {
+        -not $_.prerelease -and -not $_.draft -and ([version]($_.tag_name -replace '^v', '') -gt [version]'1.0')
+      } | Select-Object -First 1
+      if (-not $targetRelease) {
+        throw "No suitable binary module release (> v1.0) found at $releasesUri"
+      }
+    } else {
+      $releaseUri = "https://api.github.com/repos/$User/$Repo/releases/tags/$Release"
+      Write-Debug "Fetching specific release: $releaseUri"
+      $releaseJson = $httpClient.GetStringAsync($releaseUri).GetAwaiter().GetResult()
+      $targetRelease = $releaseJson | ConvertFrom-Json
+    }
+
+    Write-Debug "Using release: $($targetRelease.tag_name)"
+
+    # Find the nupkg asset
+    $nupkgAsset = $targetRelease.assets | Where-Object { $_.name -like '*.nupkg' } | Select-Object -First 1
+    if (-not $nupkgAsset) {
+      throw "No .nupkg asset found in release $($targetRelease.tag_name)"
+    }
+
+    # Download and extract the nupkg
+    $downloadUrl = $nupkgAsset.browser_download_url
+    Write-Debug "Downloading nupkg from $downloadUrl"
+    $ProgressPreference = 'SilentlyContinue'
+    $nupkgBytes = $httpClient.GetByteArrayAsync($downloadUrl).GetAwaiter().GetResult()
+    $ProgressPreference = 'Continue'
+
+    $extractPath = [Path]::Combine([Path]::GetTempPath(), 'ModuleFast-Bootstrap', $targetRelease.tag_name)
+    if (Test-Path $extractPath) {
+      Write-Debug "Bootstrap cache exists at $extractPath"
+    } else {
+      Write-Debug "Extracting nupkg to $extractPath"
+      [Directory]::CreateDirectory($extractPath) | Out-Null
+      $nupkgStream = [MemoryStream]::new($nupkgBytes)
+      [ZipFile]::ExtractToDirectory($nupkgStream, $extractPath)
+      $nupkgStream.Dispose()
+    }
+
+    # Import the binary module
+    $manifestPath = Join-Path $extractPath "$ModuleName.psd1"
+    if (-not (Test-Path $manifestPath)) {
+      throw "Module manifest not found at $manifestPath after extraction"
+    }
+    Import-Module $manifestPath -Global
+    Write-Debug "Loaded binary module $ModuleName from $extractPath"
+  } else {
+    # Legacy script module path for PS < 7.6 or UseMain/main branch
+    Write-Debug "Fetching $ModuleName from $Uri"
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+      $response = [HttpClient]::new().GetStringAsync($Uri).GetAwaiter().GetResult()
+    } catch {
+      $PSItem.ErrorDetails = "Failed to fetch $ModuleName from $Uri`: $PSItem"
+      $PSCmdlet.ThrowTerminatingError($PSItem)
+    }
+    Write-Debug 'Fetched response'
+    $scriptBlock = [ScriptBlock]::Create($response)
+    $ProgressPreference = 'Continue'
+
+    $bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptblock
+    Write-Debug "Loaded Module $ModuleName"
+  }
 } else {
   Write-Warning "Module $ModuleName already loaded, skipping bootstrap."
 }
@@ -99,7 +166,9 @@ if (-not (Get-Module $ModuleName)) {
 #This is ModuleFast specific
 if ($UseMain) {
   Write-Debug 'UseMain Specified, ModuleFast will use preview.pwsh.gallery'
-  & $bootstrapModule { $SCRIPT:DefaultSource = 'https://preview.pwsh.gallery/index.json' }
+  if ($bootstrapModule) {
+    & $bootstrapModule { $SCRIPT:DefaultSource = 'https://preview.pwsh.gallery/index.json' }
+  }
 }
 
 if ($args) {
