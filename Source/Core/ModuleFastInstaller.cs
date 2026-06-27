@@ -207,7 +207,7 @@ public class ModuleFastInstaller
               Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
             });
         await using var origVerWriter = new StreamWriter(origVerFs);
-        await origVerWriter.WriteAsync(originalModuleVersion).ConfigureAwait(false);
+        await origVerWriter.WriteLineAsync(originalModuleVersion).ConfigureAwait(false);
 
         module.ModuleVersion = new NuGetVersion(moduleManifestVersion.ToString());
       }

@@ -108,10 +108,12 @@ public static class PathHelper
     else if (string.Equals(cmdlet.Host?.Name, "Visual Studio Code Host", StringComparison.OrdinalIgnoreCase))
     {
       cmdlet.WriteVerbose("Visual Studio Code Host detected; resolving profile path from filesystem.");
-      var profileBase = OperatingSystem.IsWindows()
-          ? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-          : Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-      myProfile = Path.Combine(profileBase, "powershell", "profile.ps1");
+      // On Windows: %USERPROFILE%\Documents\PowerShell\profile.ps1
+      // On Linux/macOS: ~/.config/powershell/profile.ps1  (XDG standard; matches pwsh default)
+      var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+      myProfile = OperatingSystem.IsWindows()
+          ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PowerShell", "profile.ps1")
+          : Path.Combine(userProfile, ".config", "powershell", "profile.ps1");
     }
 
     if (string.IsNullOrEmpty(myProfile)) return;
