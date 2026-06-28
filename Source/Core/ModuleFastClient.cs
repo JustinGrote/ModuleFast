@@ -25,7 +25,7 @@ public static class ModuleFastClient
     var handler = new SocketsHttpHandler
     {
       // Allow more parallel connections to the same host (registry + CDN).
-      MaxConnectionsPerServer = 20,
+      MaxConnectionsPerServer = 30,
       // Allow an additional TCP connection when all HTTP/2 streams on the first are consumed.
       EnableMultipleHttp2Connections = true,
       InitialHttp2StreamWindowSize = 16777216,
@@ -58,7 +58,7 @@ public static class ModuleFastClient
         MaxRetryAttempts = maxRetries,
         BackoffType = DelayBackoffType.Exponential,
         UseJitter = true,
-        Delay = TimeSpan.FromSeconds(1),
+        Delay = TimeSpan.FromMilliseconds(200),
         ShouldHandle = static args => ValueTask.FromResult(ShouldRetry(args.Outcome)),
         DelayGenerator = static args =>
         {

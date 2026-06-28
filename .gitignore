@@ -1,5 +1,1 @@
-Build
-bin
-artifacts
-src/ModuleFast/obj
-src/ModuleFast/bin
+/[aA]rtifacts
