@@ -236,7 +236,7 @@ public class InstallModuleFastCommand : TaskCmdlet
         // Auto-detect spec files if nothing was specified
         if (_modulesToInstall.Count == 0 && ParameterSetName == "Specification")
         {
-          WriteVerbose("🔎 No modules specified. Beginning SpecFile detection...");
+          Verbose("🔎 No modules specified. Beginning SpecFile detection...");
 
           if (CI && File.Exists(CILockFilePath))
           {
@@ -246,7 +246,7 @@ public class InstallModuleFastCommand : TaskCmdlet
               _modulesToInstall.Add(spec);
             if (Update)
             {
-              WriteVerbose("-Update specified but lockfile found. Ignoring -Update.");
+              Verbose("-Update specified but lockfile found. Ignoring -Update.");
               Update = false;
             }
           }
@@ -255,13 +255,13 @@ public class InstallModuleFastCommand : TaskCmdlet
             IEnumerable<string> specFiles = SpecFileReader.FindRequiredSpecFiles(SessionState.Path.CurrentFileSystemLocation.Path);
             if (specFiles == null || !specFiles.Any())
             {
-              WriteWarning($"No specfiles found in {SessionState.Path.CurrentFileSystemLocation}.");
+              Warning($"No specfiles found in {SessionState.Path.CurrentFileSystemLocation}.");
             }
             else
             {
               foreach (var specFile in specFiles)
               {
-                WriteVerbose($"Found Specfile {specFile}. Evaluating...");
+                Verbose($"Found Specfile {specFile}. Evaluating...");
                 ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, (IModuleFastLogger)this);
                 foreach (ModuleFastSpec spec in fileSpecs)
                   _modulesToInstall.Add(spec);
@@ -275,7 +275,7 @@ public class InstallModuleFastCommand : TaskCmdlet
               new InvalidDataException("No module specifications found to evaluate."),
               "NoSpecifications", ErrorCategory.InvalidData, null));
 
-        WriteProgress(new ProgressRecord(1, "Install-ModuleFast", "Plan") { PercentComplete = 1 });
+        Progress("Install-ModuleFast", "Plan", percentComplete: 1);
 
         string[] modulePaths;
         if (DestinationOnly)
@@ -295,14 +295,14 @@ public class InstallModuleFastCommand : TaskCmdlet
       if (finalInstallPlan.Length == 0)
       {
         var msg = $"✅ {_modulesToInstall.Count} Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update";
-        WriteVerbose(msg);
+        Verbose(msg);
         return;
       }
 
       if (Plan || !((IHostInteraction)this).Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules"))
       {
         if (Plan)
-          WriteVerbose($"📑 -Plan was specified. Returning a plan including {finalInstallPlan.Length} Module Specifications");
+          Verbose($"📑 -Plan was specified. Returning a plan including {finalInstallPlan.Length} Module Specifications");
         foreach (ModuleFastInfo info in finalInstallPlan)
           WriteObject(info);
       }
@@ -310,7 +310,7 @@ public class InstallModuleFastCommand : TaskCmdlet
       {
         var total = finalInstallPlan.Length;
         var completed = 0;
-        WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing 0/{total} Modules") { PercentComplete = 0 });
+        Progress("Install-ModuleFast", $"Installing 0/{total} Modules", percentComplete: 50);
 
         // The callback is invoked synchronously on the completing thread pool thread.
         // WriteProgress is thread-safe in PowerShell's runtime infrastructure.
@@ -334,7 +334,7 @@ public class InstallModuleFastCommand : TaskCmdlet
         IEnumerable<ModuleFastInfo> installedModules = installTask.GetAwaiter().GetResult();
         _messages.Flush((IModuleFastLogger)this);
 
-        WriteVerbose("✅ All required modules installed! Exiting.");
+        Verbose("✅ All required modules installed! Exiting.");
 
         if (PassThru)
           foreach (ModuleFastInfo m in installedModules)
@@ -342,7 +342,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         if (CI)
         {
-          WriteVerbose($"Writing lockfile to {CILockFilePath}");
+          Verbose($"Writing lockfile to {CILockFilePath}");
           var lockFile = new Dictionary<string, string>();
           foreach (ModuleFastInfo m in finalInstallPlan)
             lockFile[m.Name] = m.ModuleVersion.ToString();
@@ -359,7 +359,7 @@ public class InstallModuleFastCommand : TaskCmdlet
     finally
     {
       // Ensure progress is always completed
-      WriteProgress(new ProgressRecord(1, "Install-ModuleFast", "Done") { RecordType = ProgressRecordType.Completed });
+      Progress("Install-ModuleFast", "Done", percentComplete: 100);
       _timeoutSource?.Dispose();
     }
   }

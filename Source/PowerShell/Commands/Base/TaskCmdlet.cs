@@ -498,7 +498,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
 /// for writing output, errors, verbose/debug/warning messages, and progress.
 /// Used as the base for both synchronous cmdlets and <see cref="TaskCmdlet"/>.
 /// </summary>
-public class BetterPSCmdlet : PSCmdlet, ModuleFast.IModuleFastLogger, ModuleFast.IHostInteraction
+public class BetterPSCmdlet : PSCmdlet
 {
   /// <summary>The cmdlet's invocation name, used as a prefix in diagnostic messages.</summary>
   protected string name => MyInvocation.MyCommand.Name;
@@ -507,16 +507,7 @@ public class BetterPSCmdlet : PSCmdlet, ModuleFast.IModuleFastLogger, ModuleFast
   internal void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{name}: {message}");
   internal void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{name}: {message}");
 
-  // IModuleFastLogger explicit implementation (no prefix, messages come pre-formatted from Core)
-  void ModuleFast.IModuleFastLogger.Verbose(string message) => WriteVerbose(message);
-  void ModuleFast.IModuleFastLogger.Debug(string message) => WriteDebug(message);
-  void ModuleFast.IModuleFastLogger.Warning(string message) => WriteWarning(message);
 
-  // IHostInteraction implementation
-  ModuleFast.IModuleFastLogger ModuleFast.IHostInteraction.Logger => this;
-  bool ModuleFast.IHostInteraction.Confirm(string target, string action) => ShouldProcess(target, action);
-  object? ModuleFast.IHostInteraction.GetVariable(string name) => GetVariableValue(name);
-  string? ModuleFast.IHostInteraction.HostName => Host?.Name;
   internal void Info(string message, string[]? tags = null, bool raw = false)
     => WriteInformation(raw ? message : $"{name}: {message}", tags ?? []);
   internal void Console(string message, bool raw = false)
