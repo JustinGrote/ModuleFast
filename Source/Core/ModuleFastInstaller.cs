@@ -45,7 +45,7 @@ public class ModuleFastInstaller
       string destination,
       bool update,
       CancellationToken ct,
-      ModuleFastMessageBuffer? messages = null,
+      CmdletInteraction? cmdlet = null,
       int maxConcurrency = 0,
       Action<ModuleFastInfo>? onModuleInstalled = null)
   {
@@ -57,7 +57,7 @@ public class ModuleFastInstaller
 
     await Parallel.ForEachAsync(modules, opts, async (m, ct) =>
     {
-      ModuleFastInfo? result = await InstallSingleAsync(m, destination, update, ct, messages).ConfigureAwait(false);
+      ModuleFastInfo? result = await InstallSingleAsync(m, destination, update, ct, cmdlet).ConfigureAwait(false);
       if (result != null)
       {
         results.Add(result);
@@ -73,7 +73,7 @@ public class ModuleFastInstaller
       string destination,
       bool update,
       CancellationToken ct,
-      ModuleFastMessageBuffer? messages)
+      CmdletInteraction? messages)
   {
     var installPath = Path.Combine(destination, module.Name,
         LocalModuleFinder.ResolveFolderVersion(module.ModuleVersion).ToString());
@@ -94,7 +94,7 @@ public class ModuleFastInstaller
 
       Hashtable existingManifestData = messages != null
         ? ModuleManifestReader.ImportModuleManifest(existingManifestPath, messages)
-        : ModuleManifestReader.ImportModuleManifest(existingManifestPath, logger: null);
+        : ModuleManifestReader.ImportModuleManifest(existingManifestPath, cmdlet: null);
       var existingVersionStr = existingManifestData["ModuleVersion"]?.ToString() ?? "0.0.0";
       var prerelease = (existingManifestData["PrivateData"] as System.Collections.Hashtable)?["PSData"] is System.Collections.Hashtable psData
           ? psData["Prerelease"]?.ToString() : null;
@@ -233,7 +233,7 @@ public class ModuleFastInstaller
               Path.Combine(installPath, $"{module.Name}.psd1"));
       Hashtable manifestData = messages != null
           ? ModuleManifestReader.ImportModuleManifest(guidManifestPath, messages)
-          : ModuleManifestReader.ImportModuleManifest(guidManifestPath, logger: null);
+          : ModuleManifestReader.ImportModuleManifest(guidManifestPath, cmdlet: null);
       if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out Guid manifestGuid) ||
           manifestGuid != module.Guid)
       {

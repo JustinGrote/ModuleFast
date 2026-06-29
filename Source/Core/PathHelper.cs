@@ -66,9 +66,8 @@ public static class PathHelper
     }
   }
 
-  public static void AddDestinationToPSModulePath(string destination, bool noProfileUpdate, IHostInteraction host)
+  public static async Task AddDestinationToPSModulePath(string destination, bool noProfileUpdate, CmdletInteraction cmdlet)
   {
-    var logger = host.Logger;
     destination = Path.GetFullPath(destination);
 
     var modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
@@ -76,32 +75,32 @@ public static class PathHelper
 
     if (modulePaths.Contains(destination, StringComparer.OrdinalIgnoreCase))
     {
-      logger.Debug($"Destination '{destination}' is already in PSModulePath.");
+      cmdlet.Debug($"Destination '{destination}' is already in PSModulePath.");
       return;
     }
 
-    logger.Verbose($"Updating PSModulePath to include {destination}");
+    cmdlet.Verbose($"Updating PSModulePath to include {destination}");
     Environment.SetEnvironmentVariable("PSModulePath",
         destination + Path.PathSeparator + Environment.GetEnvironmentVariable("PSModulePath"));
 
     if (noProfileUpdate)
     {
-      logger.Debug("Skipping profile update because -NoProfileUpdate was specified.");
+      cmdlet.Debug("Skipping profile update because -NoProfileUpdate was specified.");
       return;
     }
 
-    var profileValue = host.GetVariable("profile");
+    var profileValue = cmdlet.GetVariable("profile");
     string? myProfile = profileValue?.ToString();
 
     // VSCode's PowerShell extension uses a custom host whose $profile.CurrentUserAllHosts
     // may be null or incorrect. Fall back to the standard filesystem location.
     if (string.IsNullOrEmpty(myProfile))
     {
-      logger.Verbose("CurrentUserAllHosts profile path is not set.");
+      cmdlet.Verbose("CurrentUserAllHosts profile path is not set.");
     }
-    else if (string.Equals(host.HostName, "Visual Studio Code Host", StringComparison.OrdinalIgnoreCase))
+    else if (string.Equals(cmdlet.HostName, "Visual Studio Code Host", StringComparison.OrdinalIgnoreCase))
     {
-      logger.Verbose("Visual Studio Code Host detected; resolving profile path from filesystem.");
+      cmdlet.Verbose("Visual Studio Code Host detected; resolving profile path from filesystem.");
       // On Windows: %USERPROFILE%\Documents\PowerShell\profile.ps1
       // On Linux/macOS: ~/.config/powershell/profile.ps1  (XDG standard; matches pwsh default)
       var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -114,9 +113,10 @@ public static class PathHelper
 
     if (!File.Exists(myProfile))
     {
-      if (!host.Confirm(myProfile, $"Allow ModuleFast to work by creating a profile at {myProfile}."))
+      if (!await cmdlet.Confirm(myProfile, $"Allow ModuleFast to work by creating a profile at {myProfile}."))
         return;
-      logger.Verbose("User All Hosts profile not found, creating one.");
+
+      cmdlet.Verbose("User All Hosts profile not found, creating one.");
       Directory.CreateDirectory(Path.GetDirectoryName(myProfile) ?? ".");
       // Use FileStream with explicit options to avoid unnecessary buffering for a new empty file
       using FileStream _ = new FileStream(myProfile, new FileStreamOptions
@@ -159,9 +159,12 @@ public static class PathHelper
 
     if (!profileContent.Contains(profileLine))
     {
-      if (!host.Confirm(myProfile, $"Allow ModuleFast to add {destination} to PSModulePath on startup."))
-        return;
-      logger.Verbose($"Adding {destination} to profile {myProfile}");
+      if (!await cmdlet.Confirm(
+        myProfile,
+        $"Allow ModuleFast to add {destination} to PSModulePath on startup."
+      )) return;
+
+      cmdlet.Verbose($"Adding {destination} to profile {myProfile}");
       // WriteThrough flushes each write directly to the OS, avoiding buffered-write data loss on crash
       using FileStream appendFs = new FileStream(myProfile, new FileStreamOptions
       {
@@ -175,7 +178,7 @@ public static class PathHelper
     }
     else
     {
-      logger.Verbose($"PSModulePath {destination} already in profile, skipping...");
+      cmdlet.Verbose($"PSModulePath {destination} already in profile, skipping...");
     }
   }
 }

@@ -30,7 +30,7 @@ public static partial class LocalModuleFinder
       bool update,
       Dictionary<ModuleFastSpec, ModuleFastInfo>? bestCandidates,
       bool strictSemVer,
-      IModuleFastLogger? logger = null)
+      CmdletInteraction? logger = null)
   {
     if (modulePaths == null || modulePaths.Length == 0)
     {

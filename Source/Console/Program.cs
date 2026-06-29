@@ -154,7 +154,7 @@ string[] modulePaths = destinationOnly
 				?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
 var planner = new ModuleFastPlanner(httpClient, source);
-HashSet<ModuleFastInfo> planSet = await planner.GetPlanAsync(specs, modulePaths, update, prerelease, strictSemVer, destinationOnly, ct);
+HashSet<ModuleFastInfo> planSet = await planner.GetPlan(specs, modulePaths, update, prerelease, strictSemVer, destinationOnly, ct);
 ModuleFastInfo[] installPlan = planSet.ToArray();
 
 if (installPlan.Length == 0)

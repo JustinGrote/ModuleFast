@@ -18,6 +18,8 @@ $binaryModulePaths = @(
     }
     # Classic deployed layout in same folder
     (Join-Path $PSScriptRoot 'ModuleFast.dll')
+    # Published Output as a debug fallback
+    (Join-Path $PSScriptRoot 'Artifacts', 'Module', 'ModuleFast.dll')
 )
 
 $binaryModulePath = foreach ($path in $binaryModulePaths) {

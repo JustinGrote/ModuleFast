@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Management.Automation;
+using System.Management.Automation.Language;
 using System.Text.RegularExpressions;
 
 using NuGet.Versioning;
@@ -8,30 +10,67 @@ namespace ModuleFast;
 public static class ModuleManifestReader
 {
   /// <summary>
-  /// The psd1 parser implementation to use. Must be set by the host (PowerShell or Console)
-  /// before calling ImportModuleManifest.
+  /// Imports a module manifest (psd1), handling dynamic expression manifests as well.
   /// </summary>
-  public static IPsd1Parser? Parser { get; set; }
-
-  /// <summary>
-  /// Imports a module manifest (psd1) and returns its contents as a Hashtable.
-  /// </summary>
-  public static Hashtable ImportModuleManifest(string path, IModuleFastLogger? logger = null)
+  public static Hashtable ImportModuleManifest(string path, CmdletInteraction? cmdlet = null)
   {
     if (!File.Exists(path))
       throw new FileNotFoundException($"Manifest file was not found: {path}", path);
 
-    if (Parser == null)
-      throw new InvalidOperationException("ModuleManifestReader.Parser must be set before reading manifests. Set it to an IPsd1Parser implementation.");
+    cmdlet?.Debug($"Parsing manifest: {path}");
 
-    logger?.Debug($"Parsing manifest: {path}");
-    return Parser.ParseFile(path);
+    Token[] tokens;
+    ParseError[] errors;
+    var ast = Parser.ParseFile(path, out tokens, out errors);
+    if (errors.Length > 0)
+      throw new InvalidDataException($"The manifest at {path} could not be parsed as a PowerShell data file");
+
+    HashtableAst dataAst = ast.Find(a => a is HashtableAst, false) as HashtableAst
+        ?? throw new InvalidDataException($"The manifest at {path} does not contain a valid hashtable structure");
+
+    try
+    {
+      var rawResult = dataAst.SafeGetValue();
+      return ToHashtable(rawResult) ?? throw new InvalidOperationException("Unexpected null manifest");
+    }
+    catch (Exception ex) when (IsDynamicExpressionsError(ex))
+    {
+      cmdlet?.Debug($"{path} is a Manifest with dynamic expressions. Attempting to safe evaluate...");
+      var scriptBlock = ScriptBlock.Create(File.ReadAllText(path));
+      scriptBlock.CheckRestrictedLanguage([], ["PSEdition", "PSScriptRoot"], true);
+      var rawResult = scriptBlock.InvokeReturnAsIs();
+      return ToHashtable(rawResult) ?? throw new InvalidOperationException("Dynamic manifest evaluation returned null");
+    }
+  }
+
+  private static bool IsDynamicExpressionsError(Exception ex)
+  {
+    const string marker = "dynamic expressions";
+    for (var e = ex; e != null; e = e.InnerException)
+      if (e.Message.Contains(marker, StringComparison.OrdinalIgnoreCase))
+        return true;
+    return false;
+  }
+
+  private static Hashtable? ToHashtable(object? obj)
+  {
+    if (obj == null) return null;
+    if (obj is Hashtable ht) return ht;
+    if (obj is PSObject pso) return ToHashtable(pso.BaseObject);
+    if (obj is IDictionary dict)
+    {
+      var result = new Hashtable(StringComparer.OrdinalIgnoreCase);
+      foreach (DictionaryEntry kv in dict)
+        result[kv.Key] = kv.Value;
+      return result;
+    }
+    return null;
   }
 
   /// <summary>
   /// Converts a manifest file path to a ModuleFastInfo object.
   /// </summary>
-  public static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, IModuleFastLogger? logger = null)
+  public static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, CmdletInteraction? logger = null)
   {
     var manifestName = Path.GetFileNameWithoutExtension(manifestPath);
     Hashtable manifestData = ImportModuleManifest(manifestPath, logger);

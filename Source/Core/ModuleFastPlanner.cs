@@ -16,7 +16,7 @@ public class ModuleFastPlanner
     _source = source;
   }
 
-  public async Task<HashSet<ModuleFastInfo>> GetPlanAsync(
+  public async Task<HashSet<ModuleFastInfo>> GetPlan(
       IEnumerable<ModuleFastSpec> specs,
       string[] modulePaths,
       bool update,
@@ -24,7 +24,7 @@ public class ModuleFastPlanner
       bool strictSemVer,
       bool destinationOnly,
       CancellationToken ct,
-      ModuleFastMessageBuffer? messages = null)
+      CmdletInteraction? cmdlet = null)
   {
     HashSet<ModuleFastInfo> modulesToInstall = [];
     Dictionary<ModuleFastSpec, ModuleFastInfo> bestLocalCandidates = [];
@@ -32,15 +32,15 @@ public class ModuleFastPlanner
 
     foreach (ModuleFastSpec spec in specs)
     {
-      messages?.Verbose($"{spec}: Evaluating Module Specification");
-      ModuleFastInfo? localMatch = LocalModuleFinder.FindLocalModule(spec, modulePaths, update, bestLocalCandidates, strictSemVer, messages);
+      cmdlet?.Verbose($"{spec}: Evaluating Module Specification");
+      ModuleFastInfo? localMatch = LocalModuleFinder.FindLocalModule(spec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
       if (localMatch != null && !update)
       {
-        messages?.Debug($"{localMatch}: 🎯 FOUND satisfying version {localMatch.ModuleVersion} at {localMatch.Location}. Skipping remote search.");
+        cmdlet?.Debug($"{localMatch}: 🎯 FOUND satisfying version {localMatch.ModuleVersion} at {localMatch.Location}. Skipping remote search.");
         continue;
       }
 
-      messages?.Debug($"{spec}: 🔍 No installed versions matched. Will check remotely.");
+      cmdlet?.Debug($"{spec}: 🔍 No installed versions matched. Will check remotely.");
       Task<string> task = GetModuleInfoAsync(spec.Name, _source, ct);
       pendingTasks[task] = spec;
     }
@@ -57,9 +57,9 @@ public class ModuleFastPlanner
         pendingTasks.Remove(completed);
 
         if (currentSpec.Guid != Guid.Empty)
-          messages?.Warning($"{currentSpec}: A GUID constraint was found. GUIDs will only be verified after installation.");
+          cmdlet?.Warning($"{currentSpec}: A GUID constraint was found. GUIDs will only be verified after installation.");
 
-        messages?.Debug($"{currentSpec}: Processing Response");
+        cmdlet?.Debug($"{currentSpec}: Processing Response");
 
         string json;
         try
@@ -89,10 +89,10 @@ public class ModuleFastPlanner
         if (response.Count == 0 && response.Items.Length == 0)
           throw new InvalidDataException($"{currentSpec}: invalid result received from {_source}.");
 
-        CatalogEntry? selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, messages);
+        CatalogEntry? selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, cmdlet);
         if (selectedEntry == null)
         {
-          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, messages)
+          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, cmdlet)
               .ConfigureAwait(false);
         }
 
@@ -116,17 +116,17 @@ public class ModuleFastPlanner
         if (update && bestLocalCandidates.TryGetValue(currentSpec, out ModuleFastInfo? bestLocal) &&
             bestLocal.ModuleVersion == selectedModule.ModuleVersion)
         {
-          messages?.Debug($"{selectedModule}: -Update specified and best remote candidate matches what is locally installed. Skipping install.");
+          cmdlet?.Debug($"{selectedModule}: -Update specified and best remote candidate matches what is locally installed. Skipping install.");
           continue;
         }
 
         if (!modulesToInstall.Add(selectedModule))
         {
-          messages?.Debug($"{selectedModule} already exists in the install plan. Skipping...");
+          cmdlet?.Debug($"{selectedModule} already exists in the install plan. Skipping...");
           continue;
         }
 
-        messages?.Verbose($"{selectedModule}: Added to install plan");
+        cmdlet?.Verbose($"{selectedModule}: Added to install plan");
 
         IEnumerable<Dependency> allDeps = selectedEntry.DependencyGroups?
             .SelectMany(g => g.Dependencies ?? []) ?? [];
@@ -144,18 +144,18 @@ public class ModuleFastPlanner
               .FirstOrDefault();
           if (existing != null && depSpec.SatisfiedBy(existing.ModuleVersion, strictSemVer))
           {
-            messages?.Debug($"Dependency {depSpec} satisfied by existing planned install {existing}");
+            cmdlet?.Debug($"Dependency {depSpec} satisfied by existing planned install {existing}");
             continue;
           }
 
-          ModuleFastInfo? depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, messages);
+          ModuleFastInfo? depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
           if (depLocal != null)
           {
-            messages?.Debug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
+            cmdlet?.Debug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
             continue;
           }
 
-          messages?.Debug($"{currentSpec}: Fetching dependency {depSpec}");
+          cmdlet?.Debug($"{currentSpec}: Fetching dependency {depSpec}");
           Task<string> depTask = GetModuleInfoAsync(depSpec.Name, _source, ct);
           pendingTasks[depTask] = depSpec;
         }
@@ -170,7 +170,7 @@ public class ModuleFastPlanner
       ModuleFastSpec spec,
       bool prerelease,
       bool strictSemVer,
-      ModuleFastMessageBuffer? messages)
+      CmdletInteraction? messages)
   {
     RegistrationLeaf[] inlinedLeaves = response.Items
         .Where(p => p.Items != null)
@@ -216,7 +216,7 @@ public class ModuleFastPlanner
       bool prerelease,
       bool strictSemVer,
       CancellationToken ct,
-      ModuleFastMessageBuffer? messages)
+      CmdletInteraction? messages)
   {
     messages?.Debug($"{spec}: not found in inlined index. Determining appropriate page(s) to query.");
 

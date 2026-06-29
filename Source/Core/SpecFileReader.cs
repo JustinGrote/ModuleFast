@@ -63,13 +63,13 @@ public static class SpecFileReader
   public static ModuleFastSpec[] ConvertFromRequiredSpec(
       string requiredSpecPath,
       SpecFileType fileType = SpecFileType.AutoDetect,
-      IModuleFastLogger? logger = null)
+      CmdletInteraction? cmdlet = null)
   {
-    var spec = ReadRequiredSpecFile(requiredSpecPath, logger);
-    return ConvertFromObject(spec, fileType, logger);
+    var spec = ReadRequiredSpecFile(requiredSpecPath, cmdlet);
+    return ConvertFromObject(spec, fileType, cmdlet);
   }
 
-  private static ModuleFastSpec[] ConvertFromObject(object? requiredSpec, SpecFileType fileType, IModuleFastLogger? logger)
+  private static ModuleFastSpec[] ConvertFromObject(object? requiredSpec, SpecFileType fileType, CmdletInteraction? logger)
   {
     if (requiredSpec == null)
       throw new InvalidDataException("Could not evaluate the Required Specification to a known format.");
@@ -103,7 +103,7 @@ public static class SpecFileReader
     throw new InvalidDataException("Could not evaluate the Required Specification to a known format.");
   }
 
-  private static ModuleFastSpec[] ConvertFromModuleFastDict(IDictionary dict, IModuleFastLogger? logger)
+  private static ModuleFastSpec[] ConvertFromModuleFastDict(IDictionary dict, CmdletInteraction? logger)
   {
     List<ModuleFastSpec> results = [];
     foreach (DictionaryEntry kv in dict)
@@ -144,7 +144,7 @@ public static class SpecFileReader
     return results.ToArray();
   }
 
-  public static ModuleFastSpec[] ConvertFromPSDepend(IDictionary spec, IModuleFastLogger? logger)
+  public static ModuleFastSpec[] ConvertFromPSDepend(IDictionary spec, CmdletInteraction? logger)
   {
     Dictionary<string, string> initialSpec = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     Hashtable specCopy = new Hashtable(StringComparer.OrdinalIgnoreCase);
@@ -221,7 +221,7 @@ public static class SpecFileReader
         .ToArray();
   }
 
-  public static ModuleFastSpec[] ConvertFromPSResourceGet(IDictionary spec, IModuleFastLogger? logger)
+  public static ModuleFastSpec[] ConvertFromPSResourceGet(IDictionary spec, CmdletInteraction? logger)
   {
     Dictionary<string, string> initialSpec = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -273,12 +273,12 @@ public static class SpecFileReader
     return results.ToArray();
   }
 
-  internal static object ReadRequiredSpecFile(string requiredSpecPath, IModuleFastLogger? logger)
+  internal static object ReadRequiredSpecFile(string requiredSpecPath, CmdletInteraction? cmdlet)
   {
     if (Uri.TryCreate(requiredSpecPath, UriKind.Absolute, out Uri? uri) &&
         uri.Scheme is "http" or "https")
     {
-      using HttpClient client = new System.Net.Http.HttpClient();
+      using HttpClient client = new();
       var content = client.GetStringAsync(requiredSpecPath).GetAwaiter().GetResult();
       if (content.AsSpan().TrimStart().StartsWith("@{".AsSpan()))
       {
@@ -286,7 +286,7 @@ public static class SpecFileReader
         try
         {
           File.WriteAllText(tempFile, content);
-          return ModuleManifestReader.ImportModuleManifest(tempFile, logger);
+          return ModuleManifestReader.ImportModuleManifest(tempFile, cmdlet);
         }
         finally { File.Delete(tempFile); }
       }
@@ -298,11 +298,11 @@ public static class SpecFileReader
 
     if (extension == ".psd1")
     {
-      Hashtable manifestData = ModuleManifestReader.ImportModuleManifest(resolvedPath, logger);
+      Hashtable manifestData = ModuleManifestReader.ImportModuleManifest(resolvedPath, cmdlet);
       if (manifestData.ContainsKey("ModuleVersion"))
       {
         var reqModules = manifestData["RequiredModules"];
-        logger?.Debug("Detected a Module Manifest, evaluating RequiredModules");
+        cmdlet?.Debug("Detected a Module Manifest, evaluating RequiredModules");
         if (reqModules == null)
           throw new InvalidDataException("The manifest does not have a RequiredModules key so ModuleFast does not know what this module requires.");
 
@@ -314,14 +314,14 @@ public static class SpecFileReader
       }
       else
       {
-        logger?.Debug("Did not detect a module manifest, passing through as-is");
+        cmdlet?.Debug("Did not detect a module manifest, passing through as-is");
         return manifestData;
       }
     }
 
     if (extension is ".ps1" or ".psm1")
     {
-      logger?.Debug("PowerShell Script/Module file detected, checking for #Requires");
+      cmdlet?.Debug("PowerShell Script/Module file detected, checking for #Requires");
       ScriptBlockAst ast = System.Management.Automation.Language.Parser.ParseFile(resolvedPath, out _, out _);
       ModuleSpecification[]? requiredModules = ast.ScriptRequirements?.RequiredModules?.ToArray();
 

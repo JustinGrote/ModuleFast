@@ -4,6 +4,25 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Threading;
 
+using ModuleFast;
+
+public class TaskCmdletInteractor(TaskCmdlet cmdlet) : CmdletInteraction
+{
+  public string? HostName => cmdlet.Host.Name;
+
+  public Task<bool> Confirm(string target, string action) => cmdlet.Confirm(target, action);
+
+  public object? GetVariable(string name) => cmdlet.Exec(() => cmdlet.GetVariableValue(name));
+
+  public void Debug(string message) => cmdlet.Debug(message, false);
+
+  public void Verbose(string message) => cmdlet.Verbose(message);
+
+  public void Info(string message, string[]? tags = null) => cmdlet.Info(message, tags);
+
+  public void Warning(string message) => cmdlet.Warning(message);
+}
+
 public abstract class TaskCmdlet : TaskCmdlet<object> { }
 
 public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
@@ -61,7 +80,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// <summary>
   /// Queues an action to be executed on the main thread of the cmdlet. This is useful for evaluating script properties, etc. that need to be run on the main thread to avoid marshalling issues. Your function can return a result and it will be brought back to the calling thread, but it must be serializable across threads (i.e. no PSObjects, etc.)
   /// </summary>
-  protected async Task<T> Exec<T>(Func<T> action)
+  public async Task<T> Exec<T>(Func<T> action)
   {
     TaskCompletionSource<object?> response = new();
     AddOutput(new MainAction(() => action(), response));
@@ -297,7 +316,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// </summary>
   /// <param name="outputObject">The object to emit to the pipeline.</param>
   /// <param name="enumerateCollection">When <c>true</c>, enumerates <see cref="IEnumerable"/> objects and writes each element individually.</param>
-  protected void WriteObject(IEnumerable<TOutput> outputObject, bool enumerateCollection = false)
+  public void WriteObject(IEnumerable<TOutput> outputObject, bool enumerateCollection = false)
   {
     if (enumerateCollection && outputObject is not string)
     {
@@ -311,19 +330,19 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
 
     AddOutput(outputObject, true);
   }
-  protected void WriteObject(TOutput outputObject) => WriteObject([outputObject], false);
-  protected new void WriteObject(object outputObject, bool enumerateCollection = false) => throw new InvalidCastException("You attempted to write an object not compatible with the cmdlet's generic output type.");
+  public void WriteObject(TOutput outputObject) => WriteObject([outputObject], false);
+  public new void WriteObject(object outputObject, bool enumerateCollection = false) => throw new InvalidCastException("You attempted to write an object not compatible with the cmdlet's generic output type.");
 
-  protected void Output(TOutput output) => AddOutput(output);
-  protected void Output(IEnumerable<TOutput> output) => AddOutput(output, true);
-  protected new void Debug(string message, bool raw = false) => WriteDebug(raw ? message : $"{name}: {message}");
-  protected new void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{name}: {message}");
-  protected new void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{name}: {message}");
-  protected new void Info(string message, string[]? tags = null, bool raw = false)
+  public void Output(TOutput output) => AddOutput(output);
+  public void Output(IEnumerable<TOutput> output) => AddOutput(output, true);
+  public new void Debug(string message, bool raw = false) => WriteDebug(raw ? message : $"{name}: {message}");
+  public new void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{name}: {message}");
+  public new void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{name}: {message}");
+  public new void Info(string message, string[]? tags = null, bool raw = false)
     => WriteInformation(raw ? message : $"{name}: {message}", tags ?? []);
-  protected new void Host(string message, bool raw = false)
+  public void WriteHost(string message, bool raw = false)
     => WriteInformation(raw ? message : $"{name}: {message}", ["PSHOST"]);
-  protected new void Progress(
+  public new void Progress(
     string activity,
     string status = "",
     string currentOperation = "",
@@ -339,7 +358,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
     PercentComplete = percentComplete
   });
 
-  protected new void Error(
+  public new void Error(
       Exception exception,
       string? recommendedAction = null,
       string errorId = "PSCmdletError",
@@ -393,7 +412,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
     }
   }
 
-  protected new void Error(
+  public new void Error(
     string message,
     string? recommendedAction = null,
     string errorId = "PSCmdletError",
@@ -405,25 +424,25 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   );
 
   /// <summary>Writes a warning message to the pipeline via the async-safe output buffer.</summary>
-  protected new void WriteWarning(string message) => AddOutput(new WarningRecord(message));
+  public new void WriteWarning(string message) => AddOutput(new WarningRecord(message));
 
   /// <summary>Writes a verbose message to the pipeline via the async-safe output buffer.</summary>
-  protected new void WriteVerbose(string message) => AddOutput(new VerboseRecord(message));
+  public new void WriteVerbose(string message) => AddOutput(new VerboseRecord(message));
 
   /// <summary>Writes a debug message to the pipeline via the async-safe output buffer.</summary>
-  protected new void WriteDebug(string message) => AddOutput(new DebugRecord(message));
+  public new void WriteDebug(string message) => AddOutput(new DebugRecord(message));
 
   /// <summary>Writes a non-terminating error to the pipeline via the async-safe output buffer.</summary>
-  protected new void WriteError(ErrorRecord errorRecord) => AddOutput(errorRecord);
+  public new void WriteError(ErrorRecord errorRecord) => AddOutput(errorRecord);
 
   /// <summary>Writes a progress record to the pipeline via the async-safe output buffer.</summary>
-  protected new void WriteProgress(ProgressRecord progressRecord) => AddOutput(progressRecord);
+  public new void WriteProgress(ProgressRecord progressRecord) => AddOutput(progressRecord);
 
   /// <summary>Writes an information record to the pipeline via the async-safe output buffer.</summary>
-  protected new void WriteInformation(InformationRecord informationRecord) => AddOutput(informationRecord);
+  public new void WriteInformation(InformationRecord informationRecord) => AddOutput(informationRecord);
 
   /// <summary>Writes tagged information data to the pipeline via the async-safe output buffer.</summary>
-  protected new void WriteInformation(object messageData, string[] tags)
+  public new void WriteInformation(object messageData, string[] tags)
     => AddOutput(new TaggedInformationInfo(messageData, tags));
 
   /// <summary>
@@ -433,7 +452,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// <param name="target">The resource being acted upon (shown in -WhatIf output).</param>
   /// <param name="action">The action being performed. If empty, uses a default message.</param>
   /// <returns><c>true</c> if the operation should proceed; <c>false</c> if the user declined.</returns>
-  protected async Task<bool> ShouldProcessAsync(string target, string action = "")
+  public async Task<bool> Confirm(string target, string action = "")
   {
     TaskCompletionSource<bool> response = new();
     await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
@@ -449,7 +468,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// <param name="confirmHeader">Header displayed in the confirmation dialog.</param>
   /// <param name="confirmMessage">Body text displayed in the confirmation dialog.</param>
   /// <returns><c>true</c> if the operation should proceed; <c>false</c> if the user declined.</returns>
-  protected async Task<bool> ShouldProcessCustom(string whatIfMessage, string confirmHeader = "", string confirmMessage = "")
+  public async Task<bool> ConfirmCustom(string whatIfMessage, string confirmHeader = "", string confirmMessage = "")
   {
     TaskCompletionSource<bool> response = new();
     await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());

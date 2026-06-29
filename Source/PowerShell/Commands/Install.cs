@@ -1,6 +1,5 @@
 using System.Management.Automation;
 using System.Text.Json;
-using System.Threading;
 
 using static System.IO.Path;
 
@@ -76,9 +75,10 @@ public class InstallModuleFastCommand : TaskCmdlet
 
   private readonly HashSet<ModuleFastSpec> _modulesToInstall = [];
   private readonly List<ModuleFastInfo> _installPlan = [];
-  private readonly ModuleFastMessageBuffer _messages = new();
   private CancellationTokenSource? _timeoutSource;
   private HttpClient? _httpClient;
+
+  private CmdletInteraction cmdletInteractor => new TaskCmdletInteractor(this);
 
   protected override async Task Begin()
   {
@@ -86,7 +86,9 @@ public class InstallModuleFastCommand : TaskCmdlet
     if (!IsPathRooted(CILockFilePath))
     {
       CILockFilePath = GetFullPath(Combine(
-          SessionState.Path.CurrentFileSystemLocation.Path, CILockFilePath));
+        SessionState.Path.CurrentFileSystemLocation.Path,
+        CILockFilePath
+      ));
     }
 
     if (Update) ModuleFastCache.Instance.Clear();
@@ -130,7 +132,7 @@ public class InstallModuleFastCommand : TaskCmdlet
             );
           if (string.Equals(Destination, defaultWindowsPath, StringComparison.OrdinalIgnoreCase))
           {
-            WriteDebug($"Windows Documents module folder detected. Changing to {defaultRepoPath}");
+            Debug($"Windows Documents module folder detected. Changing to {defaultRepoPath}");
             Destination = defaultRepoPath;
           }
         }
@@ -151,13 +153,17 @@ public class InstallModuleFastCommand : TaskCmdlet
     if (!IsPathRooted(Destination))
     {
       Destination = GetFullPath(Combine(
-          SessionState.Path.CurrentFileSystemLocation.Path, Destination));
+        SessionState.Path.CurrentFileSystemLocation.Path,
+        Destination
+      ));
     }
 
     if (!Directory.Exists(Destination))
     {
-      if (string.Equals(Destination, defaultRepoPath, StringComparison.OrdinalIgnoreCase) ||
-          ((IHostInteraction)this).Confirm(Destination, "Create Destination Folder"))
+      if (
+        string.Equals(Destination, defaultRepoPath, StringComparison.OrdinalIgnoreCase)
+        && await Confirm(Destination, "Create default repository folder")
+      )
       {
         Directory.CreateDirectory(Destination!);
       }
@@ -169,7 +175,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           .Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries);
       if (!modulePaths.Contains(Destination, StringComparer.OrdinalIgnoreCase))
       {
-        PathHelper.AddDestinationToPSModulePath(Destination, NoProfileUpdate, this);
+        await PathHelper.AddDestinationToPSModulePath(Destination, NoProfileUpdate, (CmdletInteraction)this);
       }
     }
 
@@ -186,7 +192,7 @@ public class InstallModuleFastCommand : TaskCmdlet
         foreach (ModuleFastSpec spec in Specification ?? [])
         {
           if (!_modulesToInstall.Add(spec))
-            WriteWarning($"{spec} was specified twice, skipping duplicate.");
+            Warning($"{spec} was specified twice, skipping duplicate.");
         }
         break;
 
@@ -211,7 +217,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         foreach (var p in paths)
         {
-          ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, (IModuleFastLogger)this);
+          ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, (CmdletInteraction)this);
           foreach (ModuleFastSpec spec in specs)
             _modulesToInstall.Add(spec);
         }
@@ -240,8 +246,8 @@ public class InstallModuleFastCommand : TaskCmdlet
 
           if (CI && File.Exists(CILockFilePath))
           {
-            WriteDebug($"Found lockfile at {CILockFilePath}. Using for specification evaluation.");
-            ModuleFastSpec[] lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, (IModuleFastLogger)this);
+            Debug($"Found lockfile at {CILockFilePath}. Using for specification evaluation.");
+            ModuleFastSpec[] lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, (CmdletInteraction)this);
             foreach (ModuleFastSpec spec in lockSpecs)
               _modulesToInstall.Add(spec);
             if (Update)
@@ -262,7 +268,7 @@ public class InstallModuleFastCommand : TaskCmdlet
               foreach (var specFile in specFiles)
               {
                 Verbose($"Found Specfile {specFile}. Evaluating...");
-                ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, (IModuleFastLogger)this);
+                ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, (CmdletInteraction)this);
                 foreach (ModuleFastSpec spec in fileSpecs)
                   _modulesToInstall.Add(spec);
               }
@@ -285,10 +291,8 @@ public class InstallModuleFastCommand : TaskCmdlet
               ?.Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
         var planner = new ModuleFastPlanner(_httpClient!, Source);
-        Task<HashSet<ModuleFastInfo>> planTask = planner.GetPlanAsync(
-          _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, _messages);
-        HashSet<ModuleFastInfo> planSet = planTask.GetAwaiter().GetResult();
-        _messages.Flush(this);
+        HashSet<ModuleFastInfo> planSet = await planner.GetPlan(
+          _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, cmdlet: cmdletInteractor);
         finalInstallPlan = planSet.ToArray();
       }
 
@@ -299,7 +303,7 @@ public class InstallModuleFastCommand : TaskCmdlet
         return;
       }
 
-      if (Plan || !((IHostInteraction)this).Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules"))
+      if (Plan || !await Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules"))
       {
         if (Plan)
           Verbose($"📑 -Plan was specified. Returning a plan including {finalInstallPlan.Length} Module Specifications");
@@ -327,12 +331,11 @@ public class InstallModuleFastCommand : TaskCmdlet
           Destination!,
           Update || ParameterSetName == "ModuleFastInfo",
           ct,
-          _messages,
+          cmdletInteractor,
           ThrottleLimit,
           updateInstallProgress
         );
         IEnumerable<ModuleFastInfo> installedModules = installTask.GetAwaiter().GetResult();
-        _messages.Flush((IModuleFastLogger)this);
 
         Verbose("✅ All required modules installed! Exiting.");
 
