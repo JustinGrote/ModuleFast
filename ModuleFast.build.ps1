@@ -1,4 +1,4 @@
-#requires -version 7.2
+#requires -version 7.6
 [CmdletBinding(ConfirmImpact = 'High')]
 param(
   #Specify this to explicitly specify the version of the package
@@ -6,10 +6,14 @@ param(
   #You Generally do not need to modify these
   $Destination = (Join-Path $PSScriptRoot 'Artifacts'),
   $ModuleOutFolderPath = (Join-Path $Destination 'Module'),
-  $TempPath = (Resolve-Path temp:).ProviderPath + '\ModuleFastBuild'
+  $TempPath = (Resolve-Path temp:).ProviderPath + '\ModuleFastBuild',
+  # Build for release (don't include debug headers)
+  [switch]$Release
 )
 
 $ErrorActionPreference = 'Stop'
+
+$buildMode = $Release ? 'release' : 'debug'
 
 # Short for common Parameters, we are using a short name here to keep the commands short
 $c = @{
@@ -29,7 +33,7 @@ Task Clean {
 Task BuildCSharp {
   # Build the PowerShell module project (which depends on Core)
   $csprojPath = Join-Path $PSScriptRoot 'Source' 'PowerShell' 'PowerShell.csproj'
-  dotnet build $csprojPath --nologo -c Release
+  dotnet build $csprojPath --nologo -c $buildMode
 }
 
 Task CopyFiles {
@@ -42,7 +46,7 @@ Task CopyFiles {
   Copy-Item @c -Path 'ModuleFast.ps1' -Destination $Destination
 
   # Copy DLL and its dependencies from Artifacts Output to the module bin folder
-  $artifactsBinPath = Join-Path $Destination 'publish' 'PowerShell' 'release'
+  $artifactsBinPath = Join-Path $Destination 'publish' 'PowerShell' $buildMode
   Copy-Item @c -Path (Join-Path $artifactsBinPath '*') -Destination $ModuleOutFolderPath -Recurse
 }
 
@@ -57,11 +61,10 @@ Task Version {
 }
 
 Task Publish {
-  & dotnet publish (Join-Path $PSScriptRoot 'Source' 'PowerShell' 'PowerShell.csproj')
+  & dotnet publish (Join-Path $PSScriptRoot 'Source' 'PowerShell' 'PowerShell.csproj') -c $buildMode
 }
 
 Task Package.Nuget {
-  [string]$repoName = 'ModuleFastBuild-' + (New-Guid)
   Compress-PSResource @c -Path $ModuleOutFolderPath -DestinationPath $Destination
 }
 

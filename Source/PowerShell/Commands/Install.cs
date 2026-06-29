@@ -326,7 +326,7 @@ public class InstallModuleFastCommand : TaskCmdlet
         });
 
         var installer = new ModuleFastInstaller(_httpClient!);
-        Task<List<ModuleFastInfo>> installTask = installer.InstallModulesAsync(
+        List<ModuleFastInfo> installedModules = await installer.InstallModules(
           finalInstallPlan,
           Destination!,
           Update || ParameterSetName == "ModuleFastInfo",
@@ -335,7 +335,6 @@ public class InstallModuleFastCommand : TaskCmdlet
           ThrottleLimit,
           updateInstallProgress
         );
-        IEnumerable<ModuleFastInfo> installedModules = installTask.GetAwaiter().GetResult();
 
         Verbose("✅ All required modules installed! Exiting.");
 

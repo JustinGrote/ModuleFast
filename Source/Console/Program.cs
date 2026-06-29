@@ -174,7 +174,7 @@ if (plan)
 // Install
 Console.WriteLine($"Installing {installPlan.Length} module(s) to {destination}...");
 ModuleFastInstaller installer = new ModuleFastInstaller(httpClient);
-List<ModuleFastInfo> installed = await installer.InstallModulesAsync(installPlan, destination, update, ct, maxConcurrency: throttleLimit);
+List<ModuleFastInfo> installed = await installer.InstallModules(installPlan, destination, update, ct, maxConcurrency: throttleLimit);
 
 Console.WriteLine($"Installed {installed.Count} module(s).");
 
