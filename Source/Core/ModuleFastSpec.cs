@@ -1,3 +1,5 @@
+using System.Collections;
+
 using Microsoft.PowerShell.Commands;
 
 using NuGet.Versioning;
@@ -46,7 +48,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
       throw new ArgumentException("Name is required", nameof(name));
 
     // Try ModuleSpecification hashtable-like string first
-    if (ModuleSpecification.TryParse(name, out var moduleSpec))
+    if (ModuleSpecification.TryParse(name, out ModuleSpecification? moduleSpec))
     {
       (_name, _versionRange, _guid, _preReleaseName) = InitFromModuleSpec(moduleSpec!);
       return;
@@ -70,7 +72,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     {
       var parts = name.Split(">=", 2);
       moduleName = parts[0].Trim('!');
-      range = NuGetVersion.TryParse(parts[1], out var lower)
+      range = NuGetVersion.TryParse(parts[1], out NuGetVersion? lower)
           ? new VersionRange(lower, true)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
     }
@@ -78,7 +80,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     {
       var parts = name.Split("<=", 2);
       moduleName = parts[0].Trim('!');
-      range = NuGetVersion.TryParse(parts[1], out var upper)
+      range = NuGetVersion.TryParse(parts[1], out NuGetVersion? upper)
           ? new VersionRange(null, false, upper, true)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
     }
@@ -98,7 +100,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     {
       var parts = name.Split('>', 2);
       moduleName = parts[0].Trim('!');
-      range = NuGetVersion.TryParse(parts[1], out var lowerExcl)
+      range = NuGetVersion.TryParse(parts[1], out NuGetVersion? lowerExcl)
           ? new VersionRange(lowerExcl, false)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
     }
@@ -106,7 +108,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     {
       var parts = name.Split('<', 2);
       moduleName = parts[0].Trim('!');
-      range = NuGetVersion.TryParse(parts[1], out var upperExcl)
+      range = NuGetVersion.TryParse(parts[1], out NuGetVersion? upperExcl)
           ? new VersionRange(null, false, upperExcl, false)
           : throw new ArgumentException($"Invalid version '{parts[1]}'");
     }
@@ -131,7 +133,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     _name = name.Trim('!');
     _preReleaseName = name.StartsWith('!') || name.EndsWith('!');
     _versionRange = VersionRange.Parse($"[{requiredVersion}]");
-    _guid = System.Guid.TryParse(guid, out var g) ? g : System.Guid.Empty;
+    _guid = System.Guid.TryParse(guid, out Guid g) ? g : System.Guid.Empty;
   }
 
   public ModuleFastSpec(string name, VersionRange range)
@@ -161,7 +163,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     string? minStr = spec.RequiredVersion?.ToString() ?? spec.Version?.ToString();
     string? maxStr = spec.RequiredVersion?.ToString() ?? spec.MaximumVersion?.ToString();
 
-    var range = new VersionRange(
+    VersionRange range = new VersionRange(
         string.IsNullOrEmpty(minStr) ? null : NuGetVersion.Parse(minStr),
         true,
         string.IsNullOrEmpty(maxStr) ? null : NuGetVersion.Parse(maxStr),
@@ -170,7 +172,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
         $"ModuleSpecification: {spec}"
     );
 
-    var guid = spec.Guid ?? System.Guid.Empty;
+    Guid guid = spec.Guid ?? System.Guid.Empty;
     return (spec.Name, range, guid, false);
   }
 
@@ -189,7 +191,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
   /// </summary>
   public bool SatisfiedBy(NuGetVersion version, bool strictSemVer)
   {
-    var range = _versionRange;
+    VersionRange range = _versionRange;
     bool strictSatisfies = range.IsFloating
         ? range.Float!.Satisfies(version)
         : range.Satisfies(version);
@@ -200,8 +202,8 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     if (range.MaxVersion == null)
       return strictSatisfies;
 
-    var max = range.MaxVersion;
-    var min = range.MinVersion;
+    NuGetVersion max = range.MaxVersion;
+    NuGetVersion? min = range.MinVersion;
 
     if (version.IsPrerelease &&
         !range.IsMaxInclusive &&
@@ -229,7 +231,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
 
   public bool Overlap(VersionRange other)
   {
-    var subset = VersionRange.CommonSubSet(new List<VersionRange> { _versionRange, other });
+    VersionRange subset = VersionRange.CommonSubSet(new List<VersionRange> { _versionRange, other });
     return !subset.Equals(VersionRange.None);
   }
 
@@ -300,7 +302,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
 
   public static implicit operator ModuleSpecification(ModuleFastSpec spec)
   {
-    var props = new System.Collections.Hashtable
+    Hashtable props = new System.Collections.Hashtable
     {
       ["ModuleName"] = spec.Name
     };
