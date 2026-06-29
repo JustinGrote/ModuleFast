@@ -50,10 +50,14 @@ public class ModuleFastInstaller
       Action<ModuleFastInfo>? onModuleInstalled = null)
   {
     if (maxConcurrency <= 0)
-      maxConcurrency = Environment.ProcessorCount;
+      maxConcurrency = Environment.ProcessorCount * 2;
 
     ConcurrentBag<ModuleFastInfo> results = [];
-    ParallelOptions opts = new() { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = ct };
+    ParallelOptions opts = new()
+    {
+      MaxDegreeOfParallelism = maxConcurrency,
+      CancellationToken = ct
+    };
 
     await Parallel.ForEachAsync(modules, opts, async (m, ct) =>
     {
