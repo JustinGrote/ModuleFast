@@ -1,4 +1,4 @@
-using System.Management.Automation;
+using System.Collections;
 using System.Text.RegularExpressions;
 
 using NuGet.Versioning;
@@ -30,13 +30,11 @@ public static partial class LocalModuleFinder
       bool update,
       Dictionary<ModuleFastSpec, ModuleFastInfo>? bestCandidates,
       bool strictSemVer,
-      PSCmdlet? cmdlet = null,
-      ModuleFastMessageBuffer? messages = null)
+      IModuleFastLogger? logger = null)
   {
     if (modulePaths == null || modulePaths.Length == 0)
     {
-      messages?.Warning("No PSModulePaths found. If you are doing isolated testing you can disregard this.");
-      cmdlet?.WriteWarning("No PSModulePaths found. If you are doing isolated testing you can disregard this.");
+      logger?.Warning("No PSModulePaths found. If you are doing isolated testing you can disregard this.");
       return null;
     }
 
@@ -44,8 +42,7 @@ public static partial class LocalModuleFinder
     {
       if (!Directory.Exists(modulePath))
       {
-        messages?.Debug($"{spec}: Skipping PSModulePath {modulePath} - Configured but does not exist.");
-        cmdlet?.WriteDebug($"{spec}: Skipping PSModulePath {modulePath} - Configured but does not exist.");
+        logger?.Debug($"{spec}: Skipping PSModulePath {modulePath} - Configured but does not exist.");
         continue;
       }
 
@@ -57,19 +54,18 @@ public static partial class LocalModuleFinder
         throw new InvalidOperationException($"{spec.Name} folder is ambiguous, please delete one: {string.Join(", ", moduleDirs)}");
       if (moduleDirs.Length == 0)
       {
-        messages?.Debug($"{spec}: Skipping PSModulePath {modulePath} - Does not have this module.");
-        cmdlet?.WriteDebug($"{spec}: Skipping PSModulePath {modulePath} - Does not have this module.");
+        logger?.Debug($"{spec}: Skipping PSModulePath {modulePath} - Does not have this module.");
         continue;
       }
 
       var moduleBaseDir = moduleDirs[0];
-      var candidatePaths = new List<(Version version, string path)>();
+      List<(Version version, string path)> candidatePaths = [];
       var manifestName = $"{spec.Name}.psd1";
 
-      var required = spec.Required;
+      NuGetVersion? required = spec.Required;
       if (required != null)
       {
-        var moduleVersion = ResolveFolderVersion(required);
+        Version moduleVersion = ResolveFolderVersion(required);
         var moduleFolder = Path.Combine(moduleBaseDir, moduleVersion.ToString());
         if (Directory.Exists(moduleFolder))
           candidatePaths.Add((moduleVersion, moduleFolder));
@@ -80,30 +76,27 @@ public static partial class LocalModuleFinder
         foreach (var folder in Directory.EnumerateDirectories(moduleBaseDir))
         {
           var leafName = Path.GetFileName(folder);
-          if (!Version.TryParse(leafName, out var version))
+          if (!Version.TryParse(leafName, out Version? version))
           {
-            messages?.Debug($"Could not parse {folder} in {moduleBaseDir} as a valid version.");
-            cmdlet?.WriteDebug($"Could not parse {folder} in {moduleBaseDir} as a valid version.");
+            logger?.Debug($"Could not parse {folder} in {moduleBaseDir} as a valid version.");
             continue;
           }
 
           if (spec.Max != null && version > spec.Max.Version)
           {
-            messages?.Debug($"{spec}: Skipping {folder} - above the upper bound");
-            cmdlet?.WriteDebug($"{spec}: Skipping {folder} - above the upper bound");
+            logger?.Debug($"{spec}: Skipping {folder} - above the upper bound");
             continue;
           }
 
           if (spec.Min != null)
           {
             var originalParts = (spec.Min.OriginalVersion ?? "").Split('-')[0];
-            var minVersion = Version.TryParse(originalParts, out var parsedBase) && parsedBase.Revision == -1
+            Version minVersion = Version.TryParse(originalParts, out Version? parsedBase) && parsedBase.Revision == -1
                 ? parsedBase
                 : spec.Min.Version;
             if (version < minVersion)
             {
-              messages?.Debug($"{spec}: Skipping {folder} - {version} is below the lower bound of {minVersion}");
-              cmdlet?.WriteDebug($"{spec}: Skipping {folder} - {version} is below the lower bound of {minVersion}");
+              logger?.Debug($"{spec}: Skipping {folder} - {version} is below the lower bound of {minVersion}");
               continue;
             }
           }
@@ -125,13 +118,10 @@ public static partial class LocalModuleFinder
         if (classicManifests.Length == 1)
         {
           var classicManifestPath = classicManifests[0];
-          var classicData = messages != null
-              ? ModuleManifestReader.ImportModuleManifest(classicManifestPath, messages)
-              : ModuleManifestReader.ImportModuleManifest(classicManifestPath, cmdlet);
-          if (Version.TryParse(classicData["ModuleVersion"]?.ToString() ?? "", out var classicVersion))
+          Hashtable classicData = ModuleManifestReader.ImportModuleManifest(classicManifestPath, logger);
+          if (Version.TryParse(classicData["ModuleVersion"]?.ToString() ?? "", out Version? classicVersion))
           {
-            messages?.Debug($"{spec}: Found classic module {classicVersion} at {moduleBaseDir}");
-            cmdlet?.WriteDebug($"{spec}: Found classic module {classicVersion} at {moduleBaseDir}");
+            logger?.Debug($"{spec}: Found classic module {classicVersion} at {moduleBaseDir}");
             candidatePaths.Add((classicVersion, moduleBaseDir));
           }
         }
@@ -139,25 +129,22 @@ public static partial class LocalModuleFinder
 
       if (candidatePaths.Count == 0)
       {
-        messages?.Debug($"{spec}: Skipping PSModulePath {modulePath} - No installed versions matched the spec.");
-        cmdlet?.WriteDebug($"{spec}: Skipping PSModulePath {modulePath} - No installed versions matched the spec.");
+        logger?.Debug($"{spec}: Skipping PSModulePath {modulePath} - No installed versions matched the spec.");
         continue;
       }
 
-      foreach (var (version, folder) in candidatePaths)
+      foreach ((Version? version, string? folder) in candidatePaths)
       {
         if (File.Exists(Path.Combine(folder, ".incomplete")))
         {
-          messages?.Warning($"{spec}: Incomplete installation detected at {folder}. Deleting and ignoring.");
-          cmdlet?.WriteWarning($"{spec}: Incomplete installation detected at {folder}. Deleting and ignoring.");
+          logger?.Warning($"{spec}: Incomplete installation detected at {folder}. Deleting and ignoring.");
           try
           {
             Directory.Delete(folder, true);
           }
           catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
           {
-            messages?.Warning($"{spec}: Failed to delete incomplete installation at {folder}: {ex.Message}");
-            cmdlet?.WriteWarning($"{spec}: Failed to delete incomplete installation at {folder}: {ex.Message}");
+            logger?.Warning($"{spec}: Failed to delete incomplete installation at {folder}: {ex.Message}");
           }
           continue;
         }
@@ -169,46 +156,39 @@ public static partial class LocalModuleFinder
           throw new InvalidOperationException($"{folder} manifest is ambiguous: {string.Join(", ", manifests)}");
         if (manifests.Length == 0)
         {
-          messages?.Warning($"{spec}: Found candidate folder {folder} but no {manifestName} manifest found. This may be a corrupt module.");
-          cmdlet?.WriteWarning($"{spec}: Found candidate folder {folder} but no {manifestName} manifest found. This may be a corrupt module.");
+          logger?.Warning($"{spec}: Found candidate folder {folder} but no {manifestName} manifest found. This may be a corrupt module.");
           continue;
         }
 
         ModuleFastInfo manifestCandidate;
         try
         {
-          manifestCandidate = messages != null
-              ? ModuleManifestReader.ConvertFromModuleManifest(manifests[0], messages)
-              : ModuleManifestReader.ConvertFromModuleManifest(manifests[0], cmdlet);
+          manifestCandidate = ModuleManifestReader.ConvertFromModuleManifest(manifests[0], logger);
         }
         catch (Exception ex)
         {
-          messages?.Warning($"{spec}: Failed to read manifest at {manifests[0]}: {ex.Message}");
-          cmdlet?.WriteWarning($"{spec}: Failed to read manifest at {manifests[0]}: {ex.Message}");
+          logger?.Warning($"{spec}: Failed to read manifest at {manifests[0]}: {ex.Message}");
           continue;
         }
 
         if (spec.Guid != Guid.Empty && manifestCandidate.Guid != spec.Guid)
         {
-          messages?.Warning($"{spec}: Module at {folder} GUID {manifestCandidate.Guid} does not match spec GUID {spec.Guid}.");
-          cmdlet?.WriteWarning($"{spec}: Module at {folder} GUID {manifestCandidate.Guid} does not match spec GUID {spec.Guid}.");
+          logger?.Warning($"{spec}: Module at {folder} GUID {manifestCandidate.Guid} does not match spec GUID {spec.Guid}.");
           continue;
         }
 
-        var candidateVersion = manifestCandidate.ModuleVersion;
+        NuGetVersion candidateVersion = manifestCandidate.ModuleVersion;
 
         if (spec.SatisfiedBy(candidateVersion, strictSemVer))
         {
           if (update && spec.Max != candidateVersion)
           {
-            messages?.Debug($"{spec}: Skipping {candidateVersion} because -Update was specified and version does not exactly meet upper bound.");
-            cmdlet?.WriteDebug($"{spec}: Skipping {candidateVersion} because -Update was specified and version does not exactly meet upper bound.");
+            logger?.Debug($"{spec}: Skipping {candidateVersion} because -Update was specified and version does not exactly meet upper bound.");
             if (bestCandidates != null &&
-                (!bestCandidates.TryGetValue(spec, out var existing) ||
+                (!bestCandidates.TryGetValue(spec, out ModuleFastInfo? existing) ||
                  manifestCandidate.ModuleVersion > existing.ModuleVersion))
             {
-              messages?.Debug($"{spec}: ⬆️ New Best Candidate Version {manifestCandidate.ModuleVersion}");
-              cmdlet?.WriteDebug($"{spec}: ⬆️ New Best Candidate Version {manifestCandidate.ModuleVersion}");
+              logger?.Debug($"{spec}: ⬆️ New Best Candidate Version {manifestCandidate.ModuleVersion}");
               bestCandidates[spec] = manifestCandidate;
             }
             continue;

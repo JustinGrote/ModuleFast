@@ -124,7 +124,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
     _workQueue.CompleteAdding();
 
     // Drain any final items (e.g. if worker adds output after the sentinel race)
-    foreach (var item in _output.GetConsumingEnumerable(PipelineStopToken))
+    foreach (OutputItem item in _output.GetConsumingEnumerable(PipelineStopToken))
     {
       ProcessOutput(item);
     }
@@ -145,7 +145,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
     _workQueue.Add(work, PipelineStopToken);
 
     // Drain output items until the worker signals this step is done
-    foreach (var item in _output.GetConsumingEnumerable(PipelineStopToken))
+    foreach (OutputItem item in _output.GetConsumingEnumerable(PipelineStopToken))
     {
       if (item.Item is StepComplete) return;
       ProcessOutput(item);
@@ -161,7 +161,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   {
     try
     {
-      foreach (var work in _workQueue.GetConsumingEnumerable(PipelineStopToken))
+      foreach (Func<Task> work in _workQueue.GetConsumingEnumerable(PipelineStopToken))
       {
         try
         {
@@ -206,7 +206,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
 
     try
     {
-      foreach (var item in cleanOutput.GetConsumingEnumerable())
+      foreach (OutputItem item in cleanOutput.GetConsumingEnumerable())
         ProcessOutput(item);
     }
     catch { /* pipeline may already be stopped */ }
@@ -217,7 +217,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
 
   private void ProcessOutput(OutputItem inputObject)
   {
-    var (item, raw) = inputObject;
+    (object? item, bool raw) = inputObject;
 
     if (raw)
     {
@@ -301,7 +301,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   {
     if (enumerateCollection && outputObject is not string)
     {
-      foreach (var item in outputObject)
+      foreach (TOutput? item in outputObject)
       {
         if (item is null) continue;
         AddOutput(item, true);
@@ -436,7 +436,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   protected async Task<bool> ShouldProcessAsync(string target, string action = "")
   {
     TaskCompletionSource<bool> response = new();
-    await using var _ = PipelineStopToken.Register(() => response.TrySetCanceled());
+    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
     AddOutput(new ShouldProcessPrompt(target, action, response));
     return await response.Task;
   }
@@ -452,7 +452,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   protected async Task<bool> ShouldProcessCustom(string whatIfMessage, string confirmHeader = "", string confirmMessage = "")
   {
     TaskCompletionSource<bool> response = new();
-    await using var _ = PipelineStopToken.Register(() => response.TrySetCanceled());
+    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
     AddOutput(new ShouldProcessCustomPrompt(whatIfMessage, confirmHeader, confirmMessage, response));
     return await response.Task;
   }
@@ -498,7 +498,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
 /// for writing output, errors, verbose/debug/warning messages, and progress.
 /// Used as the base for both synchronous cmdlets and <see cref="TaskCmdlet"/>.
 /// </summary>
-public class BetterPSCmdlet : PSCmdlet
+public class BetterPSCmdlet : PSCmdlet, ModuleFast.IModuleFastLogger, ModuleFast.IHostInteraction
 {
   /// <summary>The cmdlet's invocation name, used as a prefix in diagnostic messages.</summary>
   protected string name => MyInvocation.MyCommand.Name;
@@ -506,6 +506,17 @@ public class BetterPSCmdlet : PSCmdlet
   internal void Debug(string message, bool raw = false) => WriteDebug(raw ? message : $"{name}: {message}");
   internal void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{name}: {message}");
   internal void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{name}: {message}");
+
+  // IModuleFastLogger explicit implementation (no prefix, messages come pre-formatted from Core)
+  void ModuleFast.IModuleFastLogger.Verbose(string message) => WriteVerbose(message);
+  void ModuleFast.IModuleFastLogger.Debug(string message) => WriteDebug(message);
+  void ModuleFast.IModuleFastLogger.Warning(string message) => WriteWarning(message);
+
+  // IHostInteraction implementation
+  ModuleFast.IModuleFastLogger ModuleFast.IHostInteraction.Logger => this;
+  bool ModuleFast.IHostInteraction.Confirm(string target, string action) => ShouldProcess(target, action);
+  object? ModuleFast.IHostInteraction.GetVariable(string name) => GetVariableValue(name);
+  string? ModuleFast.IHostInteraction.HostName => Host?.Name;
   internal void Info(string message, string[]? tags = null, bool raw = false)
     => WriteInformation(raw ? message : $"{name}: {message}", tags ?? []);
   internal void Console(string message, bool raw = false)

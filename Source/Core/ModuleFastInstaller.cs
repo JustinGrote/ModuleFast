@@ -94,7 +94,7 @@ public class ModuleFastInstaller
 
       Hashtable existingManifestData = messages != null
         ? ModuleManifestReader.ImportModuleManifest(existingManifestPath, messages)
-        : ModuleManifestReader.ImportModuleManifest(existingManifestPath, cmdlet: null);
+        : ModuleManifestReader.ImportModuleManifest(existingManifestPath, logger: null);
       var existingVersionStr = existingManifestData["ModuleVersion"]?.ToString() ?? "0.0.0";
       var prerelease = (existingManifestData["PrivateData"] as System.Collections.Hashtable)?["PSData"] is System.Collections.Hashtable psData
           ? psData["Prerelease"]?.ToString() : null;
@@ -233,7 +233,7 @@ public class ModuleFastInstaller
               Path.Combine(installPath, $"{module.Name}.psd1"));
       Hashtable manifestData = messages != null
           ? ModuleManifestReader.ImportModuleManifest(guidManifestPath, messages)
-          : ModuleManifestReader.ImportModuleManifest(guidManifestPath, cmdlet: null);
+          : ModuleManifestReader.ImportModuleManifest(guidManifestPath, logger: null);
       if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out Guid manifestGuid) ||
           manifestGuid != module.Guid)
       {

@@ -28,7 +28,7 @@ public class ImportModuleManifestCommand : PSCmdlet
 
     try
     {
-      var result = ModuleManifestReader.ImportModuleManifest(Path, this);
+      Hashtable result = ModuleManifestReader.ImportModuleManifest(Path, (IModuleFastLogger)this);
       WriteObject(result);
     }
     catch (Exception ex)

@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Management.Automation;
 
 namespace ModuleFast;
 
@@ -10,7 +9,11 @@ public enum ModuleFastMessageKind
   Warning
 }
 
-public sealed class ModuleFastMessageBuffer
+/// <summary>
+/// A thread-safe buffered logger that implements <see cref="IModuleFastLogger"/>.
+/// Messages are queued and can be flushed to another logger later (useful for background tasks).
+/// </summary>
+public sealed class ModuleFastMessageBuffer : IModuleFastLogger
 {
   private readonly ConcurrentQueue<(ModuleFastMessageKind Kind, string Message)> _messages = new();
 
@@ -20,20 +23,23 @@ public sealed class ModuleFastMessageBuffer
 
   public void Warning(string message) => _messages.Enqueue((ModuleFastMessageKind.Warning, message));
 
-  public void Flush(PSCmdlet cmdlet)
+  /// <summary>
+  /// Flushes all buffered messages to the specified logger.
+  /// </summary>
+  public void Flush(IModuleFastLogger logger)
   {
-    while (_messages.TryDequeue(out var message))
+    while (_messages.TryDequeue(out (ModuleFastMessageKind Kind, string Message) message))
     {
       switch (message.Kind)
       {
         case ModuleFastMessageKind.Verbose:
-          cmdlet.WriteVerbose(message.Message);
+          logger.Verbose(message.Message);
           break;
         case ModuleFastMessageKind.Debug:
-          cmdlet.WriteDebug(message.Message);
+          logger.Debug(message.Message);
           break;
         case ModuleFastMessageKind.Warning:
-          cmdlet.WriteWarning(message.Message);
+          logger.Warning(message.Message);
           break;
       }
     }

@@ -37,12 +37,12 @@ public class GetModuleFastPlanCommand : PSCmdlet
   [Parameter]
   public SwitchParameter StrictSemVer { get; set; }
 
-  private readonly HashSet<ModuleFastSpec> _specs = new();
+  private readonly HashSet<ModuleFastSpec> _specs = [];
   private readonly ModuleFastMessageBuffer _messages = new();
 
   protected override void ProcessRecord()
   {
-    foreach (var spec in Specification ?? [])
+    foreach (ModuleFastSpec spec in Specification ?? [])
       _specs.Add(spec);
   }
 
@@ -51,13 +51,13 @@ public class GetModuleFastPlanCommand : PSCmdlet
     if (Update) ModuleFastCache.Instance.Clear();
 
     // Normalize source
-    if (Uri.TryCreate(Source, UriKind.Absolute, out var srcUri) &&
+    if (Uri.TryCreate(Source, UriKind.Absolute, out Uri? srcUri) &&
         srcUri.Scheme is not "http" and not "https")
     {
       Source = $"https://{Source}/index.json";
     }
 
-    var httpClient = ModuleFastClient.Create(Credential, Timeout);
+    HttpClient httpClient = ModuleFastClient.Create(Credential?.GetNetworkCredential(), Timeout);
     var planner = new ModuleFastPlanner(httpClient, Source);
 
     string[] modulePaths;
@@ -79,7 +79,7 @@ public class GetModuleFastPlanCommand : PSCmdlet
 
     try
     {
-      var task = planner.GetPlanAsync(
+      Task<HashSet<ModuleFastInfo>> task = planner.GetPlanAsync(
           _specs,
           modulePaths,
           Update,
@@ -89,9 +89,9 @@ public class GetModuleFastPlanCommand : PSCmdlet
           CancellationToken.None,
           _messages);
 
-      var plan = task.GetAwaiter().GetResult();
-      _messages.Flush(this);
-      foreach (var info in plan)
+      HashSet<ModuleFastInfo> plan = task.GetAwaiter().GetResult();
+      _messages.Flush((IModuleFastLogger)this);
+      foreach (ModuleFastInfo info in plan)
         WriteObject(info);
     }
     catch (Exception ex) when (ex is not PipelineStoppedException)

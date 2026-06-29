@@ -1,6 +1,5 @@
 using System.Collections;
-using System.Management.Automation;
-using System.Management.Automation.Language;
+using System.Text.RegularExpressions;
 
 using NuGet.Versioning;
 
@@ -9,93 +8,45 @@ namespace ModuleFast;
 public static class ModuleManifestReader
 {
   /// <summary>
-  /// Imports a module manifest (psd1), handling dynamic expression manifests as well.
+  /// The psd1 parser implementation to use. Must be set by the host (PowerShell or Console)
+  /// before calling ImportModuleManifest.
   /// </summary>
-  public static Hashtable ImportModuleManifest(string path, PSCmdlet? cmdlet = null)
-    => ImportModuleManifest(path, cmdlet, null);
+  public static IPsd1Parser? Parser { get; set; }
 
-  public static Hashtable ImportModuleManifest(string path, ModuleFastMessageBuffer? messages)
-    => ImportModuleManifest(path, null, messages);
-
-  private static Hashtable ImportModuleManifest(string path, PSCmdlet? cmdlet, ModuleFastMessageBuffer? messages)
+  /// <summary>
+  /// Imports a module manifest (psd1) and returns its contents as a Hashtable.
+  /// </summary>
+  public static Hashtable ImportModuleManifest(string path, IModuleFastLogger? logger = null)
   {
     if (!File.Exists(path))
       throw new FileNotFoundException($"Manifest file was not found: {path}", path);
 
-    Token[] tokens;
-    ParseError[] errors;
-    var ast = Parser.ParseFile(path, out tokens, out errors);
-    if (errors.Length > 0)
-      throw new InvalidDataException($"The manifest at {path} could not be parsed as a PowerShell data file");
+    if (Parser == null)
+      throw new InvalidOperationException("ModuleManifestReader.Parser must be set before reading manifests. Set it to an IPsd1Parser implementation.");
 
-    HashtableAst dataAst = ast.Find(a => a is HashtableAst, false) as HashtableAst
-        ?? throw new InvalidDataException($"The manifest at {path} does not contain a valid hashtable structure");
-
-    try
-    {
-      var rawResult = dataAst.SafeGetValue();
-      return ToHashtable(rawResult) ?? throw new InvalidOperationException("Unexpected null manifest");
-    }
-    catch (Exception ex) when (IsDynamicExpressionsError(ex))
-    {
-      messages?.Debug($"{path} is a Manifest with dynamic expressions. Attempting to safe evaluate...");
-      cmdlet?.WriteDebug($"{path} is a Manifest with dynamic expressions. Attempting to safe evaluate...");
-      var scriptBlock = ScriptBlock.Create(File.ReadAllText(path));
-      scriptBlock.CheckRestrictedLanguage([], ["PSEdition", "PSScriptRoot"], true);
-      var rawResult = scriptBlock.InvokeReturnAsIs();
-      return ToHashtable(rawResult) ?? throw new InvalidOperationException("Dynamic manifest evaluation returned null");
-    }
-  }
-
-  private static bool IsDynamicExpressionsError(Exception ex)
-  {
-    const string marker = "dynamic expressions";
-    for (var e = ex; e != null; e = e.InnerException)
-      if (e.Message.Contains(marker, StringComparison.OrdinalIgnoreCase))
-        return true;
-    return false;
-  }
-
-  private static Hashtable? ToHashtable(object? obj)
-  {
-    if (obj == null) return null;
-    if (obj is Hashtable ht) return ht;
-    if (obj is PSObject pso) return ToHashtable(pso.BaseObject);
-    if (obj is IDictionary dict)
-    {
-      var result = new Hashtable(StringComparer.OrdinalIgnoreCase);
-      foreach (DictionaryEntry kv in dict)
-        result[kv.Key] = kv.Value;
-      return result;
-    }
-    return null;
+    logger?.Debug($"Parsing manifest: {path}");
+    return Parser.ParseFile(path);
   }
 
   /// <summary>
   /// Converts a manifest file path to a ModuleFastInfo object.
   /// </summary>
-  public static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, PSCmdlet? cmdlet = null)
-    => ConvertFromModuleManifest(manifestPath, cmdlet, null);
-
-  public static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, ModuleFastMessageBuffer? messages)
-    => ConvertFromModuleManifest(manifestPath, null, messages);
-
-  private static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, PSCmdlet? cmdlet, ModuleFastMessageBuffer? messages)
+  public static ModuleFastInfo ConvertFromModuleManifest(string manifestPath, IModuleFastLogger? logger = null)
   {
     var manifestName = Path.GetFileNameWithoutExtension(manifestPath);
-    var manifestData = messages != null ? ImportModuleManifest(manifestPath, messages) : ImportModuleManifest(manifestPath, cmdlet);
+    Hashtable manifestData = ImportModuleManifest(manifestPath, logger);
 
-    if (!Version.TryParse(manifestData["ModuleVersion"]?.ToString() ?? "", out var manifestVersionData))
+    if (!Version.TryParse(manifestData["ModuleVersion"]?.ToString() ?? "", out Version? manifestVersionData))
       throw new InvalidDataException($"The manifest at {manifestPath} has an invalid ModuleVersion. This is probably an invalid or corrupt manifest");
 
     var prerelease = (manifestData["PrivateData"] as Hashtable)?["PSData"] is Hashtable psData
         ? psData["Prerelease"]?.ToString()
         : null;
 
-    var manifestVersion = new NuGetVersion(manifestVersionData, prerelease);
-    var info = new ModuleFastInfo(manifestName, manifestVersion, new Uri(manifestPath));
+    NuGetVersion manifestVersion = new NuGetVersion(manifestVersionData, prerelease);
+    ModuleFastInfo info = new ModuleFastInfo(manifestName, manifestVersion, new Uri(manifestPath));
 
-    if (manifestData["GUID"] is string guidStr && Guid.TryParse(guidStr, out var guid))
+    if (manifestData["GUID"] is string guidStr && Guid.TryParse(guidStr, out Guid guid))
       info.Guid = guid;
 
     return info;
@@ -108,20 +59,20 @@ public static class ModuleManifestReader
   public static Version? TryReadModuleVersionFast(string manifestPath)
   {
     if (!File.Exists(manifestPath)) return null;
-    var streamOptions = new FileStreamOptions
+    FileStreamOptions streamOptions = new FileStreamOptions
     {
       Mode = FileMode.Open,
       Access = FileAccess.Read,
       Share = FileShare.Read,
       Options = FileOptions.SequentialScan,
     };
-    using var reader = new StreamReader(manifestPath, streamOptions);
+    using StreamReader reader = new StreamReader(manifestPath, streamOptions);
     string? line;
     while ((line = reader.ReadLine()) != null)
     {
-      var m = System.Text.RegularExpressions.Regex.Match(line,
+      Match m = System.Text.RegularExpressions.Regex.Match(line,
           @"\s*ModuleVersion\s*=\s*['""](?<version>.+?)['""]");
-      if (m.Success && Version.TryParse(m.Groups["version"].Value, out var v))
+      if (m.Success && Version.TryParse(m.Groups["version"].Value, out Version? v))
         return v;
     }
     return null;

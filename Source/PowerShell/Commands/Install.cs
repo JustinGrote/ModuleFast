@@ -157,7 +157,7 @@ public class InstallModuleFastCommand : TaskCmdlet
     if (!Directory.Exists(Destination))
     {
       if (string.Equals(Destination, defaultRepoPath, StringComparison.OrdinalIgnoreCase) ||
-          PathHelper.ApproveAction(Destination, "Create Destination Folder", this))
+          ((IHostInteraction)this).Confirm(Destination, "Create Destination Folder"))
       {
         Directory.CreateDirectory(Destination!);
       }
@@ -173,7 +173,7 @@ public class InstallModuleFastCommand : TaskCmdlet
       }
     }
 
-    _httpClient = ModuleFastClient.Create(Credential, Timeout);
+    _httpClient = ModuleFastClient.Create(Credential?.GetNetworkCredential(), Timeout);
     _timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(PipelineStopToken);
     _timeoutSource.CancelAfter(TimeSpan.FromSeconds(Timeout * 10)); // overall timeout
   }
@@ -211,7 +211,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         foreach (var p in paths)
         {
-          ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, this);
+          ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, (IModuleFastLogger)this);
           foreach (ModuleFastSpec spec in specs)
             _modulesToInstall.Add(spec);
         }
@@ -241,7 +241,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           if (CI && File.Exists(CILockFilePath))
           {
             WriteDebug($"Found lockfile at {CILockFilePath}. Using for specification evaluation.");
-            ModuleFastSpec[] lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, this);
+            ModuleFastSpec[] lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, (IModuleFastLogger)this);
             foreach (ModuleFastSpec spec in lockSpecs)
               _modulesToInstall.Add(spec);
             if (Update)
@@ -262,7 +262,7 @@ public class InstallModuleFastCommand : TaskCmdlet
               foreach (var specFile in specFiles)
               {
                 WriteVerbose($"Found Specfile {specFile}. Evaluating...");
-                ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, this);
+                ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, (IModuleFastLogger)this);
                 foreach (ModuleFastSpec spec in fileSpecs)
                   _modulesToInstall.Add(spec);
               }
@@ -299,7 +299,7 @@ public class InstallModuleFastCommand : TaskCmdlet
         return;
       }
 
-      if (Plan || !PathHelper.ApproveAction(Destination!, $"Install {finalInstallPlan.Length} Modules", this))
+      if (Plan || !((IHostInteraction)this).Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules"))
       {
         if (Plan)
           WriteVerbose($"📑 -Plan was specified. Returning a plan including {finalInstallPlan.Length} Module Specifications");
@@ -332,7 +332,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           updateInstallProgress
         );
         IEnumerable<ModuleFastInfo> installedModules = installTask.GetAwaiter().GetResult();
-        _messages.Flush(this);
+        _messages.Flush((IModuleFastLogger)this);
 
         WriteVerbose("✅ All required modules installed! Exiting.");
 

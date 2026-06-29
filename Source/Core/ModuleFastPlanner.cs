@@ -26,14 +26,14 @@ public class ModuleFastPlanner
       CancellationToken ct,
       ModuleFastMessageBuffer? messages = null)
   {
-    var modulesToInstall = new HashSet<ModuleFastInfo>();
-    var bestLocalCandidates = new Dictionary<ModuleFastSpec, ModuleFastInfo>();
-    var pendingTasks = new Dictionary<Task<string>, ModuleFastSpec>();
+    HashSet<ModuleFastInfo> modulesToInstall = [];
+    Dictionary<ModuleFastSpec, ModuleFastInfo> bestLocalCandidates = [];
+    Dictionary<Task<string>, ModuleFastSpec> pendingTasks = [];
 
-    foreach (var spec in specs)
+    foreach (ModuleFastSpec spec in specs)
     {
       messages?.Verbose($"{spec}: Evaluating Module Specification");
-      var localMatch = LocalModuleFinder.FindLocalModule(spec, modulePaths, update, bestLocalCandidates, strictSemVer, null, messages);
+      ModuleFastInfo? localMatch = LocalModuleFinder.FindLocalModule(spec, modulePaths, update, bestLocalCandidates, strictSemVer, messages);
       if (localMatch != null && !update)
       {
         messages?.Debug($"{localMatch}: 🎯 FOUND satisfying version {localMatch.ModuleVersion} at {localMatch.Location}. Skipping remote search.");
@@ -41,17 +41,17 @@ public class ModuleFastPlanner
       }
 
       messages?.Debug($"{spec}: 🔍 No installed versions matched. Will check remotely.");
-      var task = GetModuleInfoAsync(spec.Name, _source, ct);
+      Task<string> task = GetModuleInfoAsync(spec.Name, _source, ct);
       pendingTasks[task] = spec;
     }
 
     while (pendingTasks.Count > 0)
     {
-      var snapshot = pendingTasks.Keys.ToArray();
+      Task<string>[] snapshot = pendingTasks.Keys.ToArray();
 
-      await foreach (var completed in Task.WhenEach(snapshot).WithCancellation(ct).ConfigureAwait(false))
+      await foreach (Task<string>? completed in Task.WhenEach(snapshot).WithCancellation(ct).ConfigureAwait(false))
       {
-        if (!pendingTasks.TryGetValue(completed, out var currentSpec))
+        if (!pendingTasks.TryGetValue(completed, out ModuleFastSpec? currentSpec))
           continue;
 
         pendingTasks.Remove(completed);
@@ -89,7 +89,7 @@ public class ModuleFastPlanner
         if (response.Count == 0 && response.Items.Length == 0)
           throw new InvalidDataException($"{currentSpec}: invalid result received from {_source}.");
 
-        var selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, messages);
+        CatalogEntry? selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, messages);
         if (selectedEntry == null)
         {
           selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, messages)
@@ -105,7 +105,7 @@ public class ModuleFastPlanner
         if (selectedEntry.Tags != null && Array.Exists(selectedEntry.Tags, t => t == "ItemType:Script"))
           throw new NotImplementedException($"{currentSpec}: Script installations are currently not supported.");
 
-        var selectedModule = new ModuleFastInfo(
+        ModuleFastInfo selectedModule = new ModuleFastInfo(
             selectedEntry.Id,
             NuGetVersion.Parse(selectedEntry.Version),
             new Uri(selectedEntry.PackageContent));
@@ -113,7 +113,7 @@ public class ModuleFastPlanner
         if (currentSpec.Guid != Guid.Empty)
           selectedModule.Guid = currentSpec.Guid;
 
-        if (update && bestLocalCandidates.TryGetValue(currentSpec, out var bestLocal) &&
+        if (update && bestLocalCandidates.TryGetValue(currentSpec, out ModuleFastInfo? bestLocal) &&
             bestLocal.ModuleVersion == selectedModule.ModuleVersion)
         {
           messages?.Debug($"{selectedModule}: -Update specified and best remote candidate matches what is locally installed. Skipping install.");
@@ -128,17 +128,17 @@ public class ModuleFastPlanner
 
         messages?.Verbose($"{selectedModule}: Added to install plan");
 
-        var allDeps = selectedEntry.DependencyGroups?
+        IEnumerable<Dependency> allDeps = selectedEntry.DependencyGroups?
             .SelectMany(g => g.Dependencies ?? []) ?? [];
 
-        foreach (var dep in allDeps)
+        foreach (Dependency? dep in allDeps)
         {
-          var depRange = string.IsNullOrWhiteSpace(dep.Range)
+          VersionRange depRange = string.IsNullOrWhiteSpace(dep.Range)
               ? VersionRange.All
               : VersionRange.Parse(dep.Range);
-          var depSpec = new ModuleFastSpec(dep.Id, depRange);
+          ModuleFastSpec depSpec = new ModuleFastSpec(dep.Id, depRange);
 
-          var existing = modulesToInstall
+          ModuleFastInfo? existing = modulesToInstall
               .Where(m => string.Equals(m.Name, depSpec.Name, StringComparison.OrdinalIgnoreCase))
               .OrderByDescending(m => m.ModuleVersion)
               .FirstOrDefault();
@@ -148,7 +148,7 @@ public class ModuleFastPlanner
             continue;
           }
 
-          var depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, null, messages);
+          ModuleFastInfo? depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, messages);
           if (depLocal != null)
           {
             messages?.Debug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
@@ -156,7 +156,7 @@ public class ModuleFastPlanner
           }
 
           messages?.Debug($"{currentSpec}: Fetching dependency {depSpec}");
-          var depTask = GetModuleInfoAsync(depSpec.Name, _source, ct);
+          Task<string> depTask = GetModuleInfoAsync(depSpec.Name, _source, ct);
           pendingTasks[depTask] = depSpec;
         }
       }
@@ -172,26 +172,26 @@ public class ModuleFastPlanner
       bool strictSemVer,
       ModuleFastMessageBuffer? messages)
   {
-    var inlinedLeaves = response.Items
+    RegistrationLeaf[] inlinedLeaves = response.Items
         .Where(p => p.Items != null)
         .SelectMany(p => p.Items!)
         .ToArray();
 
     if (inlinedLeaves.Length == 0) return null;
 
-    foreach (var leaf in inlinedLeaves)
+    foreach (RegistrationLeaf? leaf in inlinedLeaves)
     {
       if (!string.IsNullOrEmpty(leaf.PackageContent) && string.IsNullOrEmpty(leaf.CatalogEntry.PackageContent))
         leaf.CatalogEntry.PackageContent = leaf.PackageContent;
     }
 
-    var entries = inlinedLeaves.Select(l => l.CatalogEntry).ToArray();
+    CatalogEntry[] entries = inlinedLeaves.Select(l => l.CatalogEntry).ToArray();
     if (entries.Length == 0) return null;
 
-    var versions = new SortedSet<NuGetVersion>(
-        entries.Select(e => NuGetVersion.TryParse(e.Version, out var v) ? v : null).Where(v => v != null)!);
+    SortedSet<NuGetVersion> versions = new SortedSet<NuGetVersion>(
+        entries.Select(e => NuGetVersion.TryParse(e.Version, out NuGetVersion? v) ? v : null).Where(v => v != null)!);
 
-    foreach (var candidate in versions.Reverse())
+    foreach (NuGetVersion candidate in versions.Reverse())
     {
       if ((candidate.IsPrerelease || candidate.HasMetadata) && !(spec.PreRelease || prerelease))
       {
@@ -203,7 +203,7 @@ public class ModuleFastPlanner
       {
         messages?.Debug($"{spec}: Found satisfying version {candidate} in inlined index.");
         return entries.First(e => e.Version == candidate.OriginalVersion ||
-            NuGetVersion.TryParse(e.Version, out var v) && v == candidate);
+            NuGetVersion.TryParse(e.Version, out NuGetVersion? v) && v == candidate);
       }
     }
 
@@ -220,16 +220,16 @@ public class ModuleFastPlanner
   {
     messages?.Debug($"{spec}: not found in inlined index. Determining appropriate page(s) to query.");
 
-    var pages = response.Items
+    RegistrationPage[] pages = response.Items
         .Where(p => p.Items == null)
         .Where(p =>
         {
           if (string.IsNullOrEmpty(p.Lower) || string.IsNullOrEmpty(p.Upper)) return true;
-          if (!NuGetVersion.TryParse(p.Lower, out var lower) || !NuGetVersion.TryParse(p.Upper, out var upper)) return true;
-          var pageRange = new VersionRange(lower, true, upper, true);
+          if (!NuGetVersion.TryParse(p.Lower, out NuGetVersion? lower) || !NuGetVersion.TryParse(p.Upper, out NuGetVersion? upper)) return true;
+          VersionRange pageRange = new VersionRange(lower, true, upper, true);
           return spec.Overlap(pageRange);
         })
-        .OrderByDescending(p => NuGetVersion.TryParse(p.Upper, out var v) ? v : null)
+        .OrderByDescending(p => NuGetVersion.TryParse(p.Upper, out NuGetVersion? v) ? v : null)
         .ToArray();
 
     if (pages.Length == 0)
@@ -237,7 +237,7 @@ public class ModuleFastPlanner
 
     messages?.Debug($"{spec}: Found {pages.Length} additional pages to query.");
 
-    var pageJsonTasks = pages.Select(p => GetCachedStringAsync(p.Id, ct)).ToArray();
+    Task<string>[] pageJsonTasks = pages.Select(p => GetCachedStringAsync(p.Id, ct)).ToArray();
     var pageJsons = await Task.WhenAll(pageJsonTasks).ConfigureAwait(false);
 
     for (int i = 0; i < pages.Length; i++)
@@ -250,23 +250,23 @@ public class ModuleFastPlanner
       }
       catch (JsonException)
       {
-        var pageResponse = JsonSerializer.Deserialize(pageJsons[i], ModuleFastJsonContext.Default.RegistrationResponse);
+        RegistrationResponse? pageResponse = JsonSerializer.Deserialize(pageJsons[i], ModuleFastJsonContext.Default.RegistrationResponse);
         pageData = pageResponse?.Items?.FirstOrDefault() ?? new RegistrationPage();
       }
 
       if (pageData.Items == null) continue;
 
-      foreach (var leaf in pageData.Items)
+      foreach (RegistrationLeaf leaf in pageData.Items)
       {
         if (!string.IsNullOrEmpty(leaf.PackageContent) && string.IsNullOrEmpty(leaf.CatalogEntry.PackageContent))
           leaf.CatalogEntry.PackageContent = leaf.PackageContent;
       }
 
-      var entries = pageData.Items.Select(l => l.CatalogEntry).ToArray();
-      var versions = new SortedSet<NuGetVersion>(
-          entries.Select(e => NuGetVersion.TryParse(e.Version, out var v) ? v : null).Where(v => v != null)!);
+      CatalogEntry[] entries = pageData.Items.Select(l => l.CatalogEntry).ToArray();
+      SortedSet<NuGetVersion> versions = new SortedSet<NuGetVersion>(
+          entries.Select(e => NuGetVersion.TryParse(e.Version, out NuGetVersion? v) ? v : null).Where(v => v != null)!);
 
-      foreach (var candidate in versions.Reverse())
+      foreach (NuGetVersion candidate in versions.Reverse())
       {
         if ((candidate.IsPrerelease || candidate.HasMetadata) && !(spec.PreRelease || prerelease))
           continue;
@@ -274,7 +274,7 @@ public class ModuleFastPlanner
         if (spec.SatisfiedBy(candidate, strictSemVer))
         {
           messages?.Debug($"{spec}: Found satisfying version {candidate} in additional pages.");
-          return entries.First(e => NuGetVersion.TryParse(e.Version, out var v) && v == candidate);
+          return entries.First(e => NuGetVersion.TryParse(e.Version, out NuGetVersion? v) && v == candidate);
         }
       }
     }
@@ -292,7 +292,7 @@ public class ModuleFastPlanner
   private async Task<string> GetRegistrationBaseAsync(string endpoint, CancellationToken ct)
   {
     var indexJson = await GetCachedStringAsync(endpoint, ct).ConfigureAwait(false);
-    var index = JsonSerializer.Deserialize(indexJson, ModuleFastJsonContext.Default.RegistrationIndex)
+    RegistrationIndex index = JsonSerializer.Deserialize(indexJson, ModuleFastJsonContext.Default.RegistrationIndex)
         ?? throw new InvalidDataException("Invalid registration index from " + endpoint);
 
     var registrationBase = index.Resources

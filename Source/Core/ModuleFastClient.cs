@@ -13,16 +13,10 @@ public static class ModuleFastClient
   /// <summary>Default number of retry attempts for transient HTTP failures.</summary>
   public const int DefaultMaxRetries = 3;
 
-  public static HttpClient Create(PSCredential? credential = null, int timeoutSeconds = 30, int maxRetries = DefaultMaxRetries)
-  {
-    NetworkCredential? netCred = credential?.GetNetworkCredential();
-    return Create(netCred, timeoutSeconds, maxRetries);
-  }
-
-  public static HttpClient Create(NetworkCredential? credential, int timeoutSeconds = 30, int maxRetries = DefaultMaxRetries)
+  public static HttpClient Create(NetworkCredential? credential = null, int timeoutSeconds = 30, int maxRetries = DefaultMaxRetries)
   {
     AppContext.SetSwitch("System.Net.SocketsHttpHandler.Http3Support", true);
-    var handler = new SocketsHttpHandler
+    SocketsHttpHandler handler = new SocketsHttpHandler
     {
       // Allow more parallel connections to the same host (registry + CDN).
       MaxConnectionsPerServer = 30,
@@ -34,12 +28,12 @@ public static class ModuleFastClient
       PooledConnectionLifetime = TimeSpan.FromMinutes(5),
     };
 
-    var resilienceHandler = new ResilienceHandler(CreateResiliencePipeline(maxRetries))
+    ResilienceHandler resilienceHandler = new ResilienceHandler(CreateResiliencePipeline(maxRetries))
     {
       InnerHandler = handler
     };
 
-    var client = new HttpClient(resilienceHandler)
+    HttpClient client = new HttpClient(resilienceHandler)
     {
       Timeout = TimeSpan.FromSeconds(timeoutSeconds),
       DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
@@ -66,7 +60,7 @@ public static class ModuleFastClient
           if (args.Outcome.Result?.StatusCode == HttpStatusCode.TooManyRequests &&
               args.Outcome.Result.Headers.RetryAfter is { } retryAfter)
           {
-            var delay = retryAfter.Delta
+            TimeSpan? delay = retryAfter.Delta
                 ?? (retryAfter.Date.HasValue ? retryAfter.Date.Value - DateTimeOffset.UtcNow : (TimeSpan?)null);
             if (delay.HasValue && delay.Value > TimeSpan.Zero)
               return ValueTask.FromResult<TimeSpan?>(delay.Value);
