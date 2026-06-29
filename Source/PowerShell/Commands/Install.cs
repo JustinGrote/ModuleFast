@@ -2,12 +2,14 @@ using System.Management.Automation;
 using System.Text.Json;
 using System.Threading;
 
+using static System.IO.Path;
+
 namespace ModuleFast.Commands;
 
 [Cmdlet(VerbsLifecycle.Install, "ModuleFast",
     DefaultParameterSetName = "Specification")]
 [OutputType(typeof(ModuleFastInfo))]
-public class InstallModuleFastCommand : PSCmdlet
+public class InstallModuleFastCommand : TaskCmdlet
 {
   [Alias("Name", "ModuleToInstall", "ModulesToInstall")]
   [AllowNull]
@@ -72,33 +74,36 @@ public class InstallModuleFastCommand : PSCmdlet
   [Parameter]
   public SwitchParameter StrictSemVer { get; set; }
 
-  private readonly HashSet<ModuleFastSpec> _modulesToInstall = new();
-  private readonly List<ModuleFastInfo> _installPlan = new();
+  private readonly HashSet<ModuleFastSpec> _modulesToInstall = [];
+  private readonly List<ModuleFastInfo> _installPlan = [];
   private readonly ModuleFastMessageBuffer _messages = new();
   private CancellationTokenSource? _timeoutSource;
   private HttpClient? _httpClient;
 
-  protected override void BeginProcessing()
+  protected override async Task Begin()
   {
     // Resolve CILockFilePath relative to PowerShell's current location
-    if (!System.IO.Path.IsPathRooted(CILockFilePath))
+    if (!IsPathRooted(CILockFilePath))
     {
-      CILockFilePath = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+      CILockFilePath = GetFullPath(Combine(
           SessionState.Path.CurrentFileSystemLocation.Path, CILockFilePath));
     }
 
     if (Update) ModuleFastCache.Instance.Clear();
 
     // Normalize source
-    if (Uri.TryCreate(Source, UriKind.Absolute, out var srcUri) &&
+    if (Uri.TryCreate(Source, UriKind.Absolute, out Uri? srcUri) &&
         srcUri.Scheme is not "http" and not "https")
     {
       Source = $"https://{Source}/index.json";
     }
 
-    var defaultRepoPath = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "powershell", "Modules");
+    var defaultRepoPath = Combine(
+        Environment.GetFolderPath(
+          Environment.SpecialFolder.LocalApplicationData),
+          "powershell",
+          "Modules"
+        );
 
     if (string.IsNullOrEmpty(Destination))
     {
@@ -106,9 +111,9 @@ public class InstallModuleFastCommand : PSCmdlet
       if (Scope == InstallScope.CurrentUser)
       {
         // Use legacy documents path
-        var docsPath = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "PowerShell", "Modules");
+        var docsPath = Combine(
+          Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+          "PowerShell", "Modules");
         Destination = docsPath;
       }
       else
@@ -117,9 +122,12 @@ public class InstallModuleFastCommand : PSCmdlet
 
         if (OperatingSystem.IsWindows() && Scope != InstallScope.CurrentUser)
         {
-          var defaultWindowsPath = System.IO.Path.Combine(
-              Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-              "PowerShell", "Modules");
+          var defaultWindowsPath = Combine(
+            Environment.GetFolderPath(
+              Environment.SpecialFolder.MyDocuments),
+              "PowerShell",
+              "Modules"
+            );
           if (string.Equals(Destination, defaultWindowsPath, StringComparison.OrdinalIgnoreCase))
           {
             WriteDebug($"Windows Documents module folder detected. Changing to {defaultRepoPath}");
@@ -140,9 +148,9 @@ public class InstallModuleFastCommand : PSCmdlet
           "DestinationNotFound", ErrorCategory.InvalidOperation, null));
 
     // Resolve relative Destination against PowerShell's current location
-    if (!System.IO.Path.IsPathRooted(Destination))
+    if (!IsPathRooted(Destination))
     {
-      Destination = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+      Destination = GetFullPath(Combine(
           SessionState.Path.CurrentFileSystemLocation.Path, Destination));
     }
 
@@ -158,7 +166,7 @@ public class InstallModuleFastCommand : PSCmdlet
     if (!NoPSModulePathUpdate)
     {
       var modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
-          .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+          .Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries);
       if (!modulePaths.Contains(Destination, StringComparer.OrdinalIgnoreCase))
       {
         PathHelper.AddDestinationToPSModulePath(Destination, NoProfileUpdate, this);
@@ -170,12 +178,12 @@ public class InstallModuleFastCommand : PSCmdlet
     _timeoutSource.CancelAfter(TimeSpan.FromSeconds(Timeout * 10)); // overall timeout
   }
 
-  protected override void ProcessRecord()
+  protected override async Task Process()
   {
     switch (ParameterSetName)
     {
       case "Specification":
-        foreach (var spec in Specification ?? [])
+        foreach (ModuleFastSpec spec in Specification ?? [])
         {
           if (!_modulesToInstall.Add(spec))
             WriteWarning($"{spec} was specified twice, skipping duplicate.");
@@ -183,7 +191,7 @@ public class InstallModuleFastCommand : PSCmdlet
         break;
 
       case "ModuleFastInfo":
-        foreach (var info in ModuleFastInfo ?? [])
+        foreach (ModuleFastInfo info in ModuleFastInfo ?? [])
           _installPlan.Add(info);
         break;
 
@@ -203,19 +211,19 @@ public class InstallModuleFastCommand : PSCmdlet
 
         foreach (var p in paths)
         {
-          var specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, this);
-          foreach (var spec in specs)
+          ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, this);
+          foreach (ModuleFastSpec spec in specs)
             _modulesToInstall.Add(spec);
         }
         break;
     }
   }
 
-  protected override void EndProcessing()
+  protected override async Task End()
   {
     try
     {
-      var ct = _timeoutSource?.Token ?? PipelineStopToken;
+      CancellationToken ct = _timeoutSource?.Token ?? PipelineStopToken;
 
       ModuleFastInfo[] finalInstallPlan;
 
@@ -233,8 +241,8 @@ public class InstallModuleFastCommand : PSCmdlet
           if (CI && File.Exists(CILockFilePath))
           {
             WriteDebug($"Found lockfile at {CILockFilePath}. Using for specification evaluation.");
-            var lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, this);
-            foreach (var spec in lockSpecs)
+            ModuleFastSpec[] lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, this);
+            foreach (ModuleFastSpec spec in lockSpecs)
               _modulesToInstall.Add(spec);
             if (Update)
             {
@@ -244,7 +252,7 @@ public class InstallModuleFastCommand : PSCmdlet
           }
           else
           {
-            var specFiles = SpecFileReader.FindRequiredSpecFiles(SessionState.Path.CurrentFileSystemLocation.Path);
+            IEnumerable<string> specFiles = SpecFileReader.FindRequiredSpecFiles(SessionState.Path.CurrentFileSystemLocation.Path);
             if (specFiles == null || !specFiles.Any())
             {
               WriteWarning($"No specfiles found in {SessionState.Path.CurrentFileSystemLocation}.");
@@ -254,8 +262,8 @@ public class InstallModuleFastCommand : PSCmdlet
               foreach (var specFile in specFiles)
               {
                 WriteVerbose($"Found Specfile {specFile}. Evaluating...");
-                var fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, this);
-                foreach (var spec in fileSpecs)
+                ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, this);
+                foreach (ModuleFastSpec spec in fileSpecs)
                   _modulesToInstall.Add(spec);
               }
             }
@@ -274,12 +282,12 @@ public class InstallModuleFastCommand : PSCmdlet
           modulePaths = [Destination!];
         else
           modulePaths = Environment.GetEnvironmentVariable("PSModulePath")
-              ?.Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
+              ?.Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
         var planner = new ModuleFastPlanner(_httpClient!, Source);
-        var planTask = planner.GetPlanAsync(
+        Task<HashSet<ModuleFastInfo>> planTask = planner.GetPlanAsync(
           _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, _messages);
-        var planSet = planTask.GetAwaiter().GetResult();
+        HashSet<ModuleFastInfo> planSet = planTask.GetAwaiter().GetResult();
         _messages.Flush(this);
         finalInstallPlan = planSet.ToArray();
       }
@@ -295,7 +303,7 @@ public class InstallModuleFastCommand : PSCmdlet
       {
         if (Plan)
           WriteVerbose($"📑 -Plan was specified. Returning a plan including {finalInstallPlan.Length} Module Specifications");
-        foreach (var info in finalInstallPlan)
+        foreach (ModuleFastInfo info in finalInstallPlan)
           WriteObject(info);
       }
       else
@@ -306,29 +314,37 @@ public class InstallModuleFastCommand : PSCmdlet
 
         // The callback is invoked synchronously on the completing thread pool thread.
         // WriteProgress is thread-safe in PowerShell's runtime infrastructure.
-        var installProgress = new Action<ModuleFastInfo>(_ =>
+        var updateInstallProgress = new Action<ModuleFastInfo>(_ =>
         {
           var done = Interlocked.Increment(ref completed);
-          var pct = (int)(done * 100.0 / total);
-          WriteProgress(new ProgressRecord(1, "Install-ModuleFast", $"Installing {done}/{total} Modules") { PercentComplete = pct });
+          var pct = (done / total * 50) + 50;
+          Progress("Install-ModuleFast", $"Installing {done}/{total} Modules", percentComplete: pct);
         });
 
         var installer = new ModuleFastInstaller(_httpClient!);
-        var installTask = installer.InstallModulesAsync(finalInstallPlan, Destination!, Update || ParameterSetName == "ModuleFastInfo", ct, _messages, ThrottleLimit, installProgress);
-        var installedModules = installTask.GetAwaiter().GetResult();
+        Task<List<ModuleFastInfo>> installTask = installer.InstallModulesAsync(
+          finalInstallPlan,
+          Destination!,
+          Update || ParameterSetName == "ModuleFastInfo",
+          ct,
+          _messages,
+          ThrottleLimit,
+          updateInstallProgress
+        );
+        IEnumerable<ModuleFastInfo> installedModules = installTask.GetAwaiter().GetResult();
         _messages.Flush(this);
 
         WriteVerbose("✅ All required modules installed! Exiting.");
 
         if (PassThru)
-          foreach (var m in installedModules)
+          foreach (ModuleFastInfo m in installedModules)
             WriteObject(m);
 
         if (CI)
         {
           WriteVerbose($"Writing lockfile to {CILockFilePath}");
           var lockFile = new Dictionary<string, string>();
-          foreach (var m in finalInstallPlan)
+          foreach (ModuleFastInfo m in finalInstallPlan)
             lockFile[m.Name] = m.ModuleVersion.ToString();
 
           var json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });

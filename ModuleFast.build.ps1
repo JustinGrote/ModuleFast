@@ -42,7 +42,7 @@ Task CopyFiles {
   Copy-Item @c -Path 'ModuleFast.ps1' -Destination $Destination
 
   # Copy DLL and its dependencies from Artifacts Output to the module bin folder
-  $artifactsBinPath = Join-Path $PSScriptRoot 'artifacts' 'bin' 'PowerShell' 'release'
+  $artifactsBinPath = Join-Path $Destination 'publish' 'PowerShell' 'release'
   Copy-Item @c -Path (Join-Path $artifactsBinPath '*') -Destination $ModuleOutFolderPath -Recurse
 }
 
@@ -54,6 +54,10 @@ Task Version {
   $manifestPath = Join-Path $ModuleOutFolderPath 'ModuleFast.psd1'
   $manifestContent = (Get-Content -Raw $manifestPath) -replace [regex]::Escape('ModuleVersion     = ''0.0.0'''), "ModuleVersion     = '$moduleVersion'" -replace [regex]::Escape('Prerelease = ''SOURCE'''), ($Prerelease ? "Prerelease = '$prerelease'" : '')
   $manifestContent | Set-Content -Path $manifestPath
+}
+
+Task Publish {
+  & dotnet publish (Join-Path $PSScriptRoot 'Source' 'PowerShell' 'PowerShell.csproj')
 }
 
 Task Package.Nuget {
@@ -80,8 +84,7 @@ Task Package Package.Nuget, Package.Zip
 
 #Supported High Level Tasks
 Task Build @(
-  'Clean'
-  'BuildCSharp'
+  'Publish'
   'CopyFiles'
   'Version'
 )

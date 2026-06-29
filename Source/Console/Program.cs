@@ -91,10 +91,10 @@ if (username != null && password != null)
 	credential = new NetworkCredential(username, password);
 
 // Create HttpClient
-var httpClient = ModuleFastClient.Create(credential, timeout);
+HttpClient httpClient = ModuleFastClient.Create(credential, timeout);
 
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeout * 10));
-var ct = cts.Token;
+CancellationToken ct = cts.Token;
 
 // Collect specs
 var specs = new HashSet<ModuleFastSpec>();
@@ -105,48 +105,48 @@ if (specFilePath != null)
 	{
 		foreach (var file in SpecFileReader.FindRequiredSpecFiles(specFilePath))
 		{
-			foreach (var spec in SpecFileReader.ConvertFromRequiredSpec(file))
-				specs.Add(spec);
-		}
+      foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(file))
+        specs.Add(spec);
+    }
 	}
 	else
 	{
-		foreach (var spec in SpecFileReader.ConvertFromRequiredSpec(specFilePath))
-			specs.Add(spec);
-	}
+    foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(specFilePath))
+      specs.Add(spec);
+  }
 }
 else
 {
 	// Auto-detect spec files in current directory
 	if (ci && File.Exists(ciLockFilePath))
 	{
-		System.Console.WriteLine($"Using lockfile: {ciLockFilePath}");
-		foreach (var spec in SpecFileReader.ConvertFromRequiredSpec(ciLockFilePath))
-			specs.Add(spec);
-		update = false;
+    Console.WriteLine($"Using lockfile: {ciLockFilePath}");
+    foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(ciLockFilePath))
+      specs.Add(spec);
+    update = false;
 	}
 	else
 	{
-		var specFiles = SpecFileReader.FindRequiredSpecFiles(Environment.CurrentDirectory);
-		foreach (var file in specFiles)
-		{
-			System.Console.WriteLine($"Found specfile: {file}");
-			foreach (var spec in SpecFileReader.ConvertFromRequiredSpec(file))
-				specs.Add(spec);
-		}
+    IEnumerable<string> specFiles = SpecFileReader.FindRequiredSpecFiles(Environment.CurrentDirectory);
+    foreach (var file in specFiles)
+    {
+      Console.WriteLine($"Found specfile: {file}");
+      foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(file))
+        specs.Add(spec);
+    }
 	}
 }
 
 if (specs.Count == 0)
 {
-	System.Console.Error.WriteLine("Error: No module specifications found.");
-	return 1;
+  Console.Error.WriteLine("Error: No module specifications found.");
+  return 1;
 }
 
 if (update) ModuleFastCache.Instance.Clear();
 
 // Plan
-System.Console.WriteLine($"Planning installation of {specs.Count} module specification(s)...");
+Console.WriteLine($"Planning installation of {specs.Count} module specification(s)...");
 
 string[] modulePaths = destinationOnly
 		? [destination]
@@ -154,46 +154,46 @@ string[] modulePaths = destinationOnly
 				?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
 var planner = new ModuleFastPlanner(httpClient, source);
-var planSet = await planner.GetPlanAsync(specs, modulePaths, update, prerelease, strictSemVer, destinationOnly, ct);
-var installPlan = planSet.ToArray();
+HashSet<ModuleFastInfo> planSet = await planner.GetPlanAsync(specs, modulePaths, update, prerelease, strictSemVer, destinationOnly, ct);
+ModuleFastInfo[] installPlan = planSet.ToArray();
 
 if (installPlan.Length == 0)
 {
-	System.Console.WriteLine("All module specifications are already satisfied.");
-	return 0;
+  Console.WriteLine("All module specifications are already satisfied.");
+  return 0;
 }
 
 if (plan)
 {
-	System.Console.WriteLine($"Plan: {installPlan.Length} module(s) to install:");
-	foreach (var info in installPlan)
-		System.Console.WriteLine($"  {info.Name} {info.ModuleVersion}");
-	return 0;
+  Console.WriteLine($"Plan: {installPlan.Length} module(s) to install:");
+  foreach (ModuleFastInfo? info in installPlan)
+    Console.WriteLine($"  {info.Name} {info.ModuleVersion}");
+  return 0;
 }
 
 // Install
-System.Console.WriteLine($"Installing {installPlan.Length} module(s) to {destination}...");
-var installer = new ModuleFastInstaller(httpClient);
-var installed = await installer.InstallModulesAsync(installPlan, destination, update, ct, maxConcurrency: throttleLimit);
+Console.WriteLine($"Installing {installPlan.Length} module(s) to {destination}...");
+ModuleFastInstaller installer = new ModuleFastInstaller(httpClient);
+List<ModuleFastInfo> installed = await installer.InstallModulesAsync(installPlan, destination, update, ct, maxConcurrency: throttleLimit);
 
-System.Console.WriteLine($"Installed {installed.Count} module(s).");
+Console.WriteLine($"Installed {installed.Count} module(s).");
 
 if (ci)
 {
 	var lockFile = new Dictionary<string, string>();
-	foreach (var m in installPlan)
-		lockFile[m.Name] = m.ModuleVersion.ToString();
+  foreach (ModuleFastInfo? m in installPlan)
+    lockFile[m.Name] = m.ModuleVersion.ToString();
 
-	var json = JsonSerializer.Serialize(lockFile, ConsoleJsonContext.Default.DictionaryStringString);
+  var json = JsonSerializer.Serialize(lockFile, ConsoleJsonContext.Default.DictionaryStringString);
 	File.WriteAllText(ciLockFilePath, json);
-	System.Console.WriteLine($"Lockfile written to {ciLockFilePath}");
+  Console.WriteLine($"Lockfile written to {ciLockFilePath}");
 }
 
 return 0;
 
 static void PrintUsage()
 {
-	System.Console.WriteLine("""
+  Console.WriteLine("""
     modulefast - Fast PowerShell module installer
 
     Usage: modulefast [options] [path]

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Concurrent;
 using System.IO.Compression;
 
@@ -18,7 +19,7 @@ public class ModuleFastInstaller
   /// </summary>
   private static string? FindManifestPath(string directory, string moduleName)
   {
-    var options = new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive };
+    EnumerationOptions options = new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive };
     var matches = Directory.GetFiles(directory, "*.psd1", options)
         .Where(f => string.Equals(Path.GetFileNameWithoutExtension(f), moduleName,
             StringComparison.OrdinalIgnoreCase))
@@ -51,12 +52,12 @@ public class ModuleFastInstaller
     if (maxConcurrency <= 0)
       maxConcurrency = Environment.ProcessorCount;
 
-    var results = new ConcurrentBag<ModuleFastInfo>();
-    var opts = new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = ct };
+    ConcurrentBag<ModuleFastInfo> results = [];
+    ParallelOptions opts = new() { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = ct };
 
     await Parallel.ForEachAsync(modules, opts, async (m, ct) =>
     {
-      var result = await InstallSingleAsync(m, destination, update, ct, messages).ConfigureAwait(false);
+      ModuleFastInfo? result = await InstallSingleAsync(m, destination, update, ct, messages).ConfigureAwait(false);
       if (result != null)
       {
         results.Add(result);
@@ -64,7 +65,7 @@ public class ModuleFastInstaller
       }
     }).ConfigureAwait(false);
 
-    return [.. results];
+    return results.ToList();
   }
 
   private async Task<ModuleFastInfo?> InstallSingleAsync(
@@ -91,15 +92,15 @@ public class ModuleFastInstaller
               $"{module}: Existing module folder found at {installPath} but no manifest matching '{module.Name}.psd1' could be found.",
               Path.Combine(installPath, $"{module.Name}.psd1"));
 
-      var existingManifestData = messages != null
+      Hashtable existingManifestData = messages != null
         ? ModuleManifestReader.ImportModuleManifest(existingManifestPath, messages)
         : ModuleManifestReader.ImportModuleManifest(existingManifestPath, cmdlet: null);
       var existingVersionStr = existingManifestData["ModuleVersion"]?.ToString() ?? "0.0.0";
       var prerelease = (existingManifestData["PrivateData"] as System.Collections.Hashtable)?["PSData"] is System.Collections.Hashtable psData
           ? psData["Prerelease"]?.ToString() : null;
 
-      Version.TryParse(existingVersionStr, out var evBase);
-      var existingVersion = new NuGetVersion(evBase ?? new Version(0, 0), prerelease);
+      Version.TryParse(existingVersionStr, out Version? evBase);
+      NuGetVersion existingVersion = new NuGetVersion(evBase ?? new Version(0, 0), prerelease);
 
       if (module.ModuleVersion == existingVersion)
       {
@@ -127,13 +128,13 @@ public class ModuleFastInstaller
 
     // Use ResponseHeadersRead so we can read Content-Length and pre-allocate the MemoryStream,
     // avoiding repeated buffer resizing for large packages while keeping the download truly async.
-    using var response = await _httpClient
+    using HttpResponseMessage response = await _httpClient
         .GetAsync(module.Location, HttpCompletionOption.ResponseHeadersRead, ct)
         .ConfigureAwait(false);
     response.EnsureSuccessStatusCode();
 
     var contentLength = response.Content.Headers.ContentLength;
-    await using var httpStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+    await using Stream httpStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
 
     // Pre-allocate the MemoryStream using Content-Length when available to avoid repeated
     // internal buffer resizing. Guard against overflow: clamp to int.MaxValue before the
@@ -141,14 +142,14 @@ public class ModuleFastInstaller
     var preAllocSize = contentLength.HasValue && contentLength.Value > 0
         ? (int)Math.Min(Math.Min(contentLength.Value, MaxPreallocatedBufferSize), int.MaxValue)
         : 0;
-    using var packageStream = preAllocSize > 0 ? new MemoryStream(preAllocSize) : new MemoryStream();
+    using MemoryStream packageStream = preAllocSize > 0 ? new MemoryStream(preAllocSize) : new MemoryStream();
     await httpStream.CopyToAsync(packageStream, ct).ConfigureAwait(false);
     packageStream.Position = 0;
 
     Directory.CreateDirectory(installPath);
     // WriteThrough ensures the .incomplete marker reaches the OS immediately —
     // critical because it guards against partial installations on crash.
-    await using (var indicatorFs = new FileStream(installIndicatorPath, new FileStreamOptions
+    await using (FileStream indicatorFs = new FileStream(installIndicatorPath, new FileStreamOptions
     {
       Mode = FileMode.Create,
       Access = FileAccess.Write,
@@ -166,15 +167,15 @@ public class ModuleFastInstaller
         ?? throw new FileNotFoundException(
             $"{module}: Could not find manifest matching '{module.Name}.psd1' in {installPath}.",
             Path.Combine(installPath, $"{module.Name}.psd1"));
-    var moduleManifestVersion = ModuleManifestReader.TryReadModuleVersionFast(manifestPath);
+    Version? moduleManifestVersion = ModuleManifestReader.TryReadModuleVersionFast(manifestPath);
 
     if (moduleManifestVersion == null)
     {
       // Fast reader failed, fall back to full manifest import
       try
       {
-        var fallbackData = ModuleManifestReader.ImportModuleManifest(manifestPath, messages);
-        if (Version.TryParse(fallbackData["ModuleVersion"]?.ToString() ?? "", out var fallbackVersion))
+        Hashtable fallbackData = ModuleManifestReader.ImportModuleManifest(manifestPath, messages);
+        if (Version.TryParse(fallbackData["ModuleVersion"]?.ToString() ?? "", out Version? fallbackVersion))
           moduleManifestVersion = fallbackVersion;
       }
       catch { /* Fall through to warning */ }
@@ -202,7 +203,7 @@ public class ModuleFastInstaller
         // Update indicator path
         installIndicatorPath = Path.Combine(installPath, ".incomplete");
         // WriteThrough + Asynchronous: durable write that doesn't block the thread on I/O
-        await using var origVerFs = new FileStream(
+        await using FileStream origVerFs = new FileStream(
             Path.Combine(installPath, ".originalModuleVersion"),
             new FileStreamOptions
             {
@@ -211,7 +212,7 @@ public class ModuleFastInstaller
               Share = FileShare.None,
               Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
             });
-        await using var origVerWriter = new StreamWriter(origVerFs);
+        await using StreamWriter origVerWriter = new StreamWriter(origVerFs);
         await origVerWriter.WriteLineAsync(originalModuleVersion).ConfigureAwait(false);
 
         module.ModuleVersion = new NuGetVersion(moduleManifestVersion.ToString());
@@ -230,10 +231,10 @@ public class ModuleFastInstaller
           ?? throw new FileNotFoundException(
               $"{module}: Manifest not found in {installPath} for GUID verification.",
               Path.Combine(installPath, $"{module.Name}.psd1"));
-      var manifestData = messages != null
+      Hashtable manifestData = messages != null
           ? ModuleManifestReader.ImportModuleManifest(guidManifestPath, messages)
           : ModuleManifestReader.ImportModuleManifest(guidManifestPath, cmdlet: null);
-      if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out var manifestGuid) ||
+      if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out Guid manifestGuid) ||
           manifestGuid != module.Guid)
       {
         Directory.Delete(installPath, true);
