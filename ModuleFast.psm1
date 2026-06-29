@@ -1,4 +1,4 @@
-#requires -version 7.2
+#requires -version 7.6
 
 # Load the C# binary module — probe Artifacts Output Layout paths first, then
 # the classic deployed path (bin/ModuleFast/ModuleFast.dll).
