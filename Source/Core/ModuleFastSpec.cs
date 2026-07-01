@@ -120,12 +120,12 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
 
     _name = moduleName;
     _versionRange = range;
-    _guid = System.Guid.Empty;
+    _guid = Guid.Empty;
     _preReleaseName = preReleaseName;
   }
 
   public ModuleFastSpec(string name, string requiredVersion)
-      : this(name, requiredVersion, System.Guid.Empty.ToString()) { }
+      : this(name, requiredVersion, Guid.Empty.ToString()) { }
 
   public ModuleFastSpec(string name, string requiredVersion, string guid)
   {
@@ -133,7 +133,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     _name = name.Trim('!');
     _preReleaseName = name.StartsWith('!') || name.EndsWith('!');
     _versionRange = VersionRange.Parse($"[{requiredVersion}]");
-    _guid = System.Guid.TryParse(guid, out Guid g) ? g : System.Guid.Empty;
+    _guid = Guid.TryParse(guid, out Guid g) ? g : Guid.Empty;
   }
 
   public ModuleFastSpec(string name, VersionRange range)
@@ -142,7 +142,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     _name = name.Trim('!');
     _preReleaseName = name.StartsWith('!') || name.EndsWith('!');
     _versionRange = range ?? VersionRange.All;
-    _guid = System.Guid.Empty;
+    _guid = Guid.Empty;
   }
 
   public ModuleFastSpec(ModuleSpecification spec)
@@ -150,7 +150,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     (_name, _versionRange, _guid, _preReleaseName) = InitFromModuleSpec(spec);
   }
 
-  public ModuleFastSpec(System.Collections.Hashtable hashtable)
+  public ModuleFastSpec(Hashtable hashtable)
       : this(new ModuleSpecification(hashtable))
   {
   }
@@ -172,13 +172,13 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
         $"ModuleSpecification: {spec}"
     );
 
-    Guid guid = spec.Guid ?? System.Guid.Empty;
+    Guid guid = spec.Guid ?? Guid.Empty;
     return (spec.Name, range, guid, false);
   }
 
   // --- Methods ---
 
-  public bool SatisfiedBy(System.Version version) =>
+  public bool SatisfiedBy(Version version) =>
       SatisfiedBy(new NuGetVersion(version), false);
 
   public bool SatisfiedBy(NuGetVersion version) =>
@@ -281,7 +281,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
 
   public override string ToString()
   {
-    string guid = _guid != System.Guid.Empty ? $" [{_guid}]" : "";
+    string guid = _guid != Guid.Empty ? $" [{_guid}]" : "";
     string versionRange;
     if (_versionRange.ToString() == "(, )")
     {
@@ -302,12 +302,12 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
 
   public static implicit operator ModuleSpecification(ModuleFastSpec spec)
   {
-    Hashtable props = new System.Collections.Hashtable
+    Hashtable props = new()
     {
       ["ModuleName"] = spec.Name
     };
 
-    if (spec.Guid != System.Guid.Empty)
+    if (spec.Guid != Guid.Empty)
       props["Guid"] = spec.Guid;
 
     if (spec.Required != null)
@@ -321,7 +321,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     }
     else
     {
-      props["ModuleVersion"] = new System.Version(0, 0);
+      props["ModuleVersion"] = new Version(0, 0);
     }
 
     return new ModuleSpecification(props);

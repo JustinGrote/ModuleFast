@@ -50,7 +50,7 @@ public class ModuleFastInstaller
       Action<ModuleFastInfo>? onModuleInstalled = null)
   {
     if (maxConcurrency <= 0)
-      maxConcurrency = Environment.ProcessorCount * 2;
+      maxConcurrency = -1; // Default to unbounded concurrency
 
     ConcurrentBag<ModuleFastInfo> results = [];
     ParallelOptions opts = new()

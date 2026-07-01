@@ -82,8 +82,8 @@ public static class ModuleManifestReader
         ? psData["Prerelease"]?.ToString()
         : null;
 
-    NuGetVersion manifestVersion = new NuGetVersion(manifestVersionData, prerelease);
-    ModuleFastInfo info = new ModuleFastInfo(manifestName, manifestVersion, new Uri(manifestPath));
+    NuGetVersion manifestVersion = new(manifestVersionData, prerelease);
+    ModuleFastInfo info = new(manifestName, manifestVersion, new Uri(manifestPath));
 
     if (manifestData["GUID"] is string guidStr && Guid.TryParse(guidStr, out Guid guid))
       info.Guid = guid;
@@ -98,7 +98,7 @@ public static class ModuleManifestReader
   public static Version? TryReadModuleVersionFast(string manifestPath)
   {
     if (!File.Exists(manifestPath)) return null;
-    FileStreamOptions streamOptions = new FileStreamOptions
+    FileStreamOptions streamOptions = new()
     {
       Mode = FileMode.Open,
       Access = FileAccess.Read,
@@ -109,7 +109,7 @@ public static class ModuleManifestReader
     string? line;
     while ((line = reader.ReadLine()) != null)
     {
-      Match m = System.Text.RegularExpressions.Regex.Match(line,
+      Match m = Regex.Match(line,
           @"\s*ModuleVersion\s*=\s*['""](?<version>.+?)['""]");
       if (m.Success && Version.TryParse(m.Groups["version"].Value, out Version? v))
         return v;
