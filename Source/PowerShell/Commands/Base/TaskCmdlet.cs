@@ -84,7 +84,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   {
     TaskCompletionSource<object?> response = new();
     AddOutput(new MainAction(() => action(), response));
-    return (T?)await response.Task ?? default!;
+    return (T?)await response.Task.ConfigureAwait(false) ?? default!;
   }
 
   /// <summary>
@@ -98,7 +98,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
       action();
       return null;
     }, response));
-    await response.Task;
+    await response.Task.ConfigureAwait(false);
   }
 
   /// <summary>
@@ -184,7 +184,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
       {
         try
         {
-          await work();
+          await work().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -214,7 +214,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
     {
       try
       {
-        await Clean();
+        await Clean().ConfigureAwait(false);
       }
       catch { /* best-effort cleanup */ }
       finally
@@ -455,9 +455,9 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   public async Task<bool> Confirm(string target, string action = "")
   {
     TaskCompletionSource<bool> response = new();
-    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
+    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled()).ConfigureAwait(false);
     AddOutput(new ShouldProcessPrompt(target, action, response));
-    return await response.Task;
+    return await response.Task.ConfigureAwait(false);
   }
 
   /// <summary>
@@ -471,9 +471,9 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   public async Task<bool> ConfirmCustom(string whatIfMessage, string confirmHeader = "", string confirmMessage = "")
   {
     TaskCompletionSource<bool> response = new();
-    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
+    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled()).ConfigureAwait(false);
     AddOutput(new ShouldProcessCustomPrompt(whatIfMessage, confirmHeader, confirmMessage, response));
-    return await response.Task;
+    return await response.Task.ConfigureAwait(false);
   }
 
 

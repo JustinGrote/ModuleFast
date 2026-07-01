@@ -12,8 +12,8 @@ internal sealed class ResilienceHandler(ResiliencePipeline<HttpResponseMessage> 
 			HttpRequestMessage request, CancellationToken cancellationToken)
 	{
 		return await pipeline.ExecuteAsync(
-			async ct => await base.SendAsync(request, ct),
+			async ct => await base.SendAsync(request, ct).ConfigureAwait(false),
 			cancellationToken
-		);
+		).ConfigureAwait(false);
 	}
 }

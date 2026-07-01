@@ -278,7 +278,14 @@ public static class SpecFileReader
     if (Uri.TryCreate(requiredSpecPath, UriKind.Absolute, out Uri? uri) &&
         uri.Scheme is "http" or "https")
     {
-      using HttpClient client = new();
+      var proxy = EnvironmentProxy.Create();
+      var handler = new SocketsHttpHandler();
+      if (proxy != null)
+      {
+        handler.Proxy = proxy;
+        handler.UseProxy = true;
+      }
+      using HttpClient client = new(handler);
       var content = client.GetStringAsync(requiredSpecPath).GetAwaiter().GetResult();
       if (content.AsSpan().TrimStart().StartsWith("@{".AsSpan()))
       {

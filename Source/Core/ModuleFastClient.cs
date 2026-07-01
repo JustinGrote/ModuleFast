@@ -8,6 +8,37 @@ using Polly.Retry;
 
 namespace ModuleFast;
 
+/// <summary>Helper to build a <see cref="WebProxy"/> from standard HTTP_PROXY / HTTPS_PROXY / NO_PROXY environment variables.</summary>
+internal static class EnvironmentProxy
+{
+  internal static IWebProxy? Create()
+  {
+    // Prefer lowercase (convention on Linux), fall back to uppercase (common on Windows/CI).
+    var httpsProxy = Environment.GetEnvironmentVariable("HTTPS_PROXY")
+        ?? Environment.GetEnvironmentVariable("https_proxy");
+    var httpProxy = Environment.GetEnvironmentVariable("HTTP_PROXY")
+        ?? Environment.GetEnvironmentVariable("http_proxy");
+
+    var proxyUrl = httpsProxy ?? httpProxy;
+    if (string.IsNullOrWhiteSpace(proxyUrl)) return null;
+
+    var proxy = new WebProxy(proxyUrl);
+
+    var noProxy = Environment.GetEnvironmentVariable("NO_PROXY")
+        ?? Environment.GetEnvironmentVariable("no_proxy");
+    if (!string.IsNullOrWhiteSpace(noProxy))
+    {
+      proxy.BypassList = noProxy
+          .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+          .Select(host => "^" + System.Text.RegularExpressions.Regex.Escape(host)
+              .Replace("\\*", ".*") + "$")
+          .ToArray();
+    }
+
+    return proxy;
+  }
+}
+
 public static class ModuleFastClient
 {
   /// <summary>Default number of retry attempts for transient HTTP failures.</summary>
@@ -27,6 +58,14 @@ public static class ModuleFastClient
       // Recycle connections after 5 minutes so stale long-lived connections don't silently fail.
       PooledConnectionLifetime = TimeSpan.FromMinutes(5),
     };
+
+    // Honour HTTP_PROXY / HTTPS_PROXY / NO_PROXY environment variables on all platforms.
+    IWebProxy? envProxy = EnvironmentProxy.Create();
+    if (envProxy != null)
+    {
+      handler.Proxy = envProxy;
+      handler.UseProxy = true;
+    }
 
     ResilienceHandler resilienceHandler = new ResilienceHandler(CreateResiliencePipeline(maxRetries))
     {

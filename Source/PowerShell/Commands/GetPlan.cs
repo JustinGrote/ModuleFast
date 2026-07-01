@@ -86,7 +86,7 @@ public class GetModuleFastPlanCommand : TaskCmdlet
           StrictSemVer,
           DestinationOnly,
           CancellationToken.None,
-          new TaskCmdletInteractor(this));
+          new TaskCmdletInteractor(this)).ConfigureAwait(false);
 
       foreach (ModuleFastInfo info in plan)
         WriteObject(info);

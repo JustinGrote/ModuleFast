@@ -162,7 +162,7 @@ public class InstallModuleFastCommand : TaskCmdlet
     {
       if (
         string.Equals(Destination, defaultRepoPath, StringComparison.OrdinalIgnoreCase)
-        && await Confirm(Destination, "Create default repository folder")
+        && await Confirm(Destination, "Create default repository folder").ConfigureAwait(false)
       )
       {
         Directory.CreateDirectory(Destination!);
@@ -175,7 +175,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           .Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries);
       if (!modulePaths.Contains(Destination, StringComparer.OrdinalIgnoreCase))
       {
-        await PathHelper.AddDestinationToPSModulePath(Destination, NoProfileUpdate, (CmdletInteraction)this);
+        await PathHelper.AddDestinationToPSModulePath(Destination, NoProfileUpdate, (CmdletInteraction)this).ConfigureAwait(false);
       }
     }
 
@@ -292,7 +292,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         var planner = new ModuleFastPlanner(_httpClient!, Source);
         HashSet<ModuleFastInfo> planSet = await planner.GetPlan(
-          _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, cmdlet: cmdletInteractor);
+          _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, cmdlet: cmdletInteractor).ConfigureAwait(false);
         finalInstallPlan = planSet.ToArray();
       }
 
@@ -303,7 +303,7 @@ public class InstallModuleFastCommand : TaskCmdlet
         return;
       }
 
-      if (Plan || !await Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules"))
+        if (Plan || !await Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules").ConfigureAwait(false))
       {
         if (Plan)
           Verbose($"📑 -Plan was specified. Returning a plan including {finalInstallPlan.Length} Module Specifications");
@@ -334,7 +334,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           cmdletInteractor,
           ThrottleLimit,
           updateInstallProgress
-        );
+        ).ConfigureAwait(false);
 
         Verbose("✅ All required modules installed! Exiting.");
 

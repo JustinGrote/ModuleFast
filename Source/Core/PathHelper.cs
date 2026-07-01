@@ -113,7 +113,7 @@ public static class PathHelper
 
     if (!File.Exists(myProfile))
     {
-      if (!await cmdlet.Confirm(myProfile, $"Allow ModuleFast to work by creating a profile at {myProfile}."))
+      if (!await cmdlet.Confirm(myProfile, $"Allow ModuleFast to work by creating a profile at {myProfile}.").ConfigureAwait(false))
         return;
 
       cmdlet.Verbose("User All Hosts profile not found, creating one.");
@@ -162,7 +162,7 @@ public static class PathHelper
       if (!await cmdlet.Confirm(
         myProfile,
         $"Allow ModuleFast to add {destination} to PSModulePath on startup."
-      )) return;
+      ).ConfigureAwait(false)) return;
 
       cmdlet.Verbose($"Adding {destination} to profile {myProfile}");
       // WriteThrough flushes each write directly to the OS, avoiding buffered-write data loss on crash
