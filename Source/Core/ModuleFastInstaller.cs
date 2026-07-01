@@ -222,7 +222,7 @@ public class ModuleFastInstaller
         await using StreamWriter origVerWriter = new StreamWriter(origVerFs);
         await origVerWriter.WriteLineAsync(originalModuleVersion).ConfigureAwait(false);
 
-        module.ModuleVersion = new NuGetVersion(moduleManifestVersion.ToString());
+        module = module with { ModuleVersion = new NuGetVersion(moduleManifestVersion.ToString()) };
       }
       else
       {
@@ -273,7 +273,7 @@ public class ModuleFastInstaller
 
     cmdlet?.Verbose($"{module}: Successfully installed to {installPath}");
 
-    module.Location = new Uri(installPath);
+    module = module with { Location = new Uri(installPath) };
     return module;
   }
 }

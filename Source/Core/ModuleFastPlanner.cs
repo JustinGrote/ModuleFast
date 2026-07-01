@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 
@@ -5,17 +6,11 @@ using NuGet.Versioning;
 
 namespace ModuleFast;
 
-public class ModuleFastPlanner
+public class ModuleFastPlanner(
+  HttpClient httpClient,
+  string source
+)
 {
-  private readonly HttpClient _httpClient;
-  private readonly string _source;
-
-  public ModuleFastPlanner(HttpClient httpClient, string source)
-  {
-    _httpClient = httpClient;
-    _source = source;
-  }
-
   public async Task<HashSet<ModuleFastInfo>> GetPlan(
       IEnumerable<ModuleFastSpec> specs,
       string[] modulePaths,
@@ -26,35 +21,45 @@ public class ModuleFastPlanner
       CancellationToken ct,
       CmdletInteraction? cmdlet = null)
   {
-    HashSet<ModuleFastInfo> modulesToInstall = [];
-    Dictionary<ModuleFastSpec, ModuleFastInfo> bestLocalCandidates = [];
-    Dictionary<Task<string>, ModuleFastSpec> pendingTasks = [];
+    ConcurrentDictionary<ModuleFastInfo, byte> modulesToInstall = [];
+    ConcurrentDictionary<ModuleFastSpec, ModuleFastInfo> bestLocalCandidates = [];
+    ConcurrentDictionary<ModuleFastSpec, byte> enqueuedSpecs = [];
+    ConcurrentQueue<ModuleFastSpec> pendingSpecs = [];
 
     foreach (ModuleFastSpec spec in specs)
     {
-      cmdlet?.Verbose($"{spec}: Evaluating Module Specification");
-      ModuleFastInfo? localMatch = LocalModuleFinder.FindLocalModule(spec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
-      if (localMatch != null && !update)
-      {
-        cmdlet?.Debug($"{localMatch}: 🎯 FOUND satisfying version {localMatch.ModuleVersion} at {localMatch.Location}. Skipping remote search.");
-        continue;
-      }
-
-      cmdlet?.Debug($"{spec}: 🔍 No installed versions matched. Will check remotely.");
-      Task<string> task = GetModuleInfoAsync(spec.Name, _source, ct);
-      pendingTasks[task] = spec;
+      if (enqueuedSpecs.TryAdd(spec, 0))
+        pendingSpecs.Enqueue(spec);
     }
 
-    while (pendingTasks.Count > 0)
+    while (!pendingSpecs.IsEmpty)
     {
-      Task<string>[] snapshot = pendingTasks.Keys.ToArray();
+      List<ModuleFastSpec> batch = [];
+      while (pendingSpecs.TryDequeue(out ModuleFastSpec? spec))
+        batch.Add(spec);
 
-      await foreach (Task<string>? completed in Task.WhenEach(snapshot).WithCancellation(ct).ConfigureAwait(false))
+      if (batch.Count == 0)
+        continue;
+
+      await Parallel.ForEachAsync(batch, ct, async (currentSpec, token) =>
       {
-        if (!pendingTasks.TryGetValue(completed, out ModuleFastSpec? currentSpec))
-          continue;
+        cmdlet?.Verbose($"{currentSpec}: Evaluating Module Specification");
 
-        pendingTasks.Remove(completed);
+        ModuleFastInfo? localMatch = await LocalModuleFinder.FindLocalModule(
+            currentSpec,
+            modulePaths,
+            update,
+            bestLocalCandidates,
+            strictSemVer,
+            token,
+            cmdlet).ConfigureAwait(false);
+        if (localMatch != null && !update)
+        {
+          cmdlet?.Debug($"{localMatch}: 🎯 FOUND satisfying version {localMatch.ModuleVersion} at {localMatch.Location}. Skipping remote search.");
+          return;
+        }
+
+        cmdlet?.Debug($"{currentSpec}: 🔍 No installed versions matched. Will check remotely.");
 
         if (currentSpec.Guid != Guid.Empty)
           cmdlet?.Warning($"{currentSpec}: A GUID constraint was found. GUIDs will only be verified after installation.");
@@ -64,40 +69,40 @@ public class ModuleFastPlanner
         string json;
         try
         {
-          json = await completed.ConfigureAwait(false);
+          json = await GetModuleInfoAsync(currentSpec.Name, source, token).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-          throw new InvalidOperationException($"{currentSpec}: module was not found in the {_source} repository. Check the spelling and try again.");
+          throw new InvalidOperationException($"{currentSpec}: module was not found in the {source} repository. Check the spelling and try again.");
         }
         catch (HttpRequestException ex)
         {
-          throw new InvalidOperationException($"{currentSpec}: Failed to fetch module from {_source}. Error: {ex.Message}", ex);
+          throw new InvalidOperationException($"{currentSpec}: Failed to fetch module from {source}. Error: {ex.Message}", ex);
         }
 
         RegistrationResponse response;
         try
         {
           response = JsonSerializer.Deserialize(json, ModuleFastJsonContext.Default.RegistrationResponse)
-              ?? throw new InvalidDataException($"{currentSpec}: Invalid response from {_source}");
+              ?? throw new InvalidDataException($"{currentSpec}: Invalid response from {source}");
         }
         catch (JsonException ex)
         {
-          throw new InvalidDataException($"{currentSpec}: Invalid JSON response from {_source}: {ex.Message}", ex);
+          throw new InvalidDataException($"{currentSpec}: Invalid JSON response from {source}: {ex.Message}", ex);
         }
 
         if (response.Count == 0 && response.Items.Length == 0)
-          throw new InvalidDataException($"{currentSpec}: invalid result received from {_source}.");
+          throw new InvalidDataException($"{currentSpec}: invalid result received from {source}.");
 
         CatalogEntry? selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, cmdlet);
         if (selectedEntry == null)
         {
-          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, ct, cmdlet)
+          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, token, cmdlet)
               .ConfigureAwait(false);
         }
 
         if (selectedEntry == null)
-          throw new InvalidOperationException($"{currentSpec}: a matching module was not found in the {_source} repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints.");
+          throw new InvalidOperationException($"{currentSpec}: a matching module was not found in the {source} repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints.");
 
         if (string.IsNullOrEmpty(selectedEntry.PackageContent))
           throw new InvalidDataException($"No package location found for {currentSpec}. This is a bug.");
@@ -111,19 +116,19 @@ public class ModuleFastPlanner
             new Uri(selectedEntry.PackageContent));
 
         if (currentSpec.Guid != Guid.Empty)
-          selectedModule.Guid = currentSpec.Guid;
+          selectedModule = selectedModule with { Guid = currentSpec.Guid };
 
         if (update && bestLocalCandidates.TryGetValue(currentSpec, out ModuleFastInfo? bestLocal) &&
             bestLocal.ModuleVersion == selectedModule.ModuleVersion)
         {
           cmdlet?.Debug($"{selectedModule}: -Update specified and best remote candidate matches what is locally installed. Skipping install.");
-          continue;
+          return;
         }
 
-        if (!modulesToInstall.Add(selectedModule))
+        if (!modulesToInstall.TryAdd(selectedModule, 0))
         {
           cmdlet?.Debug($"{selectedModule} already exists in the install plan. Skipping...");
-          continue;
+          return;
         }
 
         cmdlet?.Verbose($"{selectedModule}: Added to install plan");
@@ -138,7 +143,7 @@ public class ModuleFastPlanner
               : VersionRange.Parse(dep.Range);
           ModuleFastSpec depSpec = new ModuleFastSpec(dep.Id, depRange);
 
-          ModuleFastInfo? existing = modulesToInstall
+          ModuleFastInfo? existing = modulesToInstall.Keys
               .Where(m => string.Equals(m.Name, depSpec.Name, StringComparison.OrdinalIgnoreCase))
               .OrderByDescending(m => m.ModuleVersion)
               .FirstOrDefault();
@@ -148,21 +153,28 @@ public class ModuleFastPlanner
             continue;
           }
 
-          ModuleFastInfo? depLocal = LocalModuleFinder.FindLocalModule(depSpec, modulePaths, update, bestLocalCandidates, strictSemVer, cmdlet);
+          ModuleFastInfo? depLocal = await LocalModuleFinder.FindLocalModule(
+              depSpec,
+              modulePaths,
+              update,
+              bestLocalCandidates,
+              strictSemVer,
+              token,
+              cmdlet).ConfigureAwait(false);
           if (depLocal != null)
           {
             cmdlet?.Debug($"FOUND local module {depLocal.Name} {depLocal.ModuleVersion} satisfies {depSpec}. Skipping...");
             continue;
           }
 
-          cmdlet?.Debug($"{currentSpec}: Fetching dependency {depSpec}");
-          Task<string> depTask = GetModuleInfoAsync(depSpec.Name, _source, ct);
-          pendingTasks[depTask] = depSpec;
+          cmdlet?.Debug($"{currentSpec}: Queueing dependency {depSpec}");
+          if (enqueuedSpecs.TryAdd(depSpec, 0))
+            pendingSpecs.Enqueue(depSpec);
         }
-      }
+      }).ConfigureAwait(false);
     }
 
-    return modulesToInstall;
+    return modulesToInstall.Keys.ToHashSet();
   }
 
   private CatalogEntry? FindBestEntry(
@@ -233,7 +245,7 @@ public class ModuleFastPlanner
         .ToArray();
 
     if (pages.Length == 0)
-      throw new InvalidOperationException($"{spec}: a matching module was not found in the {_source} repository that satisfies the requested version constraints. You may need to specify -PreRelease or adjust your version constraints.");
+      throw new InvalidOperationException($"{spec}: a matching module was not found in the {source} repository that satisfies the requested version constraints. You may need to specify -PreRelease or adjust your version constraints.");
 
     messages?.Debug($"{spec}: Found {pages.Length} additional pages to query.");
 
@@ -308,6 +320,6 @@ public class ModuleFastPlanner
   private async Task<string> GetCachedStringAsync(string url, CancellationToken ct)
   {
     return await ModuleFastCache.Instance.GetOrAdd(url, async _ =>
-        await _httpClient.GetStringAsync(url, ct).ConfigureAwait(false)).ConfigureAwait(false);
+        await httpClient.GetStringAsync(url, ct).ConfigureAwait(false)).ConfigureAwait(false);
   }
 }

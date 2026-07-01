@@ -9,19 +9,11 @@ namespace ModuleFast;
 
 public static class ModuleManifestReader
 {
-  /// <summary>
-  /// Imports a module manifest (psd1), handling dynamic expression manifests as well.
-  /// </summary>
-  public static Hashtable ImportModuleManifest(string path, CmdletInteraction? cmdlet = null)
+  private static Hashtable ParseManifestContent(string path, string content, CmdletInteraction? cmdlet)
   {
-    if (!File.Exists(path))
-      throw new FileNotFoundException($"Manifest file was not found: {path}", path);
-
-    cmdlet?.Debug($"Parsing manifest: {path}");
-
     Token[] tokens;
     ParseError[] errors;
-    var ast = Parser.ParseFile(path, out tokens, out errors);
+    var ast = Parser.ParseInput(content, path, out tokens, out errors);
     if (errors.Length > 0)
       throw new InvalidDataException($"The manifest at {path} could not be parsed as a PowerShell data file");
 
@@ -36,11 +28,41 @@ public static class ModuleManifestReader
     catch (Exception ex) when (IsDynamicExpressionsError(ex))
     {
       cmdlet?.Debug($"{path} is a Manifest with dynamic expressions. Attempting to safe evaluate...");
-      var scriptBlock = ScriptBlock.Create(File.ReadAllText(path));
+      var scriptBlock = ScriptBlock.Create(content);
       scriptBlock.CheckRestrictedLanguage([], ["PSEdition", "PSScriptRoot"], true);
       var rawResult = scriptBlock.InvokeReturnAsIs();
       return ToHashtable(rawResult) ?? throw new InvalidOperationException("Dynamic manifest evaluation returned null");
     }
+  }
+
+  /// <summary>
+  /// Imports a module manifest (psd1), handling dynamic expression manifests as well.
+  /// </summary>
+  public static Hashtable ImportModuleManifest(string path, CmdletInteraction? cmdlet = null)
+  {
+    if (!File.Exists(path))
+      throw new FileNotFoundException($"Manifest file was not found: {path}", path);
+
+    cmdlet?.Debug($"Parsing manifest: {path}");
+    string manifestContent = File.ReadAllText(path);
+    return ParseManifestContent(path, manifestContent, cmdlet);
+  }
+
+  /// <summary>
+  /// Asynchronously imports a module manifest (psd1), handling dynamic expression manifests as well.
+  /// </summary>
+  public static async Task<Hashtable> ImportModuleManifestAsync(
+      string path,
+      CmdletInteraction? cmdlet = null,
+      CancellationToken ct = default)
+  {
+    if (!File.Exists(path))
+      throw new FileNotFoundException($"Manifest file was not found: {path}", path);
+
+    cmdlet?.Debug($"Parsing manifest: {path}");
+    string manifestContent = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+    ct.ThrowIfCancellationRequested();
+    return ParseManifestContent(path, manifestContent, cmdlet);
   }
 
   private static bool IsDynamicExpressionsError(Exception ex)
@@ -86,7 +108,34 @@ public static class ModuleManifestReader
     ModuleFastInfo info = new(manifestName, manifestVersion, new Uri(manifestPath));
 
     if (manifestData["GUID"] is string guidStr && Guid.TryParse(guidStr, out Guid guid))
-      info.Guid = guid;
+      info = info with { Guid = guid };
+
+    return info;
+  }
+
+  /// <summary>
+  /// Asynchronously converts a manifest file path to a ModuleFastInfo object.
+  /// </summary>
+  public static async Task<ModuleFastInfo> ConvertFromModuleManifestAsync(
+      string manifestPath,
+      CmdletInteraction? logger = null,
+      CancellationToken ct = default)
+  {
+    var manifestName = Path.GetFileNameWithoutExtension(manifestPath);
+    Hashtable manifestData = await ImportModuleManifestAsync(manifestPath, logger, ct).ConfigureAwait(false);
+
+    if (!Version.TryParse(manifestData["ModuleVersion"]?.ToString() ?? "", out Version? manifestVersionData))
+      throw new InvalidDataException($"The manifest at {manifestPath} has an invalid ModuleVersion. This is probably an invalid or corrupt manifest");
+
+    var prerelease = (manifestData["PrivateData"] as Hashtable)?["PSData"] is Hashtable psData
+        ? psData["Prerelease"]?.ToString()
+        : null;
+
+    NuGetVersion manifestVersion = new(manifestVersionData, prerelease);
+    ModuleFastInfo info = new(manifestName, manifestVersion, new Uri(manifestPath));
+
+    if (manifestData["GUID"] is string guidStr && Guid.TryParse(guidStr, out Guid guid))
+      info = info with { Guid = guid };
 
     return info;
   }

@@ -9,6 +9,24 @@ public static partial class LocalModuleFinder
 {
   [GeneratedRegex(@"^\d+\.\d+\.\d+\.\d+$", RegexOptions.Compiled)]
   private static partial Regex FourPartVersionRegex();
+
+  private static string? FindSinglePathOrThrow(IEnumerable<string> matches, string ambiguityPrefix)
+  {
+    using IEnumerator<string> enumerator = matches.GetEnumerator();
+    if (!enumerator.MoveNext())
+      return null;
+
+    string first = enumerator.Current;
+    if (!enumerator.MoveNext())
+      return first;
+
+    List<string> allMatches = [first, enumerator.Current];
+    while (enumerator.MoveNext())
+      allMatches.Add(enumerator.Current);
+
+    throw new InvalidOperationException($"{ambiguityPrefix}: {string.Join(", ", allMatches)}");
+  }
+
   /// <summary>
   /// Resolves the folder version from a NuGetVersion: 4-part stays as-is, 3-part strips trailing .0.
   /// </summary>
@@ -24,12 +42,13 @@ public static partial class LocalModuleFinder
   /// Searches local PSModulePaths for the first module that satisfies the ModuleSpec criteria.
   /// Returns null if no match found.
   /// </summary>
-  public static ModuleFastInfo? FindLocalModule(
+  public static async Task<ModuleFastInfo?> FindLocalModule(
       ModuleFastSpec spec,
       string[]? modulePaths,
       bool update,
-      Dictionary<ModuleFastSpec, ModuleFastInfo>? bestCandidates,
+      IDictionary<ModuleFastSpec, ModuleFastInfo>? bestCandidates,
       bool strictSemVer,
+      CancellationToken ct = default,
       CmdletInteraction? logger = null)
   {
     if (modulePaths == null || modulePaths.Length == 0)
@@ -40,6 +59,8 @@ public static partial class LocalModuleFinder
 
     foreach (var modulePath in modulePaths)
     {
+      ct.ThrowIfCancellationRequested();
+
       if (!Directory.Exists(modulePath))
       {
         logger?.Debug($"{spec}: Skipping PSModulePath {modulePath} - Configured but does not exist.");
@@ -47,18 +68,17 @@ public static partial class LocalModuleFinder
       }
 
       // Case-insensitive search for module base dir
-      var moduleDirs = Directory.EnumerateDirectories(modulePath, spec.Name,
-          new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive }).ToArray();
+      string? moduleBaseDir = FindSinglePathOrThrow(
+          Directory.EnumerateDirectories(modulePath, spec.Name,
+              new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive }),
+          $"{spec.Name} folder is ambiguous, please delete one");
 
-      if (moduleDirs.Length > 1)
-        throw new InvalidOperationException($"{spec.Name} folder is ambiguous, please delete one: {string.Join(", ", moduleDirs)}");
-      if (moduleDirs.Length == 0)
+      if (moduleBaseDir == null)
       {
         logger?.Debug($"{spec}: Skipping PSModulePath {modulePath} - Does not have this module.");
         continue;
       }
 
-      var moduleBaseDir = moduleDirs[0];
       List<(Version version, string path)> candidatePaths = [];
       var manifestName = $"{spec.Name}.psd1";
 
@@ -111,14 +131,14 @@ public static partial class LocalModuleFinder
       // Classic module fallback
       if (candidatePaths.Count == 0)
       {
-        var classicManifests = Directory.GetFiles(moduleBaseDir, manifestName,
-            new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive });
-        if (classicManifests.Length > 1)
-          throw new InvalidOperationException($"{moduleBaseDir} manifest is ambiguous: {string.Join(", ", classicManifests)}");
-        if (classicManifests.Length == 1)
+        string? classicManifestPath = FindSinglePathOrThrow(
+            Directory.EnumerateFiles(moduleBaseDir, manifestName,
+                new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive }),
+            $"{moduleBaseDir} manifest is ambiguous");
+        if (classicManifestPath != null)
         {
-          var classicManifestPath = classicManifests[0];
-          Hashtable classicData = ModuleManifestReader.ImportModuleManifest(classicManifestPath, logger);
+          Hashtable classicData = await ModuleManifestReader.ImportModuleManifestAsync(classicManifestPath, logger, ct)
+              .ConfigureAwait(false);
           if (Version.TryParse(classicData["ModuleVersion"]?.ToString() ?? "", out Version? classicVersion))
           {
             logger?.Debug($"{spec}: Found classic module {classicVersion} at {moduleBaseDir}");
@@ -149,12 +169,12 @@ public static partial class LocalModuleFinder
           continue;
         }
 
-        var manifests = Directory.GetFiles(folder, manifestName,
-            new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive });
+        string? manifestPath = FindSinglePathOrThrow(
+            Directory.EnumerateFiles(folder, manifestName,
+                new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive }),
+            $"{folder} manifest is ambiguous");
 
-        if (manifests.Length > 1)
-          throw new InvalidOperationException($"{folder} manifest is ambiguous: {string.Join(", ", manifests)}");
-        if (manifests.Length == 0)
+        if (manifestPath == null)
         {
           logger?.Warning($"{spec}: Found candidate folder {folder} but no {manifestName} manifest found. This may be a corrupt module.");
           continue;
@@ -163,11 +183,12 @@ public static partial class LocalModuleFinder
         ModuleFastInfo manifestCandidate;
         try
         {
-          manifestCandidate = ModuleManifestReader.ConvertFromModuleManifest(manifests[0], logger);
+          manifestCandidate = await ModuleManifestReader.ConvertFromModuleManifestAsync(manifestPath, logger, ct)
+              .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-          logger?.Warning($"{spec}: Failed to read manifest at {manifests[0]}: {ex.Message}");
+          logger?.Warning($"{spec}: Failed to read manifest at {manifestPath}: {ex.Message}");
           continue;
         }
 
