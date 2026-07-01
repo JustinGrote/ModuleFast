@@ -4,7 +4,6 @@ using System.IO.Compression;
 
 using NuGet.Common;
 using NuGet.Configuration;
-using NuGet.Protocol;
 using NuGet.Protocol.Core.Types;
 using NuGet.Versioning;
 namespace ModuleFast;
@@ -161,7 +160,10 @@ public class ModuleFastInstaller
     if (module.Location == null)
       throw new InvalidOperationException($"{module}: No Download Link found. This is a bug.");
 
-    using SourceCacheContext cacheContext = new();
+    using SourceCacheContext cacheContext = new()
+    {
+      DirectDownload = true
+    };
     using MemoryStream packageStream = new();
     bool packageFound = await findPackageByIdResource.CopyNupkgToStreamAsync(
       module.Name,

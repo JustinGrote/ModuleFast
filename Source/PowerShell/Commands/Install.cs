@@ -7,7 +7,10 @@ using static System.IO.Path;
 namespace ModuleFast.Commands;
 
 [Cmdlet(VerbsLifecycle.Install, "ModuleFast",
-    DefaultParameterSetName = "Specification")]
+  DefaultParameterSetName = "Specification",
+  SupportsShouldProcess = true,
+  ConfirmImpact = ConfirmImpact.Low
+)]
 [OutputType(typeof(ModuleFastInfo))]
 public class InstallModuleFastCommand : TaskCmdlet
 {
@@ -297,6 +300,8 @@ public class InstallModuleFastCommand : TaskCmdlet
         var planner = new ModuleFastPlanner(Source);
         bool whatIfSpecified = MyInvocation.BoundParameters.TryGetValue("WhatIf", out object? whatIfValue)
             && LanguagePrimitives.IsTrue(whatIfValue);
+        bool whatIfPreferenceEnabled = SessionState.PSVariable.GetValue("WhatIfPreference") is bool wp && wp;
+        bool whatIfEnabled = whatIfSpecified || whatIfPreferenceEnabled;
         bool confirmSpecified = MyInvocation.BoundParameters.TryGetValue("Confirm", out object? confirmValue);
         bool confirmEnabled = confirmSpecified && LanguagePrimitives.IsTrue(confirmValue);
         bool confirmSuppressed = confirmSpecified && !confirmEnabled;
@@ -304,7 +309,7 @@ public class InstallModuleFastCommand : TaskCmdlet
             ? cp
             : ConfirmImpact.High;
         bool confirmationWouldPrompt = !confirmSuppressed && confirmPreference <= ConfirmImpact.Medium;
-        bool canStreamDuringPlan = !Plan && !whatIfSpecified && !confirmEnabled && !confirmationWouldPrompt;
+        bool canStreamDuringPlan = !Plan && !whatIfEnabled && !confirmEnabled && !confirmationWouldPrompt;
 
         if (canStreamDuringPlan)
         {

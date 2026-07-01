@@ -82,7 +82,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// </summary>
   public async Task<T> Exec<T>(Func<T> action)
   {
-    TaskCompletionSource<object?> response = new();
+    TaskCompletionSource<object?> response = new(TaskCreationOptions.RunContinuationsAsynchronously);
     AddOutput(new MainAction(() => action(), response));
     return (T?)await response.Task.ConfigureAwait(false) ?? default!;
   }
@@ -92,7 +92,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// </summary>
   protected async Task Post(Action action)
   {
-    TaskCompletionSource<object?> response = new();
+    TaskCompletionSource<object?> response = new(TaskCreationOptions.RunContinuationsAsynchronously);
     AddOutput(new MainAction(() =>
     {
       action();
@@ -454,7 +454,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// <returns><c>true</c> if the operation should proceed; <c>false</c> if the user declined.</returns>
   public async Task<bool> Confirm(string target, string action = "")
   {
-    TaskCompletionSource<bool> response = new();
+    TaskCompletionSource<bool> response = new(TaskCreationOptions.RunContinuationsAsynchronously);
     await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
     AddOutput(new ShouldProcessPrompt(target, action, response));
     return await response.Task.ConfigureAwait(false);
@@ -470,7 +470,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// <returns><c>true</c> if the operation should proceed; <c>false</c> if the user declined.</returns>
   public async Task<bool> ConfirmCustom(string whatIfMessage, string confirmHeader = "", string confirmMessage = "")
   {
-    TaskCompletionSource<bool> response = new();
+    TaskCompletionSource<bool> response = new(TaskCreationOptions.RunContinuationsAsynchronously);
     await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
     AddOutput(new ShouldProcessCustomPrompt(whatIfMessage, confirmHeader, confirmMessage, response));
     return await response.Task.ConfigureAwait(false);
