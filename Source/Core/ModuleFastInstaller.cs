@@ -29,8 +29,7 @@ public class ModuleFastInstaller
             StringComparison.OrdinalIgnoreCase))
         .ToArray();
     return matches.Length == 1 ? matches[0]
-         : matches.Length > 1 ? throw new InvalidOperationException(
-               $"Ambiguous manifest in {directory}: {string.Join(", ", matches)}")
+         : matches.Length > 1 ? throw new InvalidOperationException($"Ambiguous manifest in {directory}: {string.Join(", ", matches)}")
          : null;
   }
 
@@ -42,12 +41,11 @@ public class ModuleFastInstaller
   }
 
   /// <summary>
-  /// Installs all <paramref name="modules"/> in parallel using
-  /// <see cref="Parallel.ForEachAsync"/>, capping concurrency at
-  /// <paramref name="maxConcurrency"/> simultaneous operations.
+  /// Installs all <paramref name="modules"/> in parallel from an async stream,
+  /// capping concurrency at <paramref name="maxConcurrency"/> simultaneous operations.
   /// </summary>
   public async Task<List<ModuleFastInfo>> InstallModules(
-      IEnumerable<ModuleFastInfo> modules,
+      IAsyncEnumerable<ModuleFastInfo> modules,
       string destination,
       bool update,
       CancellationToken ct,
@@ -81,6 +79,24 @@ public class ModuleFastInstaller
     }).ConfigureAwait(false);
 
     return results.ToList();
+  }
+
+  /// <summary>
+  /// Installs all <paramref name="modules"/> in parallel using
+  /// <see cref="Parallel.ForEachAsync"/>, capping concurrency at
+  /// <paramref name="maxConcurrency"/> simultaneous operations.
+  /// </summary>
+  public async Task<List<ModuleFastInfo>> InstallModules(
+      IEnumerable<ModuleFastInfo> modules,
+      string destination,
+      bool update,
+      CancellationToken ct,
+      CmdletInteraction? cmdlet = null,
+      int maxConcurrency = 0,
+      Action<ModuleFastInfo>? onModuleInstalled = null)
+  {
+    return await InstallModules(modules.ToAsyncEnumerable(), destination, update, ct, cmdlet, maxConcurrency, onModuleInstalled)
+        .ConfigureAwait(false);
   }
 
   private async Task<ModuleFastInfo?> InstallSingleAsync(
@@ -145,8 +161,8 @@ public class ModuleFastInstaller
     if (module.Location == null)
       throw new InvalidOperationException($"{module}: No Download Link found. This is a bug.");
 
-    using SourceCacheContext cacheContext = new SourceCacheContext();
-    using MemoryStream packageStream = new MemoryStream();
+    using SourceCacheContext cacheContext = new();
+    using MemoryStream packageStream = new();
     bool packageFound = await findPackageByIdResource.CopyNupkgToStreamAsync(
       module.Name,
       module.ModuleVersion,
@@ -180,19 +196,55 @@ public class ModuleFastInstaller
         ?? throw new FileNotFoundException(
             $"{module}: Could not find manifest matching '{module.Name}.psd1' in {installPath}.",
             Path.Combine(installPath, $"{module.Name}.psd1"));
-    Version? moduleManifestVersion = ModuleManifestReader.TryReadModuleVersionFast(manifestPath);
-
-    if (moduleManifestVersion == null)
+    // Start post-extract validation work in parallel. Importing a manifest can be expensive,
+    // so both operations share a single manifest import task when needed.
+    Task<Hashtable>? manifestDataTask = null;
+    Task<Hashtable> GetManifestDataTask()
     {
-      // Fast reader failed, fall back to full manifest import
+      return manifestDataTask ??= Task.Run(() =>
+          cmdlet != null
+              ? ModuleManifestReader.ImportModuleManifest(manifestPath, cmdlet)
+              : ModuleManifestReader.ImportModuleManifest(manifestPath, cmdlet: null),
+          ct);
+    }
+
+    Task<Version?> moduleManifestVersionTask = Task.Run(async () =>
+    {
+      Version? fastVersion = ModuleManifestReader.TryReadModuleVersionFast(manifestPath);
+      if (fastVersion != null)
+        return fastVersion;
+
+      // Fast reader failed, fall back to full manifest import.
       try
       {
-        Hashtable fallbackData = ModuleManifestReader.ImportModuleManifest(manifestPath, cmdlet);
-        if (Version.TryParse(fallbackData["ModuleVersion"]?.ToString() ?? "", out Version? fallbackVersion))
-          moduleManifestVersion = fallbackVersion;
+        Hashtable fallbackData = await GetManifestDataTask().ConfigureAwait(false);
+        return Version.TryParse(fallbackData["ModuleVersion"]?.ToString() ?? "", out Version? fallbackVersion)
+            ? fallbackVersion
+            : null;
       }
-      catch { /* Fall through to warning */ }
-    }
+      catch
+      {
+        return null;
+      }
+    }, ct);
+
+    Task guidVerificationTask = module.Guid == Guid.Empty
+      ? Task.CompletedTask
+      : Task.Run(async () =>
+      {
+        cmdlet?.Debug($"{module}: GUID was specified. Verifying manifest.");
+        Hashtable manifestData = await GetManifestDataTask().ConfigureAwait(false);
+        if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out Guid manifestGuid) ||
+            manifestGuid != module.Guid)
+        {
+          Directory.Delete(installPath, true);
+          throw new InvalidOperationException(
+              $"{module}: The installed package GUID does not match. Expected {module.Guid} but found {manifestGuid} in {manifestPath}.");
+        }
+      }, ct);
+
+    await Task.WhenAll(moduleManifestVersionTask, guidVerificationTask).ConfigureAwait(false);
+    Version? moduleManifestVersion = moduleManifestVersionTask.Result;
 
     if (moduleManifestVersion == null)
     {
@@ -235,27 +287,6 @@ public class ModuleFastInstaller
         cmdlet?.Debug($"{module}: Verified module manifest version matched, no action needed.");
       }
     }
-
-    // Verify GUID if specified
-    if (module.Guid != Guid.Empty)
-    {
-      cmdlet?.Debug($"{module}: GUID was specified. Verifying manifest.");
-      var guidManifestPath = FindManifestPath(installPath, module.Name)
-          ?? throw new FileNotFoundException(
-              $"{module}: Manifest not found in {installPath} for GUID verification.",
-              Path.Combine(installPath, $"{module.Name}.psd1"));
-      Hashtable manifestData = cmdlet != null
-          ? ModuleManifestReader.ImportModuleManifest(guidManifestPath, cmdlet)
-          : ModuleManifestReader.ImportModuleManifest(guidManifestPath, cmdlet: null);
-      if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out Guid manifestGuid) ||
-          manifestGuid != module.Guid)
-      {
-        Directory.Delete(installPath, true);
-        throw new InvalidOperationException(
-            $"{module}: The installed package GUID does not match. Expected {module.Guid} but found {manifestGuid} in {guidManifestPath}.");
-      }
-    }
-
 
     // Clean up NuGet files — use EnumerateFileSystemEntries to avoid buffering the full listing
     cmdlet?.Debug($"{module}: Cleaning up NuGet files in {installPath}");

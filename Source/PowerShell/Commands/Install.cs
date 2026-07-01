@@ -1,5 +1,6 @@
 using System.Management.Automation;
 using System.Text.Json;
+using System.Threading.Channels;
 
 using static System.IO.Path;
 
@@ -10,6 +11,9 @@ namespace ModuleFast.Commands;
 [OutputType(typeof(ModuleFastInfo))]
 public class InstallModuleFastCommand : TaskCmdlet
 {
+  private const int PlanProgressId = 1;
+  private const int InstallProgressId = 2;
+
   [Alias("Name", "ModuleToInstall", "ModulesToInstall")]
   [AllowNull]
   [AllowEmptyCollection]
@@ -281,7 +285,7 @@ public class InstallModuleFastCommand : TaskCmdlet
               new InvalidDataException("No module specifications found to evaluate."),
               "NoSpecifications", ErrorCategory.InvalidData, null));
 
-        Progress("Install-ModuleFast", "Plan", percentComplete: 1);
+        Progress("Install-ModuleFast", "Plan", percentComplete: 1, id: PlanProgressId);
 
         string[] modulePaths;
         if (DestinationOnly)
@@ -291,9 +295,104 @@ public class InstallModuleFastCommand : TaskCmdlet
               ?.Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
         var planner = new ModuleFastPlanner(Source);
-        HashSet<ModuleFastInfo> planSet = await planner.GetPlan(
+        bool whatIfSpecified = MyInvocation.BoundParameters.TryGetValue("WhatIf", out object? whatIfValue)
+            && LanguagePrimitives.IsTrue(whatIfValue);
+        bool confirmSpecified = MyInvocation.BoundParameters.TryGetValue("Confirm", out object? confirmValue);
+        bool confirmEnabled = confirmSpecified && LanguagePrimitives.IsTrue(confirmValue);
+        bool confirmSuppressed = confirmSpecified && !confirmEnabled;
+        ConfirmImpact confirmPreference = SessionState.PSVariable.GetValue("ConfirmPreference") is ConfirmImpact cp
+            ? cp
+            : ConfirmImpact.High;
+        bool confirmationWouldPrompt = !confirmSuppressed && confirmPreference <= ConfirmImpact.Medium;
+        bool canStreamDuringPlan = !Plan && !whatIfSpecified && !confirmEnabled && !confirmationWouldPrompt;
+
+        if (canStreamDuringPlan)
+        {
+          var installer = new ModuleFastInstaller(Source);
+          int streamedInstalledCount = 0;
+          Progress("Install-ModuleFast", "Installing while planning", percentComplete: 0, id: InstallProgressId);
+
+          var updateInstallProgress = new Action<ModuleFastInfo>(_ =>
+          {
+            var done = Interlocked.Increment(ref streamedInstalledCount);
+            Progress("Install-ModuleFast", $"Installing {done} module(s)", percentComplete: 0, id: InstallProgressId);
+          });
+
+          var stream = Channel.CreateUnbounded<ModuleFastInfo>(new UnboundedChannelOptions
+          {
+            SingleReader = true,
+            SingleWriter = false,
+            AllowSynchronousContinuations = false
+          });
+
+          Task<List<ModuleFastInfo>> installStreamTask = installer.InstallModules(
+              stream.Reader.ReadAllAsync(ct),
+              Destination!,
+              Update || ParameterSetName == "ModuleFastInfo",
+              ct,
+              cmdletInteractor,
+              ThrottleLimit,
+              updateInstallProgress);
+
+          try
+          {
+            HashSet<ModuleFastInfo> planSet = await planner.GetPlan(
+                _modulesToInstall,
+                modulePaths,
+                Update,
+                Prerelease,
+                StrictSemVer,
+                DestinationOnly,
+                ct,
+                cmdlet: cmdletInteractor,
+                onModulePlanned: async (module, token) =>
+                {
+                  await stream.Writer.WriteAsync(module, token).ConfigureAwait(false);
+                }).ConfigureAwait(false);
+
+            finalInstallPlan = planSet.ToArray();
+            stream.Writer.TryComplete();
+            Progress("Install-ModuleFast", "Plan complete", percentComplete: 100, id: PlanProgressId);
+          }
+          catch (Exception ex)
+          {
+            stream.Writer.TryComplete(ex);
+            throw;
+          }
+
+          List<ModuleFastInfo> streamedInstalled = await installStreamTask.ConfigureAwait(false);
+
+          if (finalInstallPlan.Length == 0)
+          {
+            var msg = $"✅ {_modulesToInstall.Count} Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update";
+            Verbose(msg);
+            return;
+          }
+
+          Verbose("✅ All required modules installed! Exiting.");
+
+          if (PassThru)
+            foreach (ModuleFastInfo m in streamedInstalled)
+              WriteObject(m);
+
+          if (CI)
+          {
+            Verbose($"Writing lockfile to {CILockFilePath}");
+            var lockFile = new Dictionary<string, string>();
+            foreach (ModuleFastInfo m in finalInstallPlan)
+              lockFile[m.Name] = m.ModuleVersion.ToString();
+
+            var json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(CILockFilePath, json);
+          }
+
+          return;
+        }
+
+        HashSet<ModuleFastInfo> nonStreamingPlanSet = await planner.GetPlan(
           _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, cmdlet: cmdletInteractor).ConfigureAwait(false);
-        finalInstallPlan = planSet.ToArray();
+        finalInstallPlan = nonStreamingPlanSet.ToArray();
+        Progress("Install-ModuleFast", "Plan complete", percentComplete: 100, id: PlanProgressId);
       }
 
       if (finalInstallPlan.Length == 0)
@@ -314,15 +413,15 @@ public class InstallModuleFastCommand : TaskCmdlet
       {
         var total = finalInstallPlan.Length;
         var completed = 0;
-        Progress("Install-ModuleFast", $"Installing 0/{total} Modules", percentComplete: 50);
+        Progress("Install-ModuleFast", $"Installing 0/{total} Modules", percentComplete: 0, id: InstallProgressId);
 
         // The callback is invoked synchronously on the completing thread pool thread.
         // WriteProgress is thread-safe in PowerShell's runtime infrastructure.
         var updateInstallProgress = new Action<ModuleFastInfo>(_ =>
         {
           var done = Interlocked.Increment(ref completed);
-          var pct = (done / total * 50) + 50;
-          Progress("Install-ModuleFast", $"Installing {done}/{total} Modules", percentComplete: pct);
+          var pct = done * 100 / total;
+          Progress("Install-ModuleFast", $"Installing {done}/{total} Modules", percentComplete: pct, id: InstallProgressId);
         });
 
         var installer = new ModuleFastInstaller(Source);
@@ -360,8 +459,9 @@ public class InstallModuleFastCommand : TaskCmdlet
     }
     finally
     {
-      // Ensure progress is always completed
-      Progress("Install-ModuleFast", "Done", percentComplete: 100);
+      // Ensure progress records are always completed
+      Progress("Install-ModuleFast", "Plan done", percentComplete: 100, id: PlanProgressId, completed: true);
+      Progress("Install-ModuleFast", "Install done", percentComplete: 100, id: InstallProgressId, completed: true);
       _timeoutSource?.Dispose();
     }
   }

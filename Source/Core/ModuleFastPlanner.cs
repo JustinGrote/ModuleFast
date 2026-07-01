@@ -26,7 +26,8 @@ public class ModuleFastPlanner(
       bool strictSemVer,
       bool destinationOnly,
       CancellationToken ct,
-      CmdletInteraction? cmdlet = null)
+      CmdletInteraction? cmdlet = null,
+      Func<ModuleFastInfo, CancellationToken, ValueTask>? onModulePlanned = null)
   {
     PackageMetadataResource metadataResource = await _sourceRepository
       .GetResourceAsync<PackageMetadataResource>(ct)
@@ -34,12 +35,14 @@ public class ModuleFastPlanner(
 
     ConcurrentDictionary<ModuleFastInfo, byte> modulesToInstall = [];
     ConcurrentDictionary<ModuleFastSpec, ModuleFastInfo> bestLocalCandidates = [];
-    ConcurrentDictionary<ModuleFastSpec, byte> enqueuedSpecs = [];
+    ConcurrentDictionary<string, byte> enqueuedSpecs = [];
     ConcurrentQueue<ModuleFastSpec> pendingSpecs = [];
+
+    static string GetSpecKey(ModuleFastSpec spec) => $"{spec.Name.ToLowerInvariant()}|{spec.Guid:D}";
 
     foreach (ModuleFastSpec spec in specs)
     {
-      if (enqueuedSpecs.TryAdd(spec, 0))
+      if (enqueuedSpecs.TryAdd(GetSpecKey(spec), 0))
         pendingSpecs.Enqueue(spec);
     }
 
@@ -145,6 +148,9 @@ public class ModuleFastPlanner(
           return;
         }
 
+        if (onModulePlanned != null)
+          await onModulePlanned(selectedModule, token).ConfigureAwait(false);
+
         cmdlet?.Verbose($"{selectedModule}: Added to install plan");
 
         var allDeps = selectedPackage.DependencySets?
@@ -180,7 +186,7 @@ public class ModuleFastPlanner(
           }
 
           cmdlet?.Debug($"{currentSpec}: Queueing dependency {depSpec}");
-          if (enqueuedSpecs.TryAdd(depSpec, 0))
+          if (enqueuedSpecs.TryAdd(GetSpecKey(depSpec), 0))
             pendingSpecs.Enqueue(depSpec);
         }
       }).ConfigureAwait(false);
