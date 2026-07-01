@@ -335,13 +335,13 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
 
   public void Output(TOutput output) => AddOutput(output);
   public void Output(IEnumerable<TOutput> output) => AddOutput(output, true);
-  public new void Debug(string message, bool raw = false) => WriteDebug(raw ? message : $"{name}: {message}");
-  public new void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{name}: {message}");
-  public new void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{name}: {message}");
+  public new void Debug(string message, bool raw = false) => WriteDebug(raw ? message : $"{Name}: {message}");
+  public new void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{Name}: {message}");
+  public new void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{Name}: {message}");
   public new void Info(string message, string[]? tags = null, bool raw = false)
-    => WriteInformation(raw ? message : $"{name}: {message}", tags ?? []);
+    => WriteInformation(raw ? message : $"{Name}: {message}", tags ?? []);
   public void WriteHost(string message, bool raw = false)
-    => WriteInformation(raw ? message : $"{name}: {message}", ["PSHOST"]);
+    => WriteInformation(raw ? message : $"{Name}: {message}", ["PSHOST"]);
   public new void Progress(
     string activity,
     string status = "",
@@ -520,17 +520,17 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
 public class BetterPSCmdlet : PSCmdlet
 {
   /// <summary>The cmdlet's invocation name, used as a prefix in diagnostic messages.</summary>
-  protected string name => MyInvocation.MyCommand.Name;
+  protected string Name => MyInvocation.MyCommand.Name;
 
-  internal void Debug(string message, bool raw = false) => WriteDebug(raw ? message : $"{name}: {message}");
-  internal void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{name}: {message}");
-  internal void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{name}: {message}");
+  internal void Debug(string message, bool raw = false) => WriteDebug(raw ? message : $"{Name}: {message}");
+  internal void Verbose(string message, bool raw = false) => WriteVerbose(raw ? message : $"{Name}: {message}");
+  internal void Warning(string message, bool raw = false) => WriteWarning(raw ? message : $"{Name}: {message}");
 
 
   internal void Info(string message, string[]? tags = null, bool raw = false)
-    => WriteInformation(raw ? message : $"{name}: {message}", tags ?? []);
+    => WriteInformation(raw ? message : $"{Name}: {message}", tags ?? []);
   internal void Console(string message, bool raw = false)
-    => WriteInformation(raw ? message : $"{name}: {message}", ["PSHOST"]);
+    => WriteInformation(raw ? message : $"{Name}: {message}", ["PSHOST"]);
   internal void Progress(
     string activity,
     string status = "",
