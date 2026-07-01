@@ -1,16 +1,23 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Text.Json;
+
+using NuGet.Common;
+using NuGet.Configuration;
+using NuGet.Protocol;
+using NuGet.Protocol.Core.Types;
 
 using NuGet.Versioning;
 
 namespace ModuleFast;
 
 public class ModuleFastPlanner(
-  HttpClient httpClient,
   string source
 )
 {
+  private readonly SourceRepository _sourceRepository = new(
+      new PackageSource(source),
+      Repository.Provider.GetCoreV3());
+
   public async Task<HashSet<ModuleFastInfo>> GetPlan(
       IEnumerable<ModuleFastSpec> specs,
       string[] modulePaths,
@@ -21,6 +28,10 @@ public class ModuleFastPlanner(
       CancellationToken ct,
       CmdletInteraction? cmdlet = null)
   {
+    PackageMetadataResource metadataResource = await _sourceRepository
+      .GetResourceAsync<PackageMetadataResource>(ct)
+      .ConfigureAwait(false);
+
     ConcurrentDictionary<ModuleFastInfo, byte> modulesToInstall = [];
     ConcurrentDictionary<ModuleFastSpec, ModuleFastInfo> bestLocalCandidates = [];
     ConcurrentDictionary<ModuleFastSpec, byte> enqueuedSpecs = [];
@@ -66,10 +77,17 @@ public class ModuleFastPlanner(
 
         cmdlet?.Debug($"{currentSpec}: Processing Response");
 
-        string json;
+        IEnumerable<IPackageSearchMetadata> allMetadata;
         try
         {
-          json = await GetModuleInfoAsync(currentSpec.Name, source, token).ConfigureAwait(false);
+          using SourceCacheContext cacheContext = new();
+          allMetadata = await metadataResource.GetMetadataAsync(
+              currentSpec.Name,
+              includePrerelease: true,
+              includeUnlisted: false,
+              cacheContext,
+              NullLogger.Instance,
+              token).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
@@ -80,40 +98,36 @@ public class ModuleFastPlanner(
           throw new InvalidOperationException($"{currentSpec}: Failed to fetch module from {source}. Error: {ex.Message}", ex);
         }
 
-        RegistrationResponse response;
-        try
-        {
-          response = JsonSerializer.Deserialize(json, ModuleFastJsonContext.Default.RegistrationResponse)
-              ?? throw new InvalidDataException($"{currentSpec}: Invalid response from {source}");
-        }
-        catch (JsonException ex)
-        {
-          throw new InvalidDataException($"{currentSpec}: Invalid JSON response from {source}: {ex.Message}", ex);
-        }
+        IPackageSearchMetadata? selectedPackage = allMetadata
+            .Where(m => m.Identity != null)
+            .OrderByDescending(m => m.Identity.Version)
+            .FirstOrDefault(m =>
+            {
+              NuGetVersion candidate = m.Identity.Version;
+              if ((candidate.IsPrerelease || candidate.HasMetadata) && !(currentSpec.PreRelease || prerelease))
+              {
+                cmdlet?.Debug($"{currentSpec}: skipping candidate {candidate} - prerelease not requested.");
+                return false;
+              }
 
-        if (response.Count == 0 && response.Items.Length == 0)
-          throw new InvalidDataException($"{currentSpec}: invalid result received from {source}.");
+              if (!currentSpec.SatisfiedBy(candidate, strictSemVer))
+                return false;
 
-        CatalogEntry? selectedEntry = FindBestEntry(response, currentSpec, prerelease, strictSemVer, cmdlet);
-        if (selectedEntry == null)
-        {
-          selectedEntry = await FetchBestEntryFromPagesAsync(response, currentSpec, prerelease, strictSemVer, token, cmdlet)
-              .ConfigureAwait(false);
-        }
+              cmdlet?.Debug($"{currentSpec}: Found satisfying version {candidate}.");
+              return true;
+            });
 
-        if (selectedEntry == null)
+        if (selectedPackage == null)
           throw new InvalidOperationException($"{currentSpec}: a matching module was not found in the {source} repository that satisfies the version constraints. You may need to specify -PreRelease or adjust your version constraints.");
 
-        if (string.IsNullOrEmpty(selectedEntry.PackageContent))
-          throw new InvalidDataException($"No package location found for {currentSpec}. This is a bug.");
-
-        if (selectedEntry.Tags != null && Array.Exists(selectedEntry.Tags, t => t == "ItemType:Script"))
+        if (!string.IsNullOrEmpty(selectedPackage.Tags) &&
+            selectedPackage.Tags.Contains("ItemType:Script", StringComparison.OrdinalIgnoreCase))
           throw new NotImplementedException($"{currentSpec}: Script installations are currently not supported.");
 
         ModuleFastInfo selectedModule = new ModuleFastInfo(
-            selectedEntry.Id,
-            NuGetVersion.Parse(selectedEntry.Version),
-            new Uri(selectedEntry.PackageContent));
+            selectedPackage.Identity.Id,
+            selectedPackage.Identity.Version,
+            new Uri(source));
 
         if (currentSpec.Guid != Guid.Empty)
           selectedModule = selectedModule with { Guid = currentSpec.Guid };
@@ -133,14 +147,12 @@ public class ModuleFastPlanner(
 
         cmdlet?.Verbose($"{selectedModule}: Added to install plan");
 
-        IEnumerable<Dependency> allDeps = selectedEntry.DependencyGroups?
-            .SelectMany(g => g.Dependencies ?? []) ?? [];
+        var allDeps = selectedPackage.DependencySets?
+            .SelectMany(g => g.Packages ?? []) ?? [];
 
-        foreach (Dependency? dep in allDeps)
+        foreach (var dep in allDeps)
         {
-          VersionRange depRange = string.IsNullOrWhiteSpace(dep.Range)
-              ? VersionRange.All
-              : VersionRange.Parse(dep.Range);
+          VersionRange depRange = dep.VersionRange ?? VersionRange.All;
           ModuleFastSpec depSpec = new ModuleFastSpec(dep.Id, depRange);
 
           ModuleFastInfo? existing = modulesToInstall.Keys
@@ -175,151 +187,5 @@ public class ModuleFastPlanner(
     }
 
     return modulesToInstall.Keys.ToHashSet();
-  }
-
-  private CatalogEntry? FindBestEntry(
-      RegistrationResponse response,
-      ModuleFastSpec spec,
-      bool prerelease,
-      bool strictSemVer,
-      CmdletInteraction? messages)
-  {
-    RegistrationLeaf[] inlinedLeaves = response.Items
-        .Where(p => p.Items != null)
-        .SelectMany(p => p.Items!)
-        .ToArray();
-
-    if (inlinedLeaves.Length == 0) return null;
-
-    foreach (RegistrationLeaf? leaf in inlinedLeaves)
-    {
-      if (!string.IsNullOrEmpty(leaf.PackageContent) && string.IsNullOrEmpty(leaf.CatalogEntry.PackageContent))
-        leaf.CatalogEntry.PackageContent = leaf.PackageContent;
-    }
-
-    CatalogEntry[] entries = inlinedLeaves.Select(l => l.CatalogEntry).ToArray();
-    if (entries.Length == 0) return null;
-
-    SortedSet<NuGetVersion> versions = new SortedSet<NuGetVersion>(
-        entries.Select(e => NuGetVersion.TryParse(e.Version, out NuGetVersion? v) ? v : null).Where(v => v != null)!);
-
-    foreach (NuGetVersion candidate in versions.Reverse())
-    {
-      if ((candidate.IsPrerelease || candidate.HasMetadata) && !(spec.PreRelease || prerelease))
-      {
-        messages?.Debug($"{spec}: skipping candidate {candidate} - prerelease not requested.");
-        continue;
-      }
-
-      if (spec.SatisfiedBy(candidate, strictSemVer))
-      {
-        messages?.Debug($"{spec}: Found satisfying version {candidate} in inlined index.");
-        return entries.First(e => e.Version == candidate.OriginalVersion ||
-            NuGetVersion.TryParse(e.Version, out NuGetVersion? v) && v == candidate);
-      }
-    }
-
-    return null;
-  }
-
-  private async Task<CatalogEntry?> FetchBestEntryFromPagesAsync(
-      RegistrationResponse response,
-      ModuleFastSpec spec,
-      bool prerelease,
-      bool strictSemVer,
-      CancellationToken ct,
-      CmdletInteraction? messages)
-  {
-    messages?.Debug($"{spec}: not found in inlined index. Determining appropriate page(s) to query.");
-
-    RegistrationPage[] pages = response.Items
-        .Where(p => p.Items == null)
-        .Where(p =>
-        {
-          if (string.IsNullOrEmpty(p.Lower) || string.IsNullOrEmpty(p.Upper)) return true;
-          if (!NuGetVersion.TryParse(p.Lower, out NuGetVersion? lower) || !NuGetVersion.TryParse(p.Upper, out NuGetVersion? upper)) return true;
-          VersionRange pageRange = new VersionRange(lower, true, upper, true);
-          return spec.Overlap(pageRange);
-        })
-        .OrderByDescending(p => NuGetVersion.TryParse(p.Upper, out NuGetVersion? v) ? v : null)
-        .ToArray();
-
-    if (pages.Length == 0)
-      throw new InvalidOperationException($"{spec}: a matching module was not found in the {source} repository that satisfies the requested version constraints. You may need to specify -PreRelease or adjust your version constraints.");
-
-    messages?.Debug($"{spec}: Found {pages.Length} additional pages to query.");
-
-    Task<string>[] pageJsonTasks = pages.Select(p => GetCachedStringAsync(p.Id, ct)).ToArray();
-    var pageJsons = await Task.WhenAll(pageJsonTasks).ConfigureAwait(false);
-
-    for (int i = 0; i < pages.Length; i++)
-    {
-      RegistrationPage pageData;
-      try
-      {
-        pageData = JsonSerializer.Deserialize(pageJsons[i], ModuleFastJsonContext.Default.RegistrationPage)
-            ?? throw new InvalidDataException("Invalid page response");
-      }
-      catch (JsonException)
-      {
-        RegistrationResponse? pageResponse = JsonSerializer.Deserialize(pageJsons[i], ModuleFastJsonContext.Default.RegistrationResponse);
-        pageData = pageResponse?.Items?.FirstOrDefault() ?? new RegistrationPage();
-      }
-
-      if (pageData.Items == null) continue;
-
-      foreach (RegistrationLeaf leaf in pageData.Items)
-      {
-        if (!string.IsNullOrEmpty(leaf.PackageContent) && string.IsNullOrEmpty(leaf.CatalogEntry.PackageContent))
-          leaf.CatalogEntry.PackageContent = leaf.PackageContent;
-      }
-
-      CatalogEntry[] entries = pageData.Items.Select(l => l.CatalogEntry).ToArray();
-      SortedSet<NuGetVersion> versions = new SortedSet<NuGetVersion>(
-          entries.Select(e => NuGetVersion.TryParse(e.Version, out NuGetVersion? v) ? v : null).Where(v => v != null)!);
-
-      foreach (NuGetVersion candidate in versions.Reverse())
-      {
-        if ((candidate.IsPrerelease || candidate.HasMetadata) && !(spec.PreRelease || prerelease))
-          continue;
-
-        if (spec.SatisfiedBy(candidate, strictSemVer))
-        {
-          messages?.Debug($"{spec}: Found satisfying version {candidate} in additional pages.");
-          return entries.First(e => NuGetVersion.TryParse(e.Version, out NuGetVersion? v) && v == candidate);
-        }
-      }
-    }
-
-    return null;
-  }
-
-  private async Task<string> GetModuleInfoAsync(string name, string endpoint, CancellationToken ct)
-  {
-    var registrationBase = await GetRegistrationBaseAsync(endpoint, ct).ConfigureAwait(false);
-    var uri = $"{registrationBase.TrimEnd('/')}/{name.ToLowerInvariant()}/index.json";
-    return await GetCachedStringAsync(uri, ct).ConfigureAwait(false);
-  }
-
-  private async Task<string> GetRegistrationBaseAsync(string endpoint, CancellationToken ct)
-  {
-    var indexJson = await GetCachedStringAsync(endpoint, ct).ConfigureAwait(false);
-    RegistrationIndex index = JsonSerializer.Deserialize(indexJson, ModuleFastJsonContext.Default.RegistrationIndex)
-        ?? throw new InvalidDataException("Invalid registration index from " + endpoint);
-
-    var registrationBase = index.Resources
-        .Where(r => r.Type.Contains("RegistrationsBaseUrl"))
-        .OrderByDescending(r => r.Type)
-        .Select(r => r.Id)
-        .FirstOrDefault()
-        ?? throw new InvalidDataException($"Could not find RegistrationsBaseUrl in index from {endpoint}");
-
-    return registrationBase;
-  }
-
-  private async Task<string> GetCachedStringAsync(string url, CancellationToken ct)
-  {
-    return await ModuleFastCache.Instance.GetOrAdd(url, async _ =>
-        await httpClient.GetStringAsync(url, ct).ConfigureAwait(false)).ConfigureAwait(false);
   }
 }

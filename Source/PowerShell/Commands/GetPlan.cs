@@ -57,7 +57,7 @@ public class GetModuleFastPlanCommand : TaskCmdlet
     }
 
     HttpClient httpClient = ModuleFastClient.Create(Credential?.GetNetworkCredential(), Timeout);
-    var planner = new ModuleFastPlanner(httpClient, Source);
+    var planner = new ModuleFastPlanner(Source);
 
     string[] modulePaths;
     if (DestinationOnly && !string.IsNullOrEmpty(Destination))

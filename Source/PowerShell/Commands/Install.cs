@@ -290,7 +290,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           modulePaths = Environment.GetEnvironmentVariable("PSModulePath")
               ?.Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
-        var planner = new ModuleFastPlanner(_httpClient!, Source);
+        var planner = new ModuleFastPlanner(Source);
         HashSet<ModuleFastInfo> planSet = await planner.GetPlan(
           _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, cmdlet: cmdletInteractor).ConfigureAwait(false);
         finalInstallPlan = planSet.ToArray();
@@ -325,7 +325,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           Progress("Install-ModuleFast", $"Installing {done}/{total} Modules", percentComplete: pct);
         });
 
-        var installer = new ModuleFastInstaller(_httpClient!);
+        var installer = new ModuleFastInstaller(Source);
         List<ModuleFastInfo> installedModules = await installer.InstallModules(
           finalInstallPlan,
           Destination!,

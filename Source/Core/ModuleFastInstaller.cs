@@ -2,12 +2,16 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.IO.Compression;
 
+using NuGet.Common;
+using NuGet.Configuration;
+using NuGet.Protocol;
+using NuGet.Protocol.Core.Types;
 using NuGet.Versioning;
 namespace ModuleFast;
 
 public class ModuleFastInstaller
 {
-  private readonly HttpClient _httpClient;
+  private readonly SourceRepository _sourceRepository;
 
   /// <summary>Maximum MemoryStream pre-allocation for a single package download (512 MB).</summary>
   private const int MaxPreallocatedBufferSize = 512 * 1024 * 1024;
@@ -30,9 +34,11 @@ public class ModuleFastInstaller
          : null;
   }
 
-  public ModuleFastInstaller(HttpClient httpClient)
+  public ModuleFastInstaller(string source)
   {
-    _httpClient = httpClient;
+    _sourceRepository = new SourceRepository(
+        new PackageSource(source),
+        Repository.Provider.GetCoreV3());
   }
 
   /// <summary>
@@ -52,6 +58,10 @@ public class ModuleFastInstaller
     if (maxConcurrency <= 0)
       maxConcurrency = -1; // Default to unbounded concurrency
 
+    FindPackageByIdResource findPackageByIdResource = await _sourceRepository
+        .GetResourceAsync<FindPackageByIdResource>(ct)
+        .ConfigureAwait(false);
+
     ConcurrentBag<ModuleFastInfo> results = [];
     ParallelOptions opts = new()
     {
@@ -61,7 +71,8 @@ public class ModuleFastInstaller
 
     await Parallel.ForEachAsync(modules, opts, async (m, ct) =>
     {
-      ModuleFastInfo? result = await InstallSingleAsync(m, destination, update, ct, cmdlet).ConfigureAwait(false);
+      ModuleFastInfo? result = await InstallSingleAsync(m, destination, update, findPackageByIdResource, ct, cmdlet)
+          .ConfigureAwait(false);
       if (result != null)
       {
         results.Add(result);
@@ -76,6 +87,7 @@ public class ModuleFastInstaller
       ModuleFastInfo module,
       string destination,
       bool update,
+      FindPackageByIdResource findPackageByIdResource,
       CancellationToken ct,
       CmdletInteraction? cmdlet)
   {
@@ -133,24 +145,18 @@ public class ModuleFastInstaller
     if (module.Location == null)
       throw new InvalidOperationException($"{module}: No Download Link found. This is a bug.");
 
-    // Use ResponseHeadersRead so we can read Content-Length and pre-allocate the MemoryStream,
-    // avoiding repeated buffer resizing for large packages while keeping the download truly async.
-    using HttpResponseMessage response = await _httpClient
-        .GetAsync(module.Location, HttpCompletionOption.ResponseHeadersRead, ct)
-        .ConfigureAwait(false);
-    response.EnsureSuccessStatusCode();
+    using SourceCacheContext cacheContext = new SourceCacheContext();
+    using MemoryStream packageStream = new MemoryStream();
+    bool packageFound = await findPackageByIdResource.CopyNupkgToStreamAsync(
+      module.Name,
+      module.ModuleVersion,
+      packageStream,
+      cacheContext,
+      NullLogger.Instance,
+      ct).ConfigureAwait(false);
+    if (!packageFound)
+      throw new InvalidOperationException($"{module}: package content was not found in the configured source.");
 
-    var contentLength = response.Content.Headers.ContentLength;
-    await using Stream httpStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-
-    // Pre-allocate the MemoryStream using Content-Length when available to avoid repeated
-    // internal buffer resizing. Guard against overflow: clamp to int.MaxValue before the
-    // cast so that this stays correct even if MaxPreallocatedBufferSize is ever raised above 2 GB.
-    var preAllocSize = contentLength.HasValue && contentLength.Value > 0
-        ? (int)Math.Min(Math.Min(contentLength.Value, MaxPreallocatedBufferSize), int.MaxValue)
-        : 0;
-    using MemoryStream packageStream = preAllocSize > 0 ? new MemoryStream(preAllocSize) : new MemoryStream();
-    await httpStream.CopyToAsync(packageStream, ct).ConfigureAwait(false);
     packageStream.Position = 0;
 
     Directory.CreateDirectory(installPath);

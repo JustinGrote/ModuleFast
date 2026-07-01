@@ -153,7 +153,7 @@ string[] modulePaths = destinationOnly
 		: Environment.GetEnvironmentVariable("PSModulePath")
 				?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
-var planner = new ModuleFastPlanner(httpClient, source);
+var planner = new ModuleFastPlanner(source);
 HashSet<ModuleFastInfo> planSet = await planner.GetPlan(specs, modulePaths, update, prerelease, strictSemVer, destinationOnly, ct);
 ModuleFastInfo[] installPlan = planSet.ToArray();
 
@@ -173,7 +173,7 @@ if (plan)
 
 // Install
 Console.WriteLine($"Installing {installPlan.Length} module(s) to {destination}...");
-ModuleFastInstaller installer = new ModuleFastInstaller(httpClient);
+ModuleFastInstaller installer = new ModuleFastInstaller(source);
 List<ModuleFastInfo> installed = await installer.InstallModules(installPlan, destination, update, ct, maxConcurrency: throttleLimit);
 
 Console.WriteLine($"Installed {installed.Count} module(s).");

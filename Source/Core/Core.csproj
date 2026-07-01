@@ -8,7 +8,11 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Management.Automation" PrivateAssets="all" />
+    <PackageReference Include="NuGet.Protocol" />
     <PackageReference Include="NuGet.Versioning" />
     <PackageReference Include="Polly.Core" />
   </ItemGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="NuGet.UseSystemTextJsonDeserialization" Value="true" Trim="true" />
+</ItemGroup>
 </Project>
