@@ -21,6 +21,7 @@ $c = @{
   Verbose     = $VerbosePreference -eq 'Continue'
   Debug       = $DebugPreference -eq 'Continue'
 }
+
 if ($DebugPreference -eq 'Continue') {
   $c.Confirm = $false
 }
@@ -78,14 +79,12 @@ Task Package.Zip {
 
 Task Pester {
   #Run this in a separate job so as not to lock any NuGet DLL packages for future runs. Runspace would lock the package to this process still.
-  Start-Job {
+  $result = Start-Job {
     $ProgressPreference = 'SilentlyContinue'
-    Invoke-Pester -Configuration @{
-      Run = @{
-        PassThru = 'true'
-      }
-    }
+    Invoke-Pester -PassThru
   } | Receive-Job -Wait -AutoRemoveJob
+
+  assert ($result.FailedCount -eq 0) "$($result.FailedCount) Pester tests failed."
 }
 
 Task Package Package.Nuget, Package.Zip
