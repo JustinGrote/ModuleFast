@@ -455,7 +455,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   public async Task<bool> Confirm(string target, string action = "")
   {
     TaskCompletionSource<bool> response = new();
-    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled()).ConfigureAwait(false);
+    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
     AddOutput(new ShouldProcessPrompt(target, action, response));
     return await response.Task.ConfigureAwait(false);
   }
@@ -471,7 +471,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   public async Task<bool> ConfirmCustom(string whatIfMessage, string confirmHeader = "", string confirmMessage = "")
   {
     TaskCompletionSource<bool> response = new();
-    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled()).ConfigureAwait(false);
+    await using CancellationTokenRegistration _ = PipelineStopToken.Register(() => response.TrySetCanceled());
     AddOutput(new ShouldProcessCustomPrompt(whatIfMessage, confirmHeader, confirmMessage, response));
     return await response.Task.ConfigureAwait(false);
   }

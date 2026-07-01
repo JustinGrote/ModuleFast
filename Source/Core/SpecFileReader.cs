@@ -17,12 +17,6 @@ public static class SpecFileReader
   private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
   private static readonly Regex _psDependExtendedKeyRegex = new(@"^(.+)::(.+)$", RegexOptions.Compiled);
 
-  /// <summary>
-  /// Optional script requires parser for .ps1/.psm1 files.
-  /// Must be set by host if #Requires parsing is needed.
-  /// </summary>
-  public static IScriptRequiresParser? ScriptParser { get; set; }
-
   public static IEnumerable<string> FindRequiredSpecFiles(string path)
   {
     var resolvedPath = Path.GetFullPath(path);
