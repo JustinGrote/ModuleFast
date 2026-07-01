@@ -6,6 +6,13 @@
       "request": "launch",
       "createTemporaryIntegratedConsole": true,
       "attachDotnetDebugger": true
+    },
+    {
+      "name": "ModuleFast: Pester",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "Invoke-Build Test",
+      "createTemporaryIntegratedConsole": true
     }
   ]
 }

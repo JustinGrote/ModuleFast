@@ -38,23 +38,23 @@ if (-not $binaryModulePath) {
 Write-Debug "Importing binary module from path: $binaryModulePath"
 Import-Module $binaryModulePath -Force
 
-# Register type accelerators so [ModuleFastSpec], [ModuleFastInfo], etc. work without namespace
-# $accelerators = [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')
-# foreach ($pair in @{
-#         'ModuleFastSpec' = [ModuleFast.ModuleFastSpec]
-#         'ModuleFastInfo' = [ModuleFast.ModuleFastInfo]
-#         'SpecFileType'   = [ModuleFast.SpecFileType]
-#         'InstallScope'   = [ModuleFast.InstallScope]
-#     }.GetEnumerator()) {
-#     if (-not $accelerators::Get.ContainsKey($pair.Key)) {
-#         [void]$accelerators::Add($pair.Key, $pair.Value)
-#     }
-# }
-# $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
-#     $accelerators = [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')
-#     'ModuleFastSpec', 'ModuleFastInfo', 'SpecFileType', 'InstallScope' | ForEach-Object {
-#         [void]$accelerators::Remove($_)
-#     }
-# }
+#Register type accelerators so [ModuleFastSpec], [ModuleFastInfo], etc. work without namespace
+$accelerators = [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')
+foreach ($pair in @{
+        'ModuleFastSpec' = [ModuleFast.ModuleFastSpec]
+        'ModuleFastInfo' = [ModuleFast.ModuleFastInfo]
+        'SpecFileType'   = [ModuleFast.SpecFileType]
+        'InstallScope'   = [ModuleFast.InstallScope]
+    }.GetEnumerator()) {
+    if (-not $accelerators::Get.ContainsKey($pair.Key)) {
+        [void]$accelerators::Add($pair.Key, $pair.Value)
+    }
+}
+$MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
+    $accelerators = [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')
+    'ModuleFastSpec', 'ModuleFastInfo', 'SpecFileType', 'InstallScope' | ForEach-Object {
+        [void]$accelerators::Remove($_)
+    }
+}
 
 Set-Alias imf -Value Install-ModuleFast

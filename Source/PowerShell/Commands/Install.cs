@@ -83,7 +83,6 @@ public class InstallModuleFastCommand : TaskCmdlet
   private readonly HashSet<ModuleFastSpec> _modulesToInstall = [];
   private readonly List<ModuleFastInfo> _installPlan = [];
   private CancellationTokenSource? _timeoutSource;
-  private HttpClient? _httpClient;
 
   private CmdletInteraction cmdletInteractor => new TaskCmdletInteractor(this);
 
@@ -182,7 +181,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           .Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries);
       if (!modulePaths.Contains(Destination, StringComparer.OrdinalIgnoreCase))
       {
-        await PathHelper.AddDestinationToPSModulePath(Destination, NoProfileUpdate, (CmdletInteraction)this).ConfigureAwait(false);
+        await PathHelper.AddDestinationToPSModulePath(Destination, NoProfileUpdate, cmdletInteractor).ConfigureAwait(false);
       }
     }
 
@@ -224,7 +223,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         foreach (var p in paths)
         {
-          ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, (CmdletInteraction)this);
+          ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, cmdletInteractor);
           foreach (ModuleFastSpec spec in specs)
             _modulesToInstall.Add(spec);
         }
@@ -254,7 +253,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           if (CI && File.Exists(CILockFilePath))
           {
             Debug($"Found lockfile at {CILockFilePath}. Using for specification evaluation.");
-            ModuleFastSpec[] lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, (CmdletInteraction)this);
+            ModuleFastSpec[] lockSpecs = SpecFileReader.ConvertFromRequiredSpec(CILockFilePath, SpecFileType.AutoDetect, cmdletInteractor);
             foreach (ModuleFastSpec spec in lockSpecs)
               _modulesToInstall.Add(spec);
             if (Update)
@@ -275,7 +274,7 @@ public class InstallModuleFastCommand : TaskCmdlet
               foreach (var specFile in specFiles)
               {
                 Verbose($"Found Specfile {specFile}. Evaluating...");
-                ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, (CmdletInteraction)this);
+                ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, cmdletInteractor);
                 foreach (ModuleFastSpec spec in fileSpecs)
                   _modulesToInstall.Add(spec);
               }

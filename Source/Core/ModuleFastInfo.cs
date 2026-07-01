@@ -24,8 +24,9 @@ public sealed record ModuleFastInfo(
   public static implicit operator ModuleSpecification(ModuleFastInfo info) =>
       new(new System.Collections.Hashtable
       {
-        ["ModuleName"] = info.Name,
-        ["RequiredVersion"] = info.ModuleVersion.Version
+        { "ModuleName", info.Name },
+        { "RequiredVersion", info.ModuleVersion.Version },
+        { "Guid", info.Guid }
       });
 
   public override string ToString() => $"{Name}({ModuleVersion})";

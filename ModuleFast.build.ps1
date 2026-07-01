@@ -47,7 +47,7 @@ Task CopyFiles {
 
   # Copy DLL and its dependencies from Artifacts Output to the module bin folder
   $artifactsBinPath = Join-Path $Destination 'publish' 'PowerShell' $buildMode
-  Copy-Item @c -Path (Join-Path $artifactsBinPath '*') -Destination $ModuleOutFolderPath -Recurse
+  Copy-Item @c -Path (Join-Path $artifactsBinPath '*') -Destination $ModuleOutFolderPath -Recurse -Force
 }
 
 Task Version {
@@ -79,7 +79,12 @@ Task Package.Zip {
 Task Pester {
   #Run this in a separate job so as not to lock any NuGet DLL packages for future runs. Runspace would lock the package to this process still.
   Start-Job {
-    Invoke-Pester
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-Pester -Configuration @{
+      Run = @{
+        PassThru = 'true'
+      }
+    }
   } | Receive-Job -Wait -AutoRemoveJob
 }
 

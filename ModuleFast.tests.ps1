@@ -74,18 +74,7 @@ Describe 'ModuleFastSpec' {
   }
 }
 
-# Import-ModuleManifest is now a binary cmdlet — no InModuleScope needed
-Describe 'Import-ModuleManifest' {
-  It 'Reads Dynamic Manifest' {
-    $Mocks = "$PSScriptRoot/Test/Mocks"
-    $manifest = Import-ModuleManifest "$Mocks/Dynamic.psd1"
-    $manifest | Should -BeOfType [System.Collections.Hashtable]
-    $manifest.ModuleVersion | Should -Be '1.0.0'
-    $manifest.RootModule | Should -Be 'coreclr\PrtgAPI.PowerShell.dll'
-  }
-}
-
-Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
+Describe 'Install-ModuleFast -Plan' -Tag 'E2E' {
   BeforeAll {
     $SCRIPT:__existingPSModulePath = $env:PSModulePath
     $env:PSModulePath = $testDrive
@@ -144,7 +133,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       )
 
       It 'Gets Module with Parameter: <Test>' {
-        $actual = Get-ModuleFastPlan $Spec
+        $actual = Install-ModuleFast $Spec -Plan
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
         $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -152,7 +141,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       } -TestCases $moduleSpecTestCases
 
       It 'Gets Module with Pipeline: <Test>' {
-        $actual = $Spec | Get-ModuleFastPlan
+        $actual = $Spec | Install-ModuleFast -Plan
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
         $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -162,13 +151,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
     Context 'StrictSemVer Parameter' {
       It 'StrictSemVer matches prereleases with exclusive upper bound' {
-        $actual = Get-ModuleFastPlan 'PrereleaseTest!<0.0.2' -StrictSemVer
+        $actual = Install-ModuleFast 'PrereleaseTest!<0.0.2' -StrictSemVer -Plan
         $actual | Should -HaveCount 1
         $actual.ModuleVersion.IsPrerelease | Should -Be $true
         $actual.ModuleVersion.Patch | Should -Be 2
       }
       It 'StrictSemVer not specified does not match prereleases with exclusive upper bound' {
-        $actual = Get-ModuleFastPlan 'PrereleaseTest!<0.0.2'
+        $actual = Install-ModuleFast 'PrereleaseTest!<0.0.2' -Plan
         $actual | Should -HaveCount 1
         $actual.ModuleVersion.IsPrerelease | Should -Be $false
         $actual.ModuleVersion.Patch | Should -Be 1
@@ -356,13 +345,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       )
 
       It 'Fails if hashtable-style string parameter is not a modulespec' {
-        { Get-ModuleFastPlan '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''; InvalidParameter = ''ThisShouldNotBeValid''}' -ErrorAction Stop }
+        { Install-ModuleFast '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''; InvalidParameter = ''ThisShouldNotBeValid''}' -Plan -ErrorAction Stop }
         | Should -Throw '*not valid ModuleSpecification syntax*'
       }
 
       It 'Gets Module with String Parameter: <Spec>' {
         try {
-          $actual = Get-ModuleFastPlan $Spec
+          $actual = Install-ModuleFast $Spec -Plan
           $actual | Should -HaveCount 1
           $ModuleName | Should -Be $actual.Name
           $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -375,7 +364,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
       It 'Gets Module with String Pipeline: <Spec>' {
         try {
-          $actual = $Spec | Get-ModuleFastPlan
+          $actual = $Spec | Install-ModuleFast -Plan
           $actual | Should -HaveCount 1
           $ModuleName | Should -Be $actual.Name
           $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -388,7 +377,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
     Context 'ModuleFastSpec Combinations' {
       It 'Strings as Parameter' {
-        $actual = Get-ModuleFastPlan 'Az.Accounts', 'Az.Compute', 'ImportExcel'
+        $actual = Install-ModuleFast 'Az.Accounts', 'Az.Compute', 'ImportExcel' -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
@@ -396,7 +385,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         }
       }
       It 'Strings as Pipeline' {
-        $actual = 'Az.Accounts', 'Az.Compute', 'ImportExcel' | Get-ModuleFastPlan
+        $actual = 'Az.Accounts', 'Az.Compute', 'ImportExcel' | Install-ModuleFast -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
@@ -404,7 +393,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         }
       }
       It 'ModuleSpecs as Parameter' {
-        $actual = Get-ModuleFastPlan 'Az.Accounts', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel'))
+        $actual = Install-ModuleFast 'Az.Accounts', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
@@ -412,7 +401,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         }
       }
       It 'ModuleSpecs as Pipeline' {
-        $actual = 'Az.Accounts>1', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) | Get-ModuleFastPlan
+        $actual = 'Az.Accounts>1', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) | Install-ModuleFast -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
@@ -422,7 +411,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
       It 'Prerelease does not affect non-prerelease' {
         #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
-        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Install-ModuleFast -Plan
         $actual | Should -HaveCount 2
         $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
           $PSItem.ModuleVersion | Should -Be '0.0.1'
@@ -430,7 +419,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       }
       It '-Prerelease overrides even if prerelease is not specified' {
         #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
-        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan -Prerelease
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Install-ModuleFast -Prerelease -Plan
         $actual | Should -HaveCount 2
         $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
           $PSItem.ModuleVersion | Should -Be '0.0.2-prerelease'
@@ -440,40 +429,40 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
   }
 
   It 'Errors on Unsupported Object instead of Stringifying' {
-    { Get-ModuleFastPlan [Tuple]::Create('Az.Accounts') -ErrorAction Stop }
+    { Install-ModuleFast [Tuple]::Create('Az.Accounts') -Plan -ErrorAction Stop }
     | Should -Throw '*Cannot bind parameter*'
   }
   It 'Gets Module with 1 dependency' {
-    Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
+    Install-ModuleFast 'Az.Compute' -Plan | Should -HaveCount 2
   }
   It 'Gets all dependencies for a Module with lots of dependencies (Az)' {
-    Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' } | Should -HaveCount 86
+    Install-ModuleFast @{ModuleName = 'Az'; RequiredVersion = '11.1.0' } -Plan | Should -HaveCount 86
   }
   It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
-    Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
+    Install-ModuleFast 'VMware.VimAutomation.Common' -Plan | Should -HaveCount 2
   }
   It 'Gets multiple modules' {
-    Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' }, @{ModuleName = 'VMWare.PowerCli'; RequiredVersion = '13.2.0.22746353' }
+    Install-ModuleFast @{ModuleName = 'Az'; RequiredVersion = '11.1.0' }, @{ModuleName = 'VMWare.PowerCli'; RequiredVersion = '13.2.0.22746353' } -Plan
     | Should -HaveCount 122
   }
 
   It 'Casts to ModuleSpecification' {
-    $actual = (Get-ModuleFastPlan 'Az.Accounts') -as [Microsoft.PowerShell.Commands.ModuleSpecification]
+    $actual = (Install-ModuleFast 'Az.Accounts' -Plan) -as [Microsoft.PowerShell.Commands.ModuleSpecification]
     $actual | Should -BeOfType [Microsoft.PowerShell.Commands.ModuleSpecification]
     $actual.Name | Should -Be 'Az.Accounts'
     $actual.RequiredVersion | Should -BeGreaterThan '2.7.3'
   }
 
   It 'Filters Prerelease Modules by Default' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest'
+    $actual = Install-ModuleFast 'PrereleaseTest' -Plan
     $actual.ModuleVersion | Should -Be '0.0.1'
   }
   It 'Shows Prerelease Modules if Prerelease is specified' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest' -Prerelease
+    $actual = Install-ModuleFast 'PrereleaseTest' -Prerelease -Plan
     $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
   It 'Detects Prerelease even if Prerelease not specified' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest=0.0.2-prerelease'
+    $actual = Install-ModuleFast 'PrereleaseTest=0.0.2-prerelease' -Plan
     $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
 
@@ -933,8 +922,8 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
 
   Describe 'ModuleFastInfo Pipeline' {
-    It 'Installs modules from piped Get-ModuleFastPlan output' {
-      $plan = Get-ModuleFastPlan 'PrereleaseTest=0.0.1'
+    It 'Installs modules from piped Install-ModuleFast -Plan output' {
+      $plan = Install-ModuleFast 'PrereleaseTest=0.0.1' -Plan
       $actual = $plan | Install-ModuleFast @imfParams -PassThru
       $actual | Should -HaveCount 1
       $actual.Name | Should -Be 'PrereleaseTest'
@@ -973,10 +962,10 @@ Describe 'Clear-ModuleFastCache' {
   }
   It 'Clears cached entries so subsequent plans re-fetch' {
     # Prime the cache
-    Get-ModuleFastPlan 'PrereleaseTest=0.0.1' | Out-Null
+    Install-ModuleFast 'PrereleaseTest=0.0.1' -Plan | Out-Null
     Clear-ModuleFastCache
     # Should still return a valid plan after cache flush
-    $actual = Get-ModuleFastPlan 'PrereleaseTest=0.0.1'
+    $actual = Install-ModuleFast 'PrereleaseTest=0.0.1' -Plan
     $actual | Should -HaveCount 1
   }
 }
@@ -1149,24 +1138,7 @@ Describe 'ModuleFastInfo' {
   }
 }
 
-Describe 'Import-ModuleManifest' {
-  It 'Accepts pipeline input' {
-    $Mocks = "$PSScriptRoot/Test/Mocks"
-    $result = "$Mocks/Dynamic.psd1" | Import-ModuleManifest
-    $result | Should -BeOfType [System.Collections.Hashtable]
-    $result.ModuleVersion | Should -Be '1.0.0'
-  }
-  It 'Errors on nonexistent path' {
-    { Import-ModuleManifest 'C:\nonexistent\fake.psd1' -ErrorAction Stop }
-    | Should -Throw
-  }
-  It 'Errors on empty path' {
-    { Import-ModuleManifest '' -ErrorAction Stop }
-    | Should -Throw
-  }
-}
-
-Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
+Describe 'Install-ModuleFast -Plan' -Tag 'E2E' {
   BeforeAll {
     $SCRIPT:__existingPSModulePath2 = $env:PSModulePath
     $env:PSModulePath = $testDrive
@@ -1180,12 +1152,12 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       $destDir = Join-Path $testDrive $(New-Guid)
       New-Item -ItemType Directory $destDir | Out-Null
       # First plan should include the module
-      $plan1 = Get-ModuleFastPlan 'PrereleaseTest=0.0.1' -Destination $destDir
+      $plan1 = Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Plan
       $plan1 | Should -HaveCount 1
       # Install the module there
       Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate
       # Second plan should find it installed
-      $plan2 = Get-ModuleFastPlan 'PrereleaseTest=0.0.1' -Destination $destDir
+      $plan2 = Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Plan
       $plan2 | Should -BeNullOrEmpty
     }
   }
@@ -1197,10 +1169,10 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       $env:PSModulePath = $destDir
       Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate
       # Without update, should be satisfied
-      $plan = Get-ModuleFastPlan 'PrereleaseTest' -Destination $destDir
+      $plan = Install-ModuleFast 'PrereleaseTest' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Plan
       $plan | Should -BeNullOrEmpty
       # With update, should check for newer
-      $plan = Get-ModuleFastPlan 'PrereleaseTest' -Destination $destDir -Update
+      $plan = Install-ModuleFast 'PrereleaseTest' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Update -Plan
       $plan | Should -BeNullOrEmpty -Because 'PrereleaseTest 0.0.1 is already the latest stable version'
     }
   }
