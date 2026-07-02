@@ -38,7 +38,8 @@ public class ModuleFastPlanner(
     ConcurrentDictionary<string, byte> enqueuedSpecs = [];
     ConcurrentQueue<ModuleFastSpec> pendingSpecs = [];
 
-    static string GetSpecKey(ModuleFastSpec spec) => $"{spec.Name.ToLowerInvariant()}|{spec.Guid:D}";
+    static string GetSpecKey(ModuleFastSpec spec) =>
+      $"{spec.Name.ToLowerInvariant()}|{spec.Guid:D}|{spec.VersionRange}|pre:{spec.PreRelease}";
 
     foreach (ModuleFastSpec spec in specs)
     {

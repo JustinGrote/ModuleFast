@@ -1,4 +1,4 @@
-using System.Collections;
+using System.Management.Automation;
 using System.Text.RegularExpressions;
 
 using NuGet.Versioning;
@@ -137,13 +137,11 @@ public static partial class LocalModuleFinder
             $"{moduleBaseDir} manifest is ambiguous");
         if (classicManifestPath != null)
         {
-          Hashtable classicData = await ModuleManifestReader.ImportModuleManifestAsync(classicManifestPath, logger, ct)
-              .ConfigureAwait(false);
-          if (Version.TryParse(classicData["ModuleVersion"]?.ToString() ?? "", out Version? classicVersion))
-          {
-            logger?.Debug($"{spec}: Found classic module {classicVersion} at {moduleBaseDir}");
-            candidatePaths.Add((classicVersion, moduleBaseDir));
-          }
+          ModuleFastInfo classicManifest = await PSDataFileReader.ImportModuleManifest(classicManifestPath, ct, logger).ConfigureAwait(false);
+          Version manifestVersion = classicManifest.ModuleVersion.Version;
+
+          logger?.Debug($"{spec}: Found classic module {manifestVersion} at {moduleBaseDir}");
+          candidatePaths.Add((manifestVersion, moduleBaseDir));
         }
       }
 
@@ -183,8 +181,8 @@ public static partial class LocalModuleFinder
         ModuleFastInfo manifestCandidate;
         try
         {
-          manifestCandidate = await ModuleManifestReader.ConvertFromModuleManifestAsync(manifestPath, logger, ct)
-              .ConfigureAwait(false);
+          manifestCandidate = await PSDataFileReader
+            .ImportModuleManifest(manifestPath, ct, logger).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

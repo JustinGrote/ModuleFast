@@ -83,11 +83,14 @@ public class InstallModuleFastCommand : TaskCmdlet
   private readonly HashSet<ModuleFastSpec> _modulesToInstall = [];
   private readonly List<ModuleFastInfo> _installPlan = [];
   private CancellationTokenSource? _timeoutSource;
+  private bool _destinationExplicitlySpecified;
 
   private CmdletInteraction cmdletInteractor => new TaskCmdletInteractor(this);
 
   protected override async Task Begin()
   {
+    _destinationExplicitlySpecified = MyInvocation.BoundParameters.ContainsKey(nameof(Destination));
+
     // Resolve CILockFilePath relative to PowerShell's current location
     if (!IsPathRooted(CILockFilePath))
     {
@@ -185,7 +188,6 @@ public class InstallModuleFastCommand : TaskCmdlet
       }
     }
 
-    _httpClient = ModuleFastClient.Create(Credential?.GetNetworkCredential(), Timeout);
     _timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(PipelineStopToken);
     _timeoutSource.CancelAfter(TimeSpan.FromSeconds(Timeout * 10)); // overall timeout
   }
@@ -291,10 +293,23 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         string[] modulePaths;
         if (DestinationOnly)
+        {
           modulePaths = [Destination!];
+        }
+        else if (_destinationExplicitlySpecified)
+        {
+          IEnumerable<string> allModulePaths = (Environment.GetEnvironmentVariable("PSModulePath")
+              ?.Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [])
+              .Prepend(Destination!);
+          modulePaths = allModulePaths
+              .Distinct(StringComparer.OrdinalIgnoreCase)
+              .ToArray();
+        }
         else
+        {
           modulePaths = Environment.GetEnvironmentVariable("PSModulePath")
               ?.Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
+        }
 
         var planner = new ModuleFastPlanner(Source);
         bool whatIfSpecified = MyInvocation.BoundParameters.TryGetValue("WhatIf", out object? whatIfValue)
@@ -308,7 +323,9 @@ public class InstallModuleFastCommand : TaskCmdlet
             ? cp
             : ConfirmImpact.High;
         bool confirmationWouldPrompt = !confirmSuppressed && confirmPreference <= ConfirmImpact.Medium;
-        bool canStreamDuringPlan = !Plan && !whatIfEnabled && !confirmEnabled && !confirmationWouldPrompt;
+        // Keep planning and installation separate for deterministic behavior.
+        // Streaming install while planning can race with local module discovery.
+        bool canStreamDuringPlan = false;
 
         if (canStreamDuringPlan)
         {

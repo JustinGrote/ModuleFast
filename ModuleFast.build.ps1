@@ -8,7 +8,10 @@ param(
   $ModuleOutFolderPath = (Join-Path $Destination 'Module'),
   $TempPath = (Resolve-Path temp:).ProviderPath + '\ModuleFastBuild',
   # Build for release (don't include debug headers)
-  [switch]$Release
+  [switch]$Release,
+  $PowerShellProjectPath = (Join-Path $PSScriptRoot 'Source' 'PowerShell' 'PowerShell.csproj'),
+  # Filter for test names
+  $TestName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,13 +31,16 @@ if ($DebugPreference -eq 'Continue') {
 
 Task Clean {
   Write-Build -Color DarkCyan "Cleaning $Destination"
-  & git clean -fdX $Destination
+  exec { git clean -fdX $Destination }
 }
 
 Task BuildCSharp {
   # Build the PowerShell module project (which depends on Core)
-  $csprojPath = Join-Path $PSScriptRoot 'Source' 'PowerShell' 'PowerShell.csproj'
-  dotnet build $csprojPath --nologo -c $buildMode
+  exec { dotnet build $PowerShellProjectPath --nologo -c $buildMode }
+}
+
+Task Publish {
+  exec { & dotnet publish $PowerShellProjectPath -c $buildMode }
 }
 
 Task CopyFiles {
@@ -61,9 +67,7 @@ Task Version {
   $manifestContent | Set-Content -Path $manifestPath
 }
 
-Task Publish {
-  & dotnet publish (Join-Path $PSScriptRoot 'Source' 'PowerShell' 'PowerShell.csproj') -c $buildMode
-}
+
 
 Task Package.Nuget {
   Compress-PSResource @c -Path $ModuleOutFolderPath -DestinationPath $Destination
@@ -80,8 +84,15 @@ Task Package.Zip {
 Task Pester {
   #Run this in a separate job so as not to lock any NuGet DLL packages for future runs. Runspace would lock the package to this process still.
   $result = Start-Job {
+    $TestFilter = $using:TestName
+    if ($TestFilter) {
+      Write-Host -ForegroundColor DarkCyan "Only Running Tests Containing: $TestFilter"
+      $TestFilter = '*' + $TestFilter + '*'
+    }
+
+
     $ProgressPreference = 'SilentlyContinue'
-    Invoke-Pester -PassThru
+    Invoke-Pester -PassThru -FullNameFilter $TestFilter
   } | Receive-Job -Wait -AutoRemoveJob
 
   assert ($result.FailedCount -eq 0) "$($result.FailedCount) Pester tests failed."
@@ -98,4 +109,6 @@ Task Build @(
 
 Task Test Build, Pester
 Task . Build, Test, Package
+Task BuildNoTest Build, Package
+Task BuildNoTest Build, Package
 Task BuildNoTest Build, Package

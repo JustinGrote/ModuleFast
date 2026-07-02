@@ -316,7 +316,7 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
   /// </summary>
   /// <param name="outputObject">The object to emit to the pipeline.</param>
   /// <param name="enumerateCollection">When <c>true</c>, enumerates <see cref="IEnumerable"/> objects and writes each element individually.</param>
-  public void WriteObject(IEnumerable<TOutput> outputObject, bool enumerateCollection = false)
+  public void WriteObject(TOutput[] outputObject, bool enumerateCollection = false)
   {
     if (enumerateCollection && outputObject is not string)
     {
@@ -324,13 +324,13 @@ public abstract class TaskCmdlet<TOutput> : BetterPSCmdlet, IDisposable
       {
         if (item is null) continue;
         AddOutput(item, true);
-        return;
       }
+      return;
     }
 
     AddOutput(outputObject, true);
   }
-  public void WriteObject(TOutput outputObject) => WriteObject([outputObject], false);
+  public void WriteObject(TOutput outputObject) => AddOutput(outputObject, true);
   public new void WriteObject(object outputObject, bool enumerateCollection = false) => throw new InvalidCastException("You attempted to write an object not compatible with the cmdlet's generic output type.");
 
   public void Output(TOutput output) => AddOutput(output);

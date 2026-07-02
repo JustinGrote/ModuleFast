@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Language;
 using System.Text.Json;
@@ -267,7 +268,7 @@ public static class SpecFileReader
     return results.ToArray();
   }
 
-  internal static object ReadRequiredSpecFile(string requiredSpecPath, CmdletInteraction? cmdlet)
+  internal static async Task<object> ReadRequiredSpecFile(string requiredSpecPath, CmdletInteraction? cmdlet)
   {
     if (Uri.TryCreate(requiredSpecPath, UriKind.Absolute, out Uri? uri) &&
         uri.Scheme is "http" or "https")
@@ -280,16 +281,10 @@ public static class SpecFileReader
         handler.UseProxy = true;
       }
       using HttpClient client = new(handler);
-      var content = client.GetStringAsync(requiredSpecPath).GetAwaiter().GetResult();
+      var content = await client.GetStringAsync(requiredSpecPath).ConfigureAwait(false);
       if (content.AsSpan().TrimStart().StartsWith("@{".AsSpan()))
       {
-        var tempFile = Path.GetTempFileName();
-        try
-        {
-          File.WriteAllText(tempFile, content);
-          return ModuleManifestReader.ImportModuleManifest(tempFile, cmdlet);
-        }
-        finally { File.Delete(tempFile); }
+        return PSDataFileReader.Parse(content, requiredSpecPath, default, cmdlet);
       }
       return JsonSerializer.Deserialize<object>(content, _jsonOpts)!;
     }
@@ -299,31 +294,28 @@ public static class SpecFileReader
 
     if (extension == ".psd1")
     {
-      Hashtable manifestData = ModuleManifestReader.ImportModuleManifest(resolvedPath, cmdlet);
-      if (manifestData.ContainsKey("ModuleVersion"))
+      Hashtable dataFile = await PSDataFileReader.Import(resolvedPath, default, cmdlet);
+      if (dataFile.ContainsKey("ModuleVersion"))
       {
-        var reqModules = manifestData["RequiredModules"];
+        ModuleFastInfo manifest = await PSDataFileReader.ImportModuleManifest(resolvedPath, default, cmdlet);
+        ReadOnlyCollection<PSModuleInfo> reqModules = manifest.RequiredModules;
         cmdlet?.Debug("Detected a Module Manifest, evaluating RequiredModules");
-        if (reqModules == null)
+        if (reqModules == null || reqModules.Count == 0)
           throw new InvalidDataException("The manifest does not have a RequiredModules key so ModuleFast does not know what this module requires.");
 
-        if (reqModules is object[] arr && arr.Length == 0)
-          throw new InvalidDataException("The manifest does not have a RequiredModules key so ModuleFast does not know what this module requires. See Get-Help about_module_manifests for more.");
-
-        // Convert to ModuleSpecification array
         return ConvertRequiredModulesToSpecs(reqModules);
       }
       else
       {
         cmdlet?.Debug("Did not detect a module manifest, passing through as-is");
-        return manifestData;
+        return dataFile;
       }
     }
 
     if (extension is ".ps1" or ".psm1")
     {
       cmdlet?.Debug("PowerShell Script/Module file detected, checking for #Requires");
-      ScriptBlockAst ast = System.Management.Automation.Language.Parser.ParseFile(resolvedPath, out _, out _);
+      ScriptBlockAst ast = Parser.ParseFile(resolvedPath, out _, out _);
       ModuleSpecification[]? requiredModules = ast.ScriptRequirements?.RequiredModules?.ToArray();
 
       if (requiredModules == null || requiredModules.Length == 0)
@@ -353,6 +345,14 @@ public static class SpecFileReader
 
   private static ModuleFastSpec[] ConvertRequiredModulesToSpecs(object requiredModules)
   {
+    if (requiredModules is IEnumerable<PSModuleInfo> moduleInfos)
+      return moduleInfos.Select(moduleInfo => new ModuleFastSpec(new ModuleSpecification(new Hashtable
+      {
+        { "ModuleName", moduleInfo.Name },
+        { "Guid", moduleInfo.Guid },
+        { "RequiredVersion", moduleInfo.Version }
+      }))).ToArray();
+
     if (requiredModules is object[] arr)
     {
       List<ModuleFastSpec> specs = [];
@@ -364,7 +364,7 @@ public static class SpecFileReader
           specs.Add(new ModuleFastSpec(ms));
         else if (item is Hashtable ht)
           specs.Add(new ModuleFastSpec(new ModuleSpecification(ht)));
-        else if (item is System.Management.Automation.PSObject pso)
+        else if (item is PSObject pso)
         {
           if (pso.BaseObject is ModuleSpecification ms2)
             specs.Add(new ModuleFastSpec(ms2));

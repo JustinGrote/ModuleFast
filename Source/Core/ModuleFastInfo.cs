@@ -1,3 +1,9 @@
+using System.Collections;
+using System.Collections.ObjectModel;
+using System.Management.Automation;
+using System.Management.Automation.Language;
+using System.Reflection;
+
 using Microsoft.PowerShell.Commands;
 
 using NuGet.Versioning;
@@ -5,29 +11,22 @@ using NuGet.Versioning;
 namespace ModuleFast;
 
 /// <summary>
-/// Information about a module, whether local or remote.
+/// Represent a module either available in a package repository or installed locally. This is a lightweight representation of a module, and does not require loading the module into the current session.
 /// </summary>
-public sealed record ModuleFastInfo(
-  string Name,
-  NuGetVersion ModuleVersion,
-  Uri Location
-)
+public sealed record ModuleFastInfo(string Name, NuGetVersion ModuleVersion, Uri Location)
 {
-  public bool IsLocal => Location.IsFile;
+  public ReadOnlyCollection<PSModuleInfo> RequiredModules { get; init; } = [];
   public Guid Guid { get; init; } = Guid.Empty;
-
+  public bool IsLocal => Location.IsFile;
   public bool PreRelease => ModuleVersion.IsPrerelease || ModuleVersion.HasMetadata;
 
-  public ModuleFastInfo(string name, string version, string location)
-      : this(name, NuGetVersion.Parse(version), new Uri(location)) { }
-
   public static implicit operator ModuleSpecification(ModuleFastInfo info) =>
-      new(new System.Collections.Hashtable
-      {
-        { "ModuleName", info.Name },
-        { "RequiredVersion", info.ModuleVersion.Version },
-        { "Guid", info.Guid }
-      });
+    new(new Hashtable
+    {
+      { "ModuleName", info.Name },
+      { "RequiredVersion", info.ModuleVersion.Version },
+      { "Guid", info.Guid }
+    });
 
   public override string ToString() => $"{Name}({ModuleVersion})";
 }

@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.IO.Compression;
+using System.Management.Automation;
 
 using NuGet.Common;
 using NuGet.Configuration;
@@ -23,7 +24,7 @@ public class ModuleFastInstaller
   private static string? FindManifestPath(string directory, string moduleName)
   {
     EnumerationOptions options = new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive };
-    var matches = Directory.GetFiles(directory, "*.psd1", options)
+    string[] matches = Directory.GetFiles(directory, "*.psd1", options)
         .Where(f => string.Equals(Path.GetFileNameWithoutExtension(f), moduleName,
             StringComparison.OrdinalIgnoreCase))
         .ToArray();
@@ -106,9 +107,9 @@ public class ModuleFastInstaller
       CancellationToken ct,
       CmdletInteraction? cmdlet)
   {
-    var installPath = Path.Combine(destination, module.Name,
+    string installPath = Path.Combine(destination, module.Name,
         LocalModuleFinder.ResolveFolderVersion(module.ModuleVersion).ToString());
-    var installIndicatorPath = Path.Combine(installPath, ".incomplete");
+    string installIndicatorPath = Path.Combine(installPath, ".incomplete");
 
     if (File.Exists(installIndicatorPath))
     {
@@ -118,23 +119,16 @@ public class ModuleFastInstaller
 
     if (Directory.Exists(installPath))
     {
-      var existingManifestPath = FindManifestPath(installPath, module.Name)
+      string existingManifestPath = FindManifestPath(installPath, module.Name)
           ?? throw new FileNotFoundException(
               $"{module}: Existing module folder found at {installPath} but no manifest matching '{module.Name}.psd1' could be found.",
               Path.Combine(installPath, $"{module.Name}.psd1"));
 
-      Hashtable existingManifestData = cmdlet != null
-        ? ModuleManifestReader.ImportModuleManifest(existingManifestPath, cmdlet)
-        : ModuleManifestReader.ImportModuleManifest(existingManifestPath, cmdlet: null);
-      var existingVersionStr = existingManifestData["ModuleVersion"]?.ToString() ?? "0.0.0";
-      var prerelease = (existingManifestData["PrivateData"] as System.Collections.Hashtable)?["PSData"] is Hashtable
+      ModuleFastInfo existingManifest = await PSDataFileReader
+        .ImportModuleManifest(existingManifestPath, ct, cmdlet)
+        .ConfigureAwait(false);
 
-      psData
-        ? psData["Prerelease"]?.ToString()
-        : null;
-
-      Version.TryParse(existingVersionStr, out Version? evBase);
-      NuGetVersion existingVersion = new NuGetVersion(evBase ?? new Version(0, 0), prerelease);
+      NuGetVersion existingVersion = existingManifest.ModuleVersion;
 
       if (module.ModuleVersion == existingVersion)
       {
@@ -178,6 +172,7 @@ public class ModuleFastInstaller
     packageStream.Position = 0;
 
     Directory.CreateDirectory(installPath);
+
     // WriteThrough ensures the .incomplete marker reaches the OS immediately —
     // critical because it guards against partial installations on crash.
     await using (FileStream indicatorFs = new FileStream(installIndicatorPath, new FileStreamOptions
@@ -190,63 +185,19 @@ public class ModuleFastInstaller
 
     // ZipFile.ExtractToDirectoryAsync (.NET 10) uses async file I/O internally and
     // includes built-in zip-slip protection, replacing the custom ExtractZipAsync method.
-    await ZipFile.ExtractToDirectoryAsync(packageStream, installPath, overwriteFiles: false, ct)
-        .ConfigureAwait(false);
+    await ZipFile.ExtractToDirectoryAsync(packageStream, installPath, overwriteFiles: false, ct).ConfigureAwait(false);
 
-    // Fast scan for manifest version — use case-insensitive search on Linux/macOS
-    var manifestPath = FindManifestPath(installPath, module.Name)
-        ?? throw new FileNotFoundException(
-            $"{module}: Could not find manifest matching '{module.Name}.psd1' in {installPath}.",
-            Path.Combine(installPath, $"{module.Name}.psd1"));
-    // Start post-extract validation work in parallel. Importing a manifest can be expensive,
-    // so both operations share a single manifest import task when needed.
-    Task<Hashtable>? manifestDataTask = null;
-    Task<Hashtable> GetManifestDataTask()
-    {
-      return manifestDataTask ??= Task.Run(() =>
-          cmdlet != null
-              ? ModuleManifestReader.ImportModuleManifest(manifestPath, cmdlet)
-              : ModuleManifestReader.ImportModuleManifest(manifestPath, cmdlet: null),
-          ct);
-    }
+    string manifestPath = FindManifestPath(installPath, module.Name)
+      ?? throw new FileNotFoundException(
+          $"{module}: Could not find manifest matching '{module.Name}.psd1' in {installPath}.",
+          Path.Combine(installPath, $"{module.Name}.psd1"));
 
-    Task<Version?> moduleManifestVersionTask = Task.Run(async () =>
-    {
-      Version? fastVersion = ModuleManifestReader.TryReadModuleVersionFast(manifestPath);
-      if (fastVersion != null)
-        return fastVersion;
+    // Verify the module was properly installed by reading the manifest and checking the version.
+    ModuleFastInfo installedModuleManifest = await PSDataFileReader
+      .ImportModuleManifest(manifestPath, ct, cmdlet)
+      .ConfigureAwait(false);
 
-      // Fast reader failed, fall back to full manifest import.
-      try
-      {
-        Hashtable fallbackData = await GetManifestDataTask().ConfigureAwait(false);
-        return Version.TryParse(fallbackData["ModuleVersion"]?.ToString() ?? "", out Version? fallbackVersion)
-            ? fallbackVersion
-            : null;
-      }
-      catch
-      {
-        return null;
-      }
-    }, ct);
-
-    Task guidVerificationTask = module.Guid == Guid.Empty
-      ? Task.CompletedTask
-      : Task.Run(async () =>
-      {
-        cmdlet?.Debug($"{module}: GUID was specified. Verifying manifest.");
-        Hashtable manifestData = await GetManifestDataTask().ConfigureAwait(false);
-        if (!Guid.TryParse(manifestData["GUID"]?.ToString() ?? "", out Guid manifestGuid) ||
-            manifestGuid != module.Guid)
-        {
-          Directory.Delete(installPath, true);
-          throw new InvalidOperationException(
-              $"{module}: The installed package GUID does not match. Expected {module.Guid} but found {manifestGuid} in {manifestPath}.");
-        }
-      }, ct);
-
-    await Task.WhenAll(moduleManifestVersionTask, guidVerificationTask).ConfigureAwait(false);
-    Version? moduleManifestVersion = moduleManifestVersionTask.Result;
+    Version moduleManifestVersion = installedModuleManifest.ModuleVersion.Version;
 
     if (moduleManifestVersion == null)
     {
@@ -254,12 +205,12 @@ public class ModuleFastInstaller
     }
     else
     {
-      var originalModuleVersion = Path.GetFileName(installPath);
+      string originalModuleVersion = Path.GetFileName(installPath);
       if (originalModuleVersion != moduleManifestVersion.ToString())
       {
         cmdlet?.Debug($"{module}: Module Manifest Version {moduleManifestVersion} differs from package version {originalModuleVersion}, moving...");
-        var installPathRoot = Path.GetDirectoryName(installPath)!;
-        var newInstallPath = Path.Combine(installPathRoot, moduleManifestVersion.ToString());
+        string installPathRoot = Path.GetDirectoryName(installPath)!;
+        string newInstallPath = Path.Combine(installPathRoot, moduleManifestVersion.ToString());
 
         if (Directory.Exists(newInstallPath))
           Directory.Delete(newInstallPath, true);
@@ -295,9 +246,9 @@ public class ModuleFastInstaller
     if (string.IsNullOrEmpty(installPath))
       throw new InvalidOperationException("ModuleDestination was not set. This is a bug.");
 
-    foreach (var item in Directory.EnumerateFileSystemEntries(installPath))
+    foreach (string item in Directory.EnumerateFileSystemEntries(installPath))
     {
-      var name = Path.GetFileName(item);
+      string name = Path.GetFileName(item);
       if (name is "_rels" or "package" or "[Content_Types].xml" ||
           name.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase))
       {
