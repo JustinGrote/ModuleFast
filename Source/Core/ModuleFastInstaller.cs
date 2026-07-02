@@ -128,6 +128,9 @@ public class ModuleFastInstaller
         .ImportModuleManifest(existingManifestPath, ct, cmdlet)
         .ConfigureAwait(false);
 
+      if (module.Guid != Guid.Empty && existingManifest.Guid != module.Guid)
+        throw new InvalidOperationException($"{module}: Expected {module.Guid} but found {existingManifest.Guid}.");
+
       NuGetVersion existingVersion = existingManifest.ModuleVersion;
 
       if (module.ModuleVersion == existingVersion)
@@ -197,49 +200,44 @@ public class ModuleFastInstaller
       .ImportModuleManifest(manifestPath, ct, cmdlet)
       .ConfigureAwait(false);
 
-    Version moduleManifestVersion = installedModuleManifest.ModuleVersion.Version;
+    if (module.Guid != Guid.Empty && installedModuleManifest.Guid != module.Guid)
+      throw new InvalidOperationException($"{module}: Expected {module.Guid} but found {installedModuleManifest.Guid}.");
 
-    if (moduleManifestVersion == null)
+    string moduleManifestFolderVersion = LocalModuleFinder.ResolveFolderVersion(installedModuleManifest.ModuleVersion).ToString();
+    string originalModuleVersion = Path.GetFileName(installPath);
+    if (originalModuleVersion != moduleManifestFolderVersion)
     {
-      cmdlet?.Warning($"{module}: Could not detect the module manifest version. This module may not install properly if it has trailing zeros.");
+      cmdlet?.Debug($"{module}: Module Manifest folder version {moduleManifestFolderVersion} differs from package folder version {originalModuleVersion}, moving...");
+      string installPathRoot = Path.GetDirectoryName(installPath)!;
+      string newInstallPath = Path.Combine(installPathRoot, moduleManifestFolderVersion);
+
+      if (Directory.Exists(newInstallPath))
+        Directory.Delete(newInstallPath, true);
+
+      Directory.Move(installPath, newInstallPath);
+      installPath = newInstallPath;
+
+      // Update indicator path
+      installIndicatorPath = Path.Combine(installPath, ".incomplete");
+      // WriteThrough + Asynchronous: durable write that doesn't block the thread on I/O
+      await using FileStream origVerFs = new FileStream(
+          Path.Combine(installPath, ".originalModuleVersion"),
+          new FileStreamOptions
+          {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
+          });
+      await using StreamWriter origVerWriter = new StreamWriter(origVerFs);
+      await origVerWriter.WriteLineAsync(originalModuleVersion).ConfigureAwait(false);
     }
     else
     {
-      string originalModuleVersion = Path.GetFileName(installPath);
-      if (originalModuleVersion != moduleManifestVersion.ToString())
-      {
-        cmdlet?.Debug($"{module}: Module Manifest Version {moduleManifestVersion} differs from package version {originalModuleVersion}, moving...");
-        string installPathRoot = Path.GetDirectoryName(installPath)!;
-        string newInstallPath = Path.Combine(installPathRoot, moduleManifestVersion.ToString());
-
-        if (Directory.Exists(newInstallPath))
-          Directory.Delete(newInstallPath, true);
-
-        Directory.Move(installPath, newInstallPath);
-        installPath = newInstallPath;
-
-        // Update indicator path
-        installIndicatorPath = Path.Combine(installPath, ".incomplete");
-        // WriteThrough + Asynchronous: durable write that doesn't block the thread on I/O
-        await using FileStream origVerFs = new FileStream(
-            Path.Combine(installPath, ".originalModuleVersion"),
-            new FileStreamOptions
-            {
-              Mode = FileMode.Create,
-              Access = FileAccess.Write,
-              Share = FileShare.None,
-              Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
-            });
-        await using StreamWriter origVerWriter = new StreamWriter(origVerFs);
-        await origVerWriter.WriteLineAsync(originalModuleVersion).ConfigureAwait(false);
-
-        module = module with { ModuleVersion = new NuGetVersion(moduleManifestVersion.ToString()) };
-      }
-      else
-      {
-        cmdlet?.Debug($"{module}: Verified module manifest version matched, no action needed.");
-      }
+      cmdlet?.Debug($"{module}: Verified module manifest version matched, no action needed.");
     }
+
+    module = module with { ModuleVersion = installedModuleManifest.ModuleVersion };
 
     // Clean up NuGet files — use EnumerateFileSystemEntries to avoid buffering the full listing
     cmdlet?.Debug($"{module}: Cleaning up NuGet files in {installPath}");

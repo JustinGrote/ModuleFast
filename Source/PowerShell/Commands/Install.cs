@@ -1,4 +1,5 @@
 using System.Management.Automation;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Channels;
 
@@ -371,7 +372,7 @@ public class InstallModuleFastCommand : TaskCmdlet
                   await stream.Writer.WriteAsync(module, token).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
-            finalInstallPlan = planSet.ToArray();
+            finalInstallPlan = planSet.OrderBy(static module => module.Name, StringComparer.OrdinalIgnoreCase).ToArray();
             stream.Writer.TryComplete();
             Progress("Install-ModuleFast", "Plan complete", percentComplete: 100, id: PlanProgressId);
           }
@@ -412,7 +413,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         HashSet<ModuleFastInfo> nonStreamingPlanSet = await planner.GetPlan(
           _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, cmdlet: cmdletInteractor).ConfigureAwait(false);
-        finalInstallPlan = nonStreamingPlanSet.ToArray();
+        finalInstallPlan = nonStreamingPlanSet.OrderBy(static module => module.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         Progress("Install-ModuleFast", "Plan complete", percentComplete: 100, id: PlanProgressId);
       }
 

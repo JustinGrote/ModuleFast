@@ -60,7 +60,7 @@ public static class SpecFileReader
       SpecFileType fileType = SpecFileType.AutoDetect,
       CmdletInteraction? cmdlet = null)
   {
-    var spec = ReadRequiredSpecFile(requiredSpecPath, cmdlet);
+    var spec = ReadRequiredSpecFile(requiredSpecPath, cmdlet).GetAwaiter().GetResult();
     return ConvertFromObject(spec, fileType, cmdlet);
   }
 
@@ -297,10 +297,9 @@ public static class SpecFileReader
       Hashtable dataFile = await PSDataFileReader.Import(resolvedPath, default, cmdlet);
       if (dataFile.ContainsKey("ModuleVersion"))
       {
-        ModuleFastInfo manifest = await PSDataFileReader.ImportModuleManifest(resolvedPath, default, cmdlet);
-        ReadOnlyCollection<PSModuleInfo> reqModules = manifest.RequiredModules;
         cmdlet?.Debug("Detected a Module Manifest, evaluating RequiredModules");
-        if (reqModules == null || reqModules.Count == 0)
+        object? reqModules = dataFile["RequiredModules"];
+        if (reqModules == null)
           throw new InvalidDataException("The manifest does not have a RequiredModules key so ModuleFast does not know what this module requires.");
 
         return ConvertRequiredModulesToSpecs(reqModules);

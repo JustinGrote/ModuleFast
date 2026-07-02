@@ -392,6 +392,11 @@ Describe 'Install-ModuleFast -Plan' -Tag 'E2E' {
           $PSItem.ModuleVersion | Should -BeGreaterThan '1.0'
         }
       }
+      It 'Plan output is sorted alphabetically by module name' {
+        $actual = Install-ModuleFast 'Az.Compute', 'Az.Accounts' -Plan
+        $actual | Should -HaveCount 2
+        ($actual | Select-Object -ExpandProperty Name) | Should -Be @('Az.Accounts', 'Az.Compute')
+      }
       It 'ModuleSpecs as Parameter' {
         $actual = Install-ModuleFast 'Az.Accounts', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) -Plan
         $actual | Should -HaveCount 3
@@ -1135,6 +1140,14 @@ Describe 'ModuleFastInfo' {
     $a = [ModuleFastInfo]::new('Test', '1.0.0', 'https://example.com/a')
     $b = [ModuleFastInfo]::new('Test', '2.0.0', 'https://example.com/b')
     $a.Equals($b) | Should -Be $false
+  }
+  It 'Formats as a table with name version and location' {
+    $info = [ModuleFastInfo]::new('TestModule', '1.2.3', 'https://example.com/package')
+    $rendered = $info | Format-Table | Out-String -Width 200
+
+    $rendered | Should -Match 'Name\s+ModuleVersion\s+Location'
+    $rendered | Should -Match 'TestModule\s+1\.2\.3\s+https://example\.com/package'
+    $rendered | Should -Not -Match 'RequiredModules|Guid|IsLocal|PreRelease'
   }
 }
 

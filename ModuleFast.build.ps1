@@ -48,6 +48,7 @@ Task CopyFiles {
   Copy-Item @c -Path @(
     'ModuleFast.psd1'
     'ModuleFast.psm1'
+    'ModuleFast.Format.ps1xml'
     'LICENSE'
   ) -Destination $ModuleOutFolderPath
   Copy-Item @c -Path 'ModuleFast.ps1' -Destination $Destination

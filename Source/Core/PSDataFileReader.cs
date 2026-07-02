@@ -36,7 +36,7 @@ public static class PSDataFileReader
       {
         psData = new Hashtable(psData, StringComparer.InvariantCultureIgnoreCase);
 
-        if (psData["Prerelease"] is string tag)
+        if (psData["Prerelease"] is string tag && !string.IsNullOrWhiteSpace(tag))
         {
           prereleaseTag = tag;
         }
@@ -44,16 +44,29 @@ public static class PSDataFileReader
     }
 
     string name = Path.GetFileNameWithoutExtension(location) ?? throw new InvalidDataException($"Invalid module manifest: Name is missing or could not be determined from the file name {location}");
-    string moduleVersion = hashtable["ModuleVersion"] as string ?? throw new InvalidDataException("Invalid module manifest: ModuleVersion is missing or not a string.");
+    object? moduleVersionObject = hashtable["ModuleVersion"];
+    string moduleVersion = moduleVersionObject switch
+    {
+      string moduleVersionString => moduleVersionString,
+      Version moduleVersionValue => moduleVersionValue.ToString(),
+      _ => throw new InvalidDataException("Invalid module manifest: ModuleVersion is missing or not a supported type.")
+    };
     string? prerelease = prereleaseTag;
-    string? guidString = hashtable["Guid"] as string;
-    Guid guid = guidString is not null ? Guid.Parse(guidString) : Guid.Empty;
+    Guid guid = hashtable["Guid"] switch
+    {
+      Guid guidValue => guidValue,
+      string guidString when Guid.TryParse(guidString, out Guid parsedGuid) => parsedGuid,
+      _ => Guid.Empty
+    };
 
     string nugetVersionString = prerelease is not null ? $"{moduleVersion}-{prerelease}" : moduleVersion;
 
     NuGetVersion version = NuGetVersion.Parse(nugetVersionString);
 
-    return new ModuleFastInfo(name, version, new Uri(location));
+    return new ModuleFastInfo(name, version, new Uri(location))
+    {
+      Guid = guid
+    };
   }
 
   public static async Task<Hashtable> Import(string path, CancellationToken cancelToken = default, CmdletInteraction? cmdlet = null)
@@ -90,19 +103,38 @@ public static class PSDataFileReader
     catch (InvalidOperationException ex) when (ex.Message.Contains("Cannot generate a PowerShell object for a ScriptBlock evaluating dynamic expressions"))
     {
       cmdlet?.Debug($"{path} is a Manifest with dynamic expressions. Attempting to safe evaluate...");
+      Runspace? previousRunspace = Runspace.DefaultRunspace;
+      Runspace? temporaryRunspace = null;
       var scriptBlock = ScriptBlock.Create(content);
-      scriptBlock.CheckRestrictedLanguage([], ["PSEdition", "PSScriptRoot"], true);
       // Check if a runspace exists on the thread, if not create a temporary one to evaluate the scriptblock
       if (Runspace.DefaultRunspace is null)
       {
-        using Runspace runspace = RunspaceFactory.CreateRunspace();
-        runspace.ThreadOptions = PSThreadOptions.UseCurrentThread;
-        runspace.Open();
-        Runspace.DefaultRunspace = runspace;
+        temporaryRunspace = RunspaceFactory.CreateRunspace();
+        temporaryRunspace.ThreadOptions = PSThreadOptions.UseCurrentThread;
+        temporaryRunspace.Open();
+        Runspace.DefaultRunspace = temporaryRunspace;
       }
-      cancelToken.ThrowIfCancellationRequested();
-      hashtable = scriptBlock.InvokeReturnAsIs() as Hashtable;
-      cancelToken.ThrowIfCancellationRequested();
+
+      try
+      {
+        scriptBlock.CheckRestrictedLanguage([], ["PSEdition", "PSScriptRoot"], true);
+        cancelToken.ThrowIfCancellationRequested();
+        object? evaluatedDataFile = scriptBlock.InvokeReturnAsIs();
+        hashtable = evaluatedDataFile switch
+        {
+          Hashtable evaluatedHashtable => evaluatedHashtable,
+          IDictionary evaluatedDictionary => new Hashtable(evaluatedDictionary),
+          PSObject { BaseObject: Hashtable baseHashtable } => baseHashtable,
+          PSObject { BaseObject: IDictionary baseDictionary } => new Hashtable(baseDictionary),
+          _ => null
+        };
+        cancelToken.ThrowIfCancellationRequested();
+      }
+      finally
+      {
+        Runspace.DefaultRunspace = previousRunspace;
+        temporaryRunspace?.Dispose();
+      }
     }
 
     if (hashtable is null)
