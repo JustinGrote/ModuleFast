@@ -20,11 +20,11 @@ public static class SpecFileReader
 
   public static IEnumerable<string> FindRequiredSpecFiles(string path)
   {
-    var resolvedPath = Path.GetFullPath(path);
-    var requireFiles = Directory.GetFiles(resolvedPath, "*.requires.*")
+    string resolvedPath = Path.GetFullPath(path);
+    string[] requireFiles = Directory.GetFiles(resolvedPath, "*.requires.*")
         .Where(f =>
         {
-          var ext = Path.GetExtension(f);
+          string ext = Path.GetExtension(f);
           return ext is ".psd1" or ".ps1" or ".psm1" or ".json" or ".jsonc";
         })
         .ToArray();
@@ -60,7 +60,7 @@ public static class SpecFileReader
       SpecFileType fileType = SpecFileType.AutoDetect,
       CmdletInteraction? cmdlet = null)
   {
-    var spec = ReadRequiredSpecFile(requiredSpecPath, cmdlet).GetAwaiter().GetResult();
+    object spec = ReadRequiredSpecFile(requiredSpecPath, cmdlet).GetAwaiter().GetResult();
     return ConvertFromObject(spec, fileType, cmdlet);
   }
 
@@ -103,8 +103,8 @@ public static class SpecFileReader
     List<ModuleFastSpec> results = [];
     foreach (DictionaryEntry kv in dict)
     {
-      var key = kv.Key?.ToString() ?? throw new InvalidDataException("Keys must be strings");
-      var value = kv.Value?.ToString() ?? "";
+      string key = kv.Key?.ToString() ?? throw new InvalidDataException("Keys must be strings");
+      string value = kv.Value?.ToString() ?? "";
 
       if (kv.Value is IDictionary)
         throw new NotSupportedException("ModuleFast SpecFile detected but the value is a hashtable. Try using -SpecFileType parameter if you expected another format.");
@@ -161,7 +161,7 @@ public static class SpecFileReader
 
     foreach (DictionaryEntry kv in specCopy)
     {
-      var key = kv.Key?.ToString() ?? "";
+      string key = kv.Key?.ToString() ?? "";
       if (string.IsNullOrEmpty(key)) continue;
 
       if (key.Contains("/"))
@@ -197,8 +197,8 @@ public static class SpecFileReader
         continue;
       }
 
-      var version = extValue["Version"]?.ToString() ?? "latest";
-      var name = extValue["Name"]?.ToString() ?? key;
+      string version = extValue["Version"]?.ToString() ?? "latest";
+      string name = extValue["Name"]?.ToString() ?? key;
 
       if (extValue["Parameters"] is IDictionary parameters)
       {
@@ -222,7 +222,7 @@ public static class SpecFileReader
 
     foreach (DictionaryEntry kv in spec)
     {
-      var key = kv.Key?.ToString() ?? throw new InvalidDataException("PSResourceGet Parse: Keys must be strings.");
+      string key = kv.Key?.ToString() ?? throw new InvalidDataException("PSResourceGet Parse: Keys must be strings.");
 
       if (kv.Value is string strValue)
       {
@@ -233,7 +233,7 @@ public static class SpecFileReader
       if (kv.Value is not IDictionary extValue)
         throw new NotSupportedException("PSResourceGet Parse: Value target must be a string or hashtable");
 
-      var version = extValue["Version"]?.ToString() ?? "latest";
+      string version = extValue["Version"]?.ToString() ?? "latest";
 
       if (extValue["Prerelease"] != null)
       {
@@ -255,7 +255,7 @@ public static class SpecFileReader
         continue;
       }
 
-      var value = kv.Value;
+      string value = kv.Value;
       if (value.StartsWith('[') || value.StartsWith('(') || value.Contains('*'))
       {
         results.Add(new ModuleFastSpec(kv.Key, VersionRange.Parse(value)));
@@ -281,7 +281,7 @@ public static class SpecFileReader
         handler.UseProxy = true;
       }
       using HttpClient client = new(handler);
-      var content = await client.GetStringAsync(requiredSpecPath).ConfigureAwait(false);
+      string content = await client.GetStringAsync(requiredSpecPath).ConfigureAwait(false);
       if (content.AsSpan().TrimStart().StartsWith("@{".AsSpan()))
       {
         return PSDataFileReader.Parse(content, requiredSpecPath, default, cmdlet);
@@ -289,8 +289,8 @@ public static class SpecFileReader
       return JsonSerializer.Deserialize<object>(content, _jsonOpts)!;
     }
 
-    var resolvedPath = Path.GetFullPath(requiredSpecPath);
-    var extension = Path.GetExtension(resolvedPath).ToLowerInvariant();
+    string resolvedPath = Path.GetFullPath(requiredSpecPath);
+    string extension = Path.GetExtension(resolvedPath).ToLowerInvariant();
 
     if (extension == ".psd1")
     {
@@ -325,11 +325,11 @@ public static class SpecFileReader
 
     if (extension is ".json" or ".jsonc")
     {
-      var content = File.ReadAllText(resolvedPath);
+      string content = File.ReadAllText(resolvedPath);
       JsonElement json = JsonSerializer.Deserialize<JsonElement>(content, _jsonOpts);
       if (json.ValueKind == JsonValueKind.Array)
       {
-        var strings = json.EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+        string[] strings = json.EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
         return strings;
       }
       // Convert to dictionary
@@ -355,7 +355,7 @@ public static class SpecFileReader
     if (requiredModules is object[] arr)
     {
       List<ModuleFastSpec> specs = [];
-      foreach (var item in arr)
+      foreach (object item in arr)
       {
         if (item is string s)
           specs.Add(new ModuleFastSpec(s));

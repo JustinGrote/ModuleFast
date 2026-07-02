@@ -8,8 +8,8 @@ public static class PathHelper
   {
     try
     {
-      var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-      var modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
+      string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+      string[] modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
           .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
           .Select(p =>
           {
@@ -22,13 +22,13 @@ public static class PathHelper
       {
         if (allUsers)
         {
-          var allUsersPath = modulePaths.FirstOrDefault(p =>
+          string? allUsersPath = modulePaths.FirstOrDefault(p =>
               !p.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase));
           if (!string.IsNullOrWhiteSpace(allUsersPath)) return allUsersPath;
         }
         else
         {
-          var currentUserPath = modulePaths.FirstOrDefault(p =>
+          string? currentUserPath = modulePaths.FirstOrDefault(p =>
               p.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase));
           if (!string.IsNullOrWhiteSpace(currentUserPath)) return currentUserPath;
         }
@@ -38,19 +38,19 @@ public static class PathHelper
       {
         if (allUsers)
         {
-          var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+          string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
           return string.IsNullOrWhiteSpace(programFiles)
               ? null
               : Path.Combine(programFiles, "PowerShell", "Modules");
         }
 
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         return string.IsNullOrWhiteSpace(documents)
             ? null
             : Path.Combine(documents, "PowerShell", "Modules");
       }
 
-      var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+      string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
       if (!allUsers)
       {
         return string.IsNullOrWhiteSpace(home)
@@ -70,7 +70,7 @@ public static class PathHelper
   {
     destination = Path.GetFullPath(destination);
 
-    var modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
+    string[] modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
         .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
 
     if (modulePaths.Contains(destination, StringComparer.OrdinalIgnoreCase))
@@ -89,7 +89,7 @@ public static class PathHelper
       return;
     }
 
-    var profileValue = cmdlet.GetVariable("profile");
+    object? profileValue = cmdlet.GetVariable("profile");
     string? myProfile = profileValue?.ToString();
 
     // VSCode's PowerShell extension uses a custom host whose $profile.CurrentUserAllHosts
@@ -103,7 +103,7 @@ public static class PathHelper
       cmdlet.Verbose("Visual Studio Code Host detected; resolving profile path from filesystem.");
       // On Windows: %USERPROFILE%\Documents\PowerShell\profile.ps1
       // On Linux/macOS: ~/.config/powershell/profile.ps1  (XDG standard; matches pwsh default)
-      var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+      string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
       myProfile = OperatingSystem.IsWindows()
           ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PowerShell", "profile.ps1")
           : Path.Combine(userProfile, ".config", "powershell", "profile.ps1");
@@ -129,12 +129,12 @@ public static class PathHelper
     }
 
     // Use relative destination if possible
-    var displayDestination = destination;
-    var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-    var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    foreach (var basePath in new[] { localAppData, home })
+    string displayDestination = destination;
+    string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    foreach (string? basePath in new[] { localAppData, home })
     {
-      var rel = Path.GetRelativePath(basePath, destination);
+      string rel = Path.GetRelativePath(basePath, destination);
       if (rel != destination)
       {
         displayDestination = "$([environment]::GetFolderPath('LocalApplicationData'))" +
@@ -143,7 +143,7 @@ public static class PathHelper
       }
     }
 
-    var profileLine = $"if (\"{displayDestination}\" -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) {{ $env:PSModulePath = \"{displayDestination}\" + $([IO.Path]::PathSeparator + $env:PSModulePath) }} #Added by ModuleFast.";
+    string profileLine = $"if (\"{displayDestination}\" -notin ($env:PSModulePath.split([IO.Path]::PathSeparator))) {{ $env:PSModulePath = \"{displayDestination}\" + $([IO.Path]::PathSeparator + $env:PSModulePath) }} #Added by ModuleFast.";
 
     // Use FileStreamOptions with SequentialScan for reading (the profile is read top-to-bottom once)
     string profileContent;

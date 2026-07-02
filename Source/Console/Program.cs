@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 using ModuleFast;
 
-var source = "https://pwsh.gallery/index.json";
+string source = "https://pwsh.gallery/index.json";
 string? destination = null;
 string? specFilePath = null;
 bool update = false;
@@ -22,73 +22,73 @@ string? password = null;
 // Parse arguments
 for (int i = 0; i < args.Length; i++)
 {
-	switch (args[i].ToLowerInvariant())
-	{
-		case "-source" or "--source":
-			source = args[++i];
-			break;
-		case "-destination" or "--destination" or "-d":
-			destination = args[++i];
-			break;
-		case "-path" or "--path" or "-p":
-			specFilePath = args[++i];
-			break;
-		case "-update" or "--update":
-			update = true;
-			break;
-		case "-prerelease" or "--prerelease":
-			prerelease = true;
-			break;
-		case "-ci" or "--ci":
-			ci = true;
-			break;
-		case "-plan" or "--plan":
-			plan = true;
-			break;
-		case "-destinationonly" or "--destinationonly":
-			destinationOnly = true;
-			break;
-		case "-strictsemver" or "--strictsemver":
-			strictSemVer = true;
-			break;
-		case "-timeout" or "--timeout":
-			timeout = int.Parse(args[++i]);
-			break;
-		case "-throttlelimit" or "--throttlelimit":
-			throttleLimit = int.Parse(args[++i]);
-			break;
-		case "-lockfilepath" or "--lockfilepath":
-			ciLockFilePath = args[++i];
-			break;
-		case "-username" or "--username" or "-u":
-			username = args[++i];
-			break;
-		case "-password" or "--password":
-			password = args[++i];
-			break;
-		case "-help" or "--help" or "-h" or "-?":
-			PrintUsage();
-			return 0;
-		default:
-			// Positional: treat as module spec
-			specFilePath ??= args[i];
-			break;
-	}
+  switch (args[i].ToLowerInvariant())
+  {
+    case "-source" or "--source":
+      source = args[++i];
+      break;
+    case "-destination" or "--destination" or "-d":
+      destination = args[++i];
+      break;
+    case "-path" or "--path" or "-p":
+      specFilePath = args[++i];
+      break;
+    case "-update" or "--update":
+      update = true;
+      break;
+    case "-prerelease" or "--prerelease":
+      prerelease = true;
+      break;
+    case "-ci" or "--ci":
+      ci = true;
+      break;
+    case "-plan" or "--plan":
+      plan = true;
+      break;
+    case "-destinationonly" or "--destinationonly":
+      destinationOnly = true;
+      break;
+    case "-strictsemver" or "--strictsemver":
+      strictSemVer = true;
+      break;
+    case "-timeout" or "--timeout":
+      timeout = int.Parse(args[++i]);
+      break;
+    case "-throttlelimit" or "--throttlelimit":
+      throttleLimit = int.Parse(args[++i]);
+      break;
+    case "-lockfilepath" or "--lockfilepath":
+      ciLockFilePath = args[++i];
+      break;
+    case "-username" or "--username" or "-u":
+      username = args[++i];
+      break;
+    case "-password" or "--password":
+      password = args[++i];
+      break;
+    case "-help" or "--help" or "-h" or "-?":
+      PrintUsage();
+      return 0;
+    default:
+      // Positional: treat as module spec
+      specFilePath ??= args[i];
+      break;
+  }
 }
 
 // Resolve destination
 destination ??= PathHelper.GetPSDefaultModulePath(allUsers: false)
-		?? Path.Combine(
-				Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-				"powershell", "Modules");
+    ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "powershell", "Modules");
 
 if (!Directory.Exists(destination))
-	Directory.CreateDirectory(destination);
+  Directory.CreateDirectory(destination);
 
 // Build credential if provided
 NetworkCredential? credential = null;
 if (username != null && password != null)
-	credential = new NetworkCredential(username, password);
+  credential = new NetworkCredential(username, password);
 
 // Create HttpClient
 HttpClient httpClient = ModuleFastClient.Create(credential, timeout);
@@ -101,40 +101,40 @@ var specs = new HashSet<ModuleFastSpec>();
 
 if (specFilePath != null)
 {
-	if (Directory.Exists(specFilePath))
-	{
-		foreach (var file in SpecFileReader.FindRequiredSpecFiles(specFilePath))
-		{
+  if (Directory.Exists(specFilePath))
+  {
+    foreach (string file in SpecFileReader.FindRequiredSpecFiles(specFilePath))
+    {
       foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(file))
         specs.Add(spec);
     }
-	}
-	else
-	{
+  }
+  else
+  {
     foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(specFilePath))
       specs.Add(spec);
   }
 }
 else
 {
-	// Auto-detect spec files in current directory
-	if (ci && File.Exists(ciLockFilePath))
-	{
+  // Auto-detect spec files in current directory
+  if (ci && File.Exists(ciLockFilePath))
+  {
     Console.WriteLine($"Using lockfile: {ciLockFilePath}");
     foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(ciLockFilePath))
       specs.Add(spec);
     update = false;
-	}
-	else
-	{
+  }
+  else
+  {
     IEnumerable<string> specFiles = SpecFileReader.FindRequiredSpecFiles(Environment.CurrentDirectory);
-    foreach (var file in specFiles)
+    foreach (string file in specFiles)
     {
       Console.WriteLine($"Found specfile: {file}");
       foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(file))
         specs.Add(spec);
     }
-	}
+  }
 }
 
 if (specs.Count == 0)
@@ -149,9 +149,9 @@ if (update) ModuleFastCache.Instance.Clear();
 Console.WriteLine($"Planning installation of {specs.Count} module specification(s)...");
 
 string[] modulePaths = destinationOnly
-		? [destination]
-		: Environment.GetEnvironmentVariable("PSModulePath")
-				?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
+    ? [destination]
+    : Environment.GetEnvironmentVariable("PSModulePath")
+        ?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
 
 var planner = new ModuleFastPlanner(source);
 HashSet<ModuleFastInfo> planSet = await planner.GetPlan(specs, modulePaths, update, prerelease, strictSemVer, destinationOnly, ct);
@@ -180,12 +180,12 @@ Console.WriteLine($"Installed {installed.Count} module(s).");
 
 if (ci)
 {
-	var lockFile = new Dictionary<string, string>();
+  var lockFile = new Dictionary<string, string>();
   foreach (ModuleFastInfo? m in installPlan)
     lockFile[m.Name] = m.ModuleVersion.ToString();
 
-  var json = JsonSerializer.Serialize(lockFile, ConsoleJsonContext.Default.DictionaryStringString);
-	File.WriteAllText(ciLockFilePath, json);
+  string json = JsonSerializer.Serialize(lockFile, ConsoleJsonContext.Default.DictionaryStringString);
+  File.WriteAllText(ciLockFilePath, json);
   Console.WriteLine($"Lockfile written to {ciLockFilePath}");
 }
 

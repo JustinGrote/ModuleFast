@@ -57,7 +57,7 @@ public static partial class LocalModuleFinder
       return null;
     }
 
-    foreach (var modulePath in modulePaths)
+    foreach (string modulePath in modulePaths)
     {
       ct.ThrowIfCancellationRequested();
 
@@ -80,22 +80,22 @@ public static partial class LocalModuleFinder
       }
 
       List<(Version version, string path)> candidatePaths = [];
-      var manifestName = $"{spec.Name}.psd1";
+      string manifestName = $"{spec.Name}.psd1";
 
       NuGetVersion? required = spec.Required;
       if (required != null)
       {
         Version moduleVersion = ResolveFolderVersion(required);
-        var moduleFolder = Path.Combine(moduleBaseDir, moduleVersion.ToString());
+        string moduleFolder = Path.Combine(moduleBaseDir, moduleVersion.ToString());
         if (Directory.Exists(moduleFolder))
           candidatePaths.Add((moduleVersion, moduleFolder));
       }
       else
       {
         // Enumerate versioned sub-folders
-        foreach (var folder in Directory.EnumerateDirectories(moduleBaseDir))
+        foreach (string folder in Directory.EnumerateDirectories(moduleBaseDir))
         {
-          var leafName = Path.GetFileName(folder);
+          string leafName = Path.GetFileName(folder);
           if (!Version.TryParse(leafName, out Version? version))
           {
             logger?.Debug($"Could not parse {folder} in {moduleBaseDir} as a valid version.");
@@ -110,7 +110,7 @@ public static partial class LocalModuleFinder
 
           if (spec.Min != null)
           {
-            var originalParts = (spec.Min.OriginalVersion ?? "").Split('-')[0];
+            string originalParts = (spec.Min.OriginalVersion ?? "").Split('-')[0];
             Version minVersion = Version.TryParse(originalParts, out Version? parsedBase) && parsedBase.Revision == -1
                 ? parsedBase
                 : spec.Min.Version;

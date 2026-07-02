@@ -1,5 +1,5 @@
-using System.Management.Automation;
 using System.Linq;
+using System.Management.Automation;
 using System.Text.Json;
 using System.Threading.Channels;
 
@@ -110,7 +110,7 @@ public class InstallModuleFastCommand : TaskCmdlet
       Source = $"https://{Source}/index.json";
     }
 
-    var defaultRepoPath = Combine(
+    string defaultRepoPath = Combine(
         Environment.GetFolderPath(
           Environment.SpecialFolder.LocalApplicationData),
           "powershell",
@@ -123,7 +123,7 @@ public class InstallModuleFastCommand : TaskCmdlet
       if (Scope == InstallScope.CurrentUser)
       {
         // Use legacy documents path
-        var docsPath = Combine(
+        string docsPath = Combine(
           Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
           "PowerShell", "Modules");
         Destination = docsPath;
@@ -134,7 +134,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
         if (OperatingSystem.IsWindows() && Scope != InstallScope.CurrentUser)
         {
-          var defaultWindowsPath = Combine(
+          string defaultWindowsPath = Combine(
             Environment.GetFolderPath(
               Environment.SpecialFolder.MyDocuments),
               "PowerShell",
@@ -181,7 +181,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
     if (!NoPSModulePathUpdate)
     {
-      var modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
+      string[] modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
           .Split(PathSeparator, StringSplitOptions.RemoveEmptyEntries);
       if (!modulePaths.Contains(Destination, StringComparer.OrdinalIgnoreCase))
       {
@@ -224,7 +224,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           paths.Add(Path!);
         }
 
-        foreach (var p in paths)
+        foreach (string p in paths)
         {
           ModuleFastSpec[] specs = SpecFileReader.ConvertFromRequiredSpec(p, SpecFileType, cmdletInteractor);
           foreach (ModuleFastSpec spec in specs)
@@ -274,7 +274,7 @@ public class InstallModuleFastCommand : TaskCmdlet
             }
             else
             {
-              foreach (var specFile in specFiles)
+              foreach (string specFile in specFiles)
               {
                 Verbose($"Found Specfile {specFile}. Evaluating...");
                 ModuleFastSpec[] fileSpecs = SpecFileReader.ConvertFromRequiredSpec(specFile, SpecFileType, cmdletInteractor);
@@ -336,7 +336,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
           var updateInstallProgress = new Action<ModuleFastInfo>(_ =>
           {
-            var done = Interlocked.Increment(ref streamedInstalledCount);
+            int done = Interlocked.Increment(ref streamedInstalledCount);
             Progress("Install-ModuleFast", $"Installing {done} module(s)", percentComplete: 0, id: InstallProgressId);
           });
 
@@ -386,7 +386,7 @@ public class InstallModuleFastCommand : TaskCmdlet
 
           if (finalInstallPlan.Length == 0)
           {
-            var msg = $"✅ {_modulesToInstall.Count} Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update";
+            string msg = $"✅ {_modulesToInstall.Count} Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update";
             Verbose(msg);
             return;
           }
@@ -404,7 +404,7 @@ public class InstallModuleFastCommand : TaskCmdlet
             foreach (ModuleFastInfo m in finalInstallPlan)
               lockFile[m.Name] = m.ModuleVersion.ToString();
 
-            var json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });
+            string json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(CILockFilePath, json);
           }
 
@@ -419,12 +419,12 @@ public class InstallModuleFastCommand : TaskCmdlet
 
       if (finalInstallPlan.Length == 0)
       {
-        var msg = $"✅ {_modulesToInstall.Count} Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update";
+        string msg = $"✅ {_modulesToInstall.Count} Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update";
         Verbose(msg);
         return;
       }
 
-        if (Plan || !await Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules").ConfigureAwait(false))
+      if (Plan || !await Confirm(Destination!, $"Install {finalInstallPlan.Length} Modules").ConfigureAwait(false))
       {
         if (Plan)
           Verbose($"📑 -Plan was specified. Returning a plan including {finalInstallPlan.Length} Module Specifications");
@@ -433,16 +433,16 @@ public class InstallModuleFastCommand : TaskCmdlet
       }
       else
       {
-        var total = finalInstallPlan.Length;
-        var completed = 0;
+        int total = finalInstallPlan.Length;
+        int completed = 0;
         Progress("Install-ModuleFast", $"Installing 0/{total} Modules", percentComplete: 0, id: InstallProgressId);
 
         // The callback is invoked synchronously on the completing thread pool thread.
         // WriteProgress is thread-safe in PowerShell's runtime infrastructure.
         var updateInstallProgress = new Action<ModuleFastInfo>(_ =>
         {
-          var done = Interlocked.Increment(ref completed);
-          var pct = done * 100 / total;
+          int done = Interlocked.Increment(ref completed);
+          int pct = done * 100 / total;
           Progress("Install-ModuleFast", $"Installing {done}/{total} Modules", percentComplete: pct, id: InstallProgressId);
         });
 
@@ -470,7 +470,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           foreach (ModuleFastInfo m in finalInstallPlan)
             lockFile[m.Name] = m.ModuleVersion.ToString();
 
-          var json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });
+          string json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });
           File.WriteAllText(CILockFilePath, json);
         }
       }

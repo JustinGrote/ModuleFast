@@ -70,7 +70,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
 
     if (name.Contains(">=", StringComparison.Ordinal))
     {
-      var parts = name.Split(">=", 2);
+      string[] parts = name.Split(">=", 2);
       moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out NuGetVersion? lower)
           ? new VersionRange(lower, true)
@@ -78,7 +78,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     }
     else if (name.Contains("<=", StringComparison.Ordinal))
     {
-      var parts = name.Split("<=", 2);
+      string[] parts = name.Split("<=", 2);
       moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out NuGetVersion? upper)
           ? new VersionRange(null, false, upper, true)
@@ -86,19 +86,19 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     }
     else if (name.Contains('='))
     {
-      var parts = name.Split('=', 2);
+      string[] parts = name.Split('=', 2);
       moduleName = parts[0].Trim('!');
       range = VersionRange.Parse($"[{parts[1]}]");
     }
     else if (name.Contains(':'))
     {
-      var parts = name.Split(':', 2);
+      string[] parts = name.Split(':', 2);
       moduleName = parts[0].Trim('!');
       range = VersionRange.Parse(parts[1]);
     }
     else if (name.Contains('>'))
     {
-      var parts = name.Split('>', 2);
+      string[] parts = name.Split('>', 2);
       moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out NuGetVersion? lowerExcl)
           ? new VersionRange(lowerExcl, false)
@@ -106,7 +106,7 @@ public sealed class ModuleFastSpec : IComparable, IEquatable<ModuleFastSpec>
     }
     else if (name.Contains('<'))
     {
-      var parts = name.Split('<', 2);
+      string[] parts = name.Split('<', 2);
       moduleName = parts[0].Trim('!');
       range = NuGetVersion.TryParse(parts[1], out NuGetVersion? upperExcl)
           ? new VersionRange(null, false, upperExcl, false)

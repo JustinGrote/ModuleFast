@@ -14,17 +14,17 @@ internal static class EnvironmentProxy
   internal static IWebProxy? Create()
   {
     // Prefer lowercase (convention on Linux), fall back to uppercase (common on Windows/CI).
-    var httpsProxy = Environment.GetEnvironmentVariable("HTTPS_PROXY")
+    string? httpsProxy = Environment.GetEnvironmentVariable("HTTPS_PROXY")
         ?? Environment.GetEnvironmentVariable("https_proxy");
-    var httpProxy = Environment.GetEnvironmentVariable("HTTP_PROXY")
+    string? httpProxy = Environment.GetEnvironmentVariable("HTTP_PROXY")
         ?? Environment.GetEnvironmentVariable("http_proxy");
 
-    var proxyUrl = httpsProxy ?? httpProxy;
+    string? proxyUrl = httpsProxy ?? httpProxy;
     if (string.IsNullOrWhiteSpace(proxyUrl)) return null;
 
     var proxy = new WebProxy(proxyUrl);
 
-    var noProxy = Environment.GetEnvironmentVariable("NO_PROXY")
+    string? noProxy = Environment.GetEnvironmentVariable("NO_PROXY")
         ?? Environment.GetEnvironmentVariable("no_proxy");
     if (!string.IsNullOrWhiteSpace(noProxy))
     {
@@ -135,7 +135,7 @@ public static class ModuleFastClient
 
   public static AuthenticationHeaderValue ToAuthHeader(NetworkCredential credential)
   {
-    var token = Convert.ToBase64String(
+    string token = Convert.ToBase64String(
         Encoding.UTF8.GetBytes($"{credential.UserName}:{credential.Password}"));
     return new AuthenticationHeaderValue("Basic", token);
   }
