@@ -84,7 +84,7 @@ public static class SpecFileReader
       {
         SpecFileType.PSDepend => ConvertFromPSDepend(dict, logger),
         SpecFileType.PSResourceGet => ConvertFromPSResourceGet(dict, logger),
-        _ => ConvertFromModuleFastDict(dict, logger)
+        _ => ConvertFromModuleFastDict(dict)
       };
     }
 
@@ -98,7 +98,7 @@ public static class SpecFileReader
     throw new InvalidDataException("Could not evaluate the Required Specification to a known format.");
   }
 
-  private static ModuleFastSpec[] ConvertFromModuleFastDict(IDictionary dict, CmdletInteraction? logger)
+  private static ModuleFastSpec[] ConvertFromModuleFastDict(IDictionary dict)
   {
     List<ModuleFastSpec> results = [];
     foreach (DictionaryEntry kv in dict)

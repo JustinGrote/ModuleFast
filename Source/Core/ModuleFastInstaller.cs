@@ -13,9 +13,6 @@ public class ModuleFastInstaller
 {
   private readonly SourceRepository _sourceRepository;
 
-  /// <summary>Maximum MemoryStream pre-allocation for a single package download (512 MB).</summary>
-  private const int MaxPreallocatedBufferSize = 512 * 1024 * 1024;
-
   /// <summary>
   /// Performs a case-insensitive search for a .psd1 manifest whose base name matches
   /// <paramref name="moduleName"/> inside <paramref name="directory"/>.

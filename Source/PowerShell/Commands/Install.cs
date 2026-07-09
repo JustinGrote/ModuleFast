@@ -1,7 +1,6 @@
 using System.Linq;
 using System.Management.Automation;
 using System.Text.Json;
-using System.Threading.Channels;
 
 using static System.IO.Path;
 
@@ -313,104 +312,6 @@ public class InstallModuleFastCommand : TaskCmdlet
         }
 
         var planner = new ModuleFastPlanner(Source);
-        bool whatIfSpecified = MyInvocation.BoundParameters.TryGetValue("WhatIf", out object? whatIfValue)
-            && LanguagePrimitives.IsTrue(whatIfValue);
-        bool whatIfPreferenceEnabled = SessionState.PSVariable.GetValue("WhatIfPreference") is bool wp && wp;
-        bool whatIfEnabled = whatIfSpecified || whatIfPreferenceEnabled;
-        bool confirmSpecified = MyInvocation.BoundParameters.TryGetValue("Confirm", out object? confirmValue);
-        bool confirmEnabled = confirmSpecified && LanguagePrimitives.IsTrue(confirmValue);
-        bool confirmSuppressed = confirmSpecified && !confirmEnabled;
-        ConfirmImpact confirmPreference = SessionState.PSVariable.GetValue("ConfirmPreference") is ConfirmImpact cp
-            ? cp
-            : ConfirmImpact.High;
-        bool confirmationWouldPrompt = !confirmSuppressed && confirmPreference <= ConfirmImpact.Medium;
-        // Keep planning and installation separate for deterministic behavior.
-        // Streaming install while planning can race with local module discovery.
-        bool canStreamDuringPlan = false;
-
-        if (canStreamDuringPlan)
-        {
-          var installer = new ModuleFastInstaller(Source);
-          int streamedInstalledCount = 0;
-          Progress("Install-ModuleFast", "Installing while planning", percentComplete: 0, id: InstallProgressId);
-
-          var updateInstallProgress = new Action<ModuleFastInfo>(_ =>
-          {
-            int done = Interlocked.Increment(ref streamedInstalledCount);
-            Progress("Install-ModuleFast", $"Installing {done} module(s)", percentComplete: 0, id: InstallProgressId);
-          });
-
-          var stream = Channel.CreateUnbounded<ModuleFastInfo>(new UnboundedChannelOptions
-          {
-            SingleReader = true,
-            SingleWriter = false,
-            AllowSynchronousContinuations = false
-          });
-
-          Task<List<ModuleFastInfo>> installStreamTask = installer.InstallModules(
-              stream.Reader.ReadAllAsync(ct),
-              Destination!,
-              Update || ParameterSetName == "ModuleFastInfo",
-              ct,
-              cmdletInteractor,
-              ThrottleLimit,
-              updateInstallProgress);
-
-          try
-          {
-            HashSet<ModuleFastInfo> planSet = await planner.GetPlan(
-                _modulesToInstall,
-                modulePaths,
-                Update,
-                Prerelease,
-                StrictSemVer,
-                DestinationOnly,
-                ct,
-                cmdlet: cmdletInteractor,
-                onModulePlanned: async (module, token) =>
-                {
-                  await stream.Writer.WriteAsync(module, token).ConfigureAwait(false);
-                }).ConfigureAwait(false);
-
-            finalInstallPlan = planSet.OrderBy(static module => module.Name, StringComparer.OrdinalIgnoreCase).ToArray();
-            stream.Writer.TryComplete();
-            Progress("Install-ModuleFast", "Plan complete", percentComplete: 100, id: PlanProgressId);
-          }
-          catch (Exception ex)
-          {
-            stream.Writer.TryComplete(ex);
-            throw;
-          }
-
-          List<ModuleFastInfo> streamedInstalled = await installStreamTask.ConfigureAwait(false);
-
-          if (finalInstallPlan.Length == 0)
-          {
-            string msg = $"✅ {_modulesToInstall.Count} Module Specifications have all been satisfied by installed modules. If you would like to check for newer versions remotely, specify -Update";
-            Verbose(msg);
-            return;
-          }
-
-          Verbose("✅ All required modules installed! Exiting.");
-
-          if (PassThru)
-            foreach (ModuleFastInfo m in streamedInstalled)
-              WriteObject(m);
-
-          if (CI)
-          {
-            Verbose($"Writing lockfile to {CILockFilePath}");
-            var lockFile = new Dictionary<string, string>();
-            foreach (ModuleFastInfo m in finalInstallPlan)
-              lockFile[m.Name] = m.ModuleVersion.ToString();
-
-            string json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(CILockFilePath, json);
-          }
-
-          return;
-        }
-
         HashSet<ModuleFastInfo> nonStreamingPlanSet = await planner.GetPlan(
           _modulesToInstall, modulePaths, Update, Prerelease, StrictSemVer, DestinationOnly, ct, cmdlet: cmdletInteractor).ConfigureAwait(false);
         finalInstallPlan = nonStreamingPlanSet.OrderBy(static module => module.Name, StringComparer.OrdinalIgnoreCase).ToArray();
