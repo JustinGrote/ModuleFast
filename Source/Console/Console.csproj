@@ -12,5 +12,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Core\Core.csproj" />
+    <PackageReference Include="System.Management.Automation" />
+    <TrimmerRootDescriptor Include="NuGetProtocol.Aot.xml" />
+    <RuntimeHostConfigurationOption Include="NuGet.UseSystemTextJsonDeserialization" Value="true" Trim="true" />
   </ItemGroup>
 </Project>

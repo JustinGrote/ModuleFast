@@ -1,0 +1,5 @@
+<linker>
+  <assembly fullname="NuGet.Protocol">
+    <type fullname="NuGet.Protocol.*" preserve="all" />
+  </assembly>
+</linker>
