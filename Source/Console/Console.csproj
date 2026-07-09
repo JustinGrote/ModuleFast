@@ -7,6 +7,7 @@
     <AssemblyName>modulefast</AssemblyName>
     <RootNamespace>ModuleFast.Console</RootNamespace>
     <PublishAot>true</PublishAot>
+    <VerifyReferenceAotCompatibility>true</VerifyReferenceAotCompatibility>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
