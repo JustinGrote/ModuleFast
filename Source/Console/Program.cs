@@ -7,6 +7,7 @@ using ModuleFast;
 string source = "https://pwsh.gallery/index.json";
 string? destination = null;
 string? specFilePath = null;
+List<string> specInputs = [];
 bool update = false;
 bool prerelease = false;
 bool ci = false;
@@ -18,6 +19,9 @@ int throttleLimit = Environment.ProcessorCount;
 string ciLockFilePath = "requires.lock.json";
 string? username = null;
 string? password = null;
+
+static bool IsOptionToken(string value) =>
+  value.StartsWith('-') && value is not "-";
 
 // Parse arguments
 for (int i = 0; i < args.Length; i++)
@@ -32,6 +36,17 @@ for (int i = 0; i < args.Length; i++)
       break;
     case "-path" or "--path" or "-p":
       specFilePath = args[++i];
+      break;
+    case "-spec" or "--spec":
+      if (i + 1 >= args.Length || IsOptionToken(args[i + 1]))
+      {
+        Console.Error.WriteLine("Error: -spec requires at least one module specification value.");
+        return 1;
+      }
+
+      // Accept a series of values after -spec until the next option token.
+      while (i + 1 < args.Length && !IsOptionToken(args[i + 1]))
+        specInputs.Add(args[++i]);
       break;
     case "-update" or "--update":
       update = true;
@@ -70,8 +85,11 @@ for (int i = 0; i < args.Length; i++)
       PrintUsage();
       return 0;
     default:
-      // Positional: treat as module spec
-      specFilePath ??= args[i];
+      // Positional: if it exists on disk, treat as spec path; otherwise treat as inline module spec.
+      if (File.Exists(args[i]) || Directory.Exists(args[i]))
+        specFilePath ??= args[i];
+      else
+        specInputs.Add(args[i]);
       break;
   }
 }
@@ -99,6 +117,22 @@ CancellationToken ct = cts.Token;
 // Collect specs
 var specs = new HashSet<ModuleFastSpec>();
 
+if (specInputs.Count > 0)
+{
+  foreach (string specInput in specInputs)
+  {
+    try
+    {
+      specs.Add(new ModuleFastSpec(specInput));
+    }
+    catch (Exception ex)
+    {
+      Console.Error.WriteLine($"Error: Invalid -spec value '{specInput}'. {ex.Message}");
+      return 1;
+    }
+  }
+}
+
 if (specFilePath != null)
 {
   if (Directory.Exists(specFilePath))
@@ -118,14 +152,14 @@ if (specFilePath != null)
 else
 {
   // Auto-detect spec files in current directory
-  if (ci && File.Exists(ciLockFilePath))
+  if (specInputs.Count == 0 && ci && File.Exists(ciLockFilePath))
   {
     Console.WriteLine($"Using lockfile: {ciLockFilePath}");
     foreach (ModuleFastSpec spec in SpecFileReader.ConvertFromRequiredSpec(ciLockFilePath))
       specs.Add(spec);
     update = false;
   }
-  else
+  else if (specInputs.Count == 0)
   {
     IEnumerable<string> specFiles = SpecFileReader.FindRequiredSpecFiles(Environment.CurrentDirectory);
     foreach (string file in specFiles)
@@ -200,6 +234,7 @@ static void PrintUsage()
 
     Options:
       -path, -p <path>          Path to spec file or directory
+      -spec <spec...>           One or more inline module specs (e.g. Az Az<6.0.0)
       -destination, -d <path>   Module install destination
       -source <url>             NuGet v3 source URL
       -update                   Force update check (ignore cache)
