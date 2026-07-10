@@ -5,7 +5,7 @@ Start-Job {
   #Use the simple v1 for now for bootstrapping
   $v0ModuleFastUri = 'https://github.com/JustinGrote/ModuleFast/releases/download/v0.6.1/ModuleFast.ps1'
   iwr $v0ModuleFastUri | iex
-  Install-ModuleFast
+  Install-ModuleFast -NoPSModulePathUpdate
 } | Receive-Job -Wait -AutoRemoveJob
 
 Push-Location $PSScriptRoot
