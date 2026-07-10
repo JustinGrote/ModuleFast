@@ -48,13 +48,13 @@ jobs:
       uses: actions/upload-artifact@v7
       with:
         name: ModuleFast
-        path: ./Build/ModuleFast
+        path: ./Artifacts/Module
     - name: 📤 Upload Nupkg
       id: upload_nupkg
       uses: actions/upload-artifact@v7
       with:
         name: ModuleFast-nupkg
-        path: ./Build/*.nupkg
+        path: ./Artifacts/*.nupkg
         archive: false
 
   test:
@@ -77,7 +77,7 @@ jobs:
       uses: actions/download-artifact@v8
       with:
         name: ModuleFast
-        path: ./Build/ModuleFast
+        path: ./Artifacts/Module
     - name: ⚡ Install Test Dependencies
       run: |
         . ./ModuleFast.ps1 -ImportNugetVersioning
@@ -87,7 +87,7 @@ jobs:
     - name: 🧪 Test
       run: |
         try {
-          Import-Module ./Build/ModuleFast/ModuleFast.psd1 -Force
+          Import-Module ./Artifacts/Module/ModuleFast.psd1 -Force
           Invoke-Pester -Output Detailed -CI
         }
         catch {
