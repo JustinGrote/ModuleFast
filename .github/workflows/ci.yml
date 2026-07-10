@@ -25,7 +25,7 @@ jobs:
       with:
         fetch-depth: 0
     - name: ⚡ Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
 
     - name: ⚡ Cache NuGet packages
       uses: actions/cache@v6
@@ -75,8 +75,6 @@ jobs:
         path: ./Artifacts/Module
     - name: 🧪 Test
       run: |
-        $debugPreference = 'Continue'
-        $verbosePreference = 'Continue'
         $errorView = 'DetailedView'
         .\build.ps1 Pester
 
@@ -87,7 +85,7 @@ jobs:
     environment:
       name: PowerShell Gallery
       url: https://www.powershellgallery.com/packages/ModuleFast
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: 📥 Download Nupkg
       uses: actions/download-artifact@v8
