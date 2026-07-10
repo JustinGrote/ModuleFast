@@ -8,6 +8,12 @@ Start-Job {
   Install-ModuleFast -NoPSModulePathUpdate
 } | Receive-Job -Wait -AutoRemoveJob
 
+# HACK: There's a problem in CI with the modulepath on windows, will fix this later
+if ($isWindows) {
+  $mfPath = Join-Path [environment]::GetFolderPath('LocalApplicationData') 'powershell/Modules'
+  $env:PSModulePath = "$mfPath;$env:PSModulePath"
+}
+
 Push-Location $PSScriptRoot
 try {
   Invoke-Build @args
