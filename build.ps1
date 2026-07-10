@@ -1,10 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
-#Use the local copy rather than the bootstrap to speed things up
-. $PSScriptRoot/ModuleFast.ps1 -ImportNugetVersioning
-$module = Import-Module $PSScriptRoot/ModuleFast.psd1 -Force -PassThru
-Install-ModuleFast
-Remove-Module $module
+#Use the simple v1 for now for bootstrapping
+$v0ModuleFastUri = 'https://github.com/JustinGrote/ModuleFast/releases/download/v0.6.1/ModuleFast.ps1'
+& ([ScriptBlock]::Create((iwr $v0ModuleFastUri))) -path ./ModuleFastBuild.requires.psd1
 Push-Location $PSScriptRoot
 try {
   Invoke-Build @args

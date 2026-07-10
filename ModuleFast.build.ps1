@@ -68,8 +68,6 @@ Task Version {
   $manifestContent | Set-Content -Path $manifestPath
 }
 
-
-
 Task Package.Nuget {
   Compress-PSResource @c -Path $ModuleOutFolderPath -DestinationPath $Destination
 }
@@ -110,6 +108,4 @@ Task Build @(
 
 Task Test Build, Pester
 Task . Build, Test, Package
-Task BuildNoTest Build, Package
-Task BuildNoTest Build, Package
 Task BuildNoTest Build, Package
