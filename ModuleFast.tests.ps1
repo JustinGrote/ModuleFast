@@ -812,7 +812,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Remove-Item $imfParams.Destination -Recurse -Force
     New-Item -ItemType Directory -Path $imfParams.Destination -ErrorAction stop
     Install-ModuleFast @imfParams -CI
-    $PreReleaseManifest = "$($imfParams.Destination)\PreReleaseTest\0.0.1\PreReleaseTest.psd1"
+    $PreReleaseManifest = "$($imfParams.Destination)\PrereleaseTest\0.0.1\PrereleaseTest.psd1"
     Resolve-Path $PreReleaseManifest
 
     (Import-PowerShellDataFile $PreReleaseManifest).PrivateData.PSData.Prerelease
@@ -821,7 +821,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
 
   It 'Handles an incomplete installation' {
-    $incompleteItemPath = "$installTempPath\PreReleaseTest\0.0.1\.incomplete"
+    $incompleteItemPath = "$installTempPath\PrereleaseTest\0.0.1\.incomplete"
     Install-ModuleFast @imfParams -Specification 'PreReleaseTest=0.0.1'
     New-Item -ItemType File -Path $incompleteItemPath
     Install-ModuleFast @imfParams -Specification 'PreReleaseTest=0.0.1' -Update -WarningVariable actual 3>$null
@@ -859,7 +859,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   Describe 'Plan Parameter' {
     It 'Does not install if Plan is specified' {
       Install-ModuleFast @imfParams -Specification 'PrereleaseTest' -Plan | Should -Match 'PreReleaseTest'
-      Test-Path $installTempPath\PreReleaseTest | Should -BeFalse
+      Test-Path $installTempPath\PrereleaseTest | Should -BeFalse
     }
   }
 
