@@ -75,6 +75,8 @@ jobs:
         path: ./Artifacts/Module
     - name: 🧪 Test
       run: |
+        $debugPreference = 'Continue'
+        $verbosePreference = 'Continue'
         .\build.ps1 Pester
 
   publish:

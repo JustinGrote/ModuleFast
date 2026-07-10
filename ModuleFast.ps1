@@ -69,13 +69,15 @@ vL0HfFzFtQc8t+zdorZF2lUvbqy1K2FbuFPcjcG9U4wsS2t7saQVu5KxMTZSTO+OCcWBgMEkECCEGgiQ
     }
   }
 }
-# The binary module bundles NuGet.Versioning, so only load the inline assembly for the script module path
-if ($PSVersionTable.PSVersion -lt [version]'7.6.0' -or $UseMain -or $Release -eq 'main') {
-  Import-NuGetVersioningAssembly
-}
-if ($ImportNugetVersioning) { return }
 
-$useBinaryModule = $PSVersionTable.PSVersion -ge [version]'7.6.0' -and -not ($UseMain -or $Release -eq 'main')
+
+# Legacy compatability behavior for PowerShell versions < 7.6.0, which do not support the new binary package.
+if ($PSVersionTable.PSVersion -lt [version]'7.6.0') {
+  Import-NuGetVersioningAssembly
+  if ($ImportNugetVersioning) { return }
+  Write-Verbose "WARNING: PowerShell versions < 7.6.0 do not support the new binary module package format. The script module will be loaded instead, which may have performance implications. Consider upgrading to PowerShell 7.6+ for optimal performance and compatibility."
+  $Release = '0.6.1'
+}
 
 if (-not (Get-Module $ModuleName)) {
   #Dont use a release, use the latest commit on main
@@ -161,14 +163,6 @@ if (-not (Get-Module $ModuleName)) {
   }
 } else {
   Write-Warning "Module $ModuleName already loaded, skipping bootstrap."
-}
-
-#This is ModuleFast specific
-if ($UseMain) {
-  Write-Debug 'UseMain Specified, ModuleFast will use preview.pwsh.gallery'
-  if ($bootstrapModule) {
-    & $bootstrapModule { $SCRIPT:DefaultSource = 'https://preview.pwsh.gallery/index.json' }
-  }
 }
 
 if ($args) {
