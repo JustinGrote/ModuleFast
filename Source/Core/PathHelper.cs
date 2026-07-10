@@ -68,6 +68,14 @@ public static class PathHelper
 
   public static async Task AddDestinationToPSModulePath(string destination, bool noProfileUpdate, CmdletInteraction cmdlet)
   {
+    static string GetDefaultProfilePath()
+    {
+      string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+      return OperatingSystem.IsWindows()
+          ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PowerShell", "profile.ps1")
+          : Path.Combine(userProfile, ".config", "powershell", "profile.ps1");
+    }
+
     destination = Path.GetFullPath(destination);
 
     string[] modulePaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? "")
@@ -101,15 +109,16 @@ public static class PathHelper
     else if (string.Equals(cmdlet.HostName, "Visual Studio Code Host", StringComparison.OrdinalIgnoreCase))
     {
       cmdlet.Verbose("Visual Studio Code Host detected; resolving profile path from filesystem.");
-      // On Windows: %USERPROFILE%\Documents\PowerShell\profile.ps1
-      // On Linux/macOS: ~/.config/powershell/profile.ps1  (XDG standard; matches pwsh default)
-      string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-      myProfile = OperatingSystem.IsWindows()
-          ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PowerShell", "profile.ps1")
-          : Path.Combine(userProfile, ".config", "powershell", "profile.ps1");
+      myProfile = GetDefaultProfilePath();
     }
 
     if (string.IsNullOrEmpty(myProfile)) return;
+
+    if (!Path.IsPathRooted(myProfile) || string.IsNullOrWhiteSpace(Path.GetDirectoryName(myProfile)))
+    {
+      cmdlet.Verbose($"Profile path '{myProfile}' is not fully qualified; resolving profile path from filesystem.");
+      myProfile = GetDefaultProfilePath();
+    }
 
     if (!File.Exists(myProfile))
     {
@@ -134,6 +143,7 @@ public static class PathHelper
     string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     foreach (string? basePath in new[] { localAppData, home })
     {
+      if (string.IsNullOrWhiteSpace(basePath)) continue;
       string rel = Path.GetRelativePath(basePath, destination);
       if (rel != destination)
       {
