@@ -68,32 +68,14 @@ jobs:
     steps:
     - name: 🚚 Checkout
       uses: actions/checkout@v7
-    - name: ⚡ Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '10.x'
-        dotnet-quality: 'preview'
     - name: 📥 Download Module
       uses: actions/download-artifact@v8
       with:
         name: ModuleFast
         path: ./Artifacts/Module
-    - name: ⚡ Install Test Dependencies
-      run: |
-        . ./ModuleFast.ps1 -ImportNugetVersioning
-        Import-Module ./ModuleFast.psd1 -Force
-        Install-ModuleFast -Specification @{ModuleName = 'Pester'; RequiredVersion = '5.7.1'}
-        Remove-Module ModuleFast
     - name: 🧪 Test
       run: |
-        try {
-          Import-Module ./Artifacts/Module/ModuleFast.psd1 -Force
-          Invoke-Pester -Output Detailed -CI
-        }
-        catch {
-          "::error::Tests failed: $($_.Exception.Message)`n$(Get-Error | Out-String)" -replace "`n","%0A"
-          throw
-        }
+        .\build.ps1 Pester
 
   publish:
     name: 🚢 Publish to PowerShell Gallery
