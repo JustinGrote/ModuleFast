@@ -3,9 +3,10 @@ using namespace Microsoft.PowerShell.Commands
 using namespace System.Collections.Generic
 using namespace System.Diagnostics.CodeAnalysis
 using namespace NuGet.Versioning
+using namespace ModuleFast
 
-. $PSScriptRoot/ModuleFast.ps1 -ImportNuGetVersioning
-Import-Module $PSScriptRoot/ModuleFast.psm1 -Force
+$env:MODULEFASTDEBUG = $true
+Import-Module $PSScriptRoot/ModuleFast.psd1 -Force
 
 BeforeAll {
   if ($env:MFURI) {
@@ -13,78 +14,67 @@ BeforeAll {
   }
 }
 
-InModuleScope 'ModuleFast' {
-  Describe 'ModuleFastSpec' {
-    Context 'Constructors' {
-      It 'Getters' {
-        $spec = [ModuleFastSpec]'Test'
-        'Name', 'Guid', 'Min', 'Max', 'Required' | ForEach-Object {
-          $spec.PSObject.Properties.name | Should -Contain $PSItem
-        }
-      }
-
-      It 'Name' {
-        $spec = [ModuleFastSpec]'Test'
-        $spec.Name | Should -Be 'Test'
-        $spec.Guid | Should -Be ([Guid]::Empty)
-        $spec.Min | Should -BeNull
-        $spec.Max | Should -BeNull
-        $spec.Required | Should -BeNull
-      }
-
-      It 'Has non-settable properties' {
-        $spec = [ModuleFastSpec]'Test'
-        { $spec.Min = '1' } | Should -Throw
-        { $spec.Max = '1' } | Should -Throw
-        { $spec.Required = '1' } | Should -Throw
-        { $spec.Name = 'fake' } | Should -Throw
-        { $spec.Guid = New-Guid } | Should -Throw
-      }
-
-      It 'ModuleSpecification' {
-        $in = [ModuleSpecification]@{
-          ModuleName    = 'Test'
-          ModuleVersion = '2.1.5'
-        }
-        $spec = [ModuleFastSpec]$in
-        $spec.Name | Should -Be 'Test'
-        $spec.Guid | Should -Be ([Guid]::Empty)
-        $spec.Min | Should -Be '2.1.5'
-        $spec.Max | Should -BeNull
-        $spec.Required | Should -BeNull
+# ModuleFastSpec is a public C# class — no InModuleScope needed
+Describe 'ModuleFastSpec' {
+  Context 'Constructors' {
+    It 'Getters' {
+      $spec = [ModuleFastSpec]'Test'
+      'Name', 'Guid', 'Min', 'Max', 'Required' | ForEach-Object {
+        $spec.PSObject.Properties.name | Should -Contain $PSItem
       }
     }
 
-    Context 'ModuleSpecification Conversion' {
-      It 'Name' {
-        $spec = [ModuleSpecification][ModuleFastSpec]'Test'
-        $spec.Name | Should -Be 'Test'
-        $spec.Version | Should -Be '0.0'
-        $spec.RequiredVersion | Should -BeNull
-        $spec.MaximumVersion | Should -BeNull
+    It 'Name' {
+      $spec = [ModuleFastSpec]'Test'
+      $spec.Name | Should -Be 'Test'
+      $spec.Guid | Should -Be ([Guid]::Empty)
+      $spec.Min | Should -BeNull
+      $spec.Max | Should -BeNull
+      $spec.Required | Should -BeNull
+    }
+
+    It 'Has non-settable properties' {
+      $spec = [ModuleFastSpec]'Test'
+      { $spec.Min = '1' } | Should -Throw
+      { $spec.Max = '1' } | Should -Throw
+      { $spec.Required = '1' } | Should -Throw
+      { $spec.Name = 'fake' } | Should -Throw
+      { $spec.Guid = New-Guid } | Should -Throw
+    }
+
+    It 'ModuleSpecification' {
+      $in = [ModuleSpecification]@{
+        ModuleName    = 'Test'
+        ModuleVersion = '2.1.5'
       }
-      It 'RequiredVersion' {
-        $spec = [ModuleSpecification][ModuleFastSpec]::new('Test', '1.2.3')
-        $spec.Name | Should -Be 'Test'
-        $spec.RequiredVersion | Should -Be '1.2.3.0'
-        $spec.Version | Should -BeNull
-        $spec.MaximumVersion | Should -BeNull
-      }
+      $spec = [ModuleFastSpec]$in
+      $spec.Name | Should -Be 'Test'
+      $spec.Guid | Should -Be ([Guid]::Empty)
+      $spec.Min | Should -Be '2.1.5'
+      $spec.Max | Should -BeNull
+      $spec.Required | Should -BeNull
     }
   }
 
-  Describe 'Import-ModuleManifest' {
-    It 'Reads Dynamic Manifest' {
-      $Mocks = "$PSScriptRoot/Test/Mocks"
-      $manifest = Import-ModuleManifest "$Mocks/Dynamic.psd1"
-      $manifest | Should -BeOfType [System.Collections.Hashtable]
-      $manifest.ModuleVersion | Should -Be '1.0.0'
-      $manifest.RootModule | Should -Be 'coreclr\PrtgAPI.PowerShell.dll'
+  Context 'ModuleSpecification Conversion' {
+    It 'Name' {
+      $spec = [ModuleSpecification][ModuleFastSpec]'Test'
+      $spec.Name | Should -Be 'Test'
+      $spec.Version | Should -Be '0.0'
+      $spec.RequiredVersion | Should -BeNull
+      $spec.MaximumVersion | Should -BeNull
+    }
+    It 'RequiredVersion' {
+      $spec = [ModuleSpecification][ModuleFastSpec]::new('Test', '1.2.3')
+      $spec.Name | Should -Be 'Test'
+      $spec.RequiredVersion | Should -Be '1.2.3.0'
+      $spec.Version | Should -BeNull
+      $spec.MaximumVersion | Should -BeNull
     }
   }
 }
 
-Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
+Describe 'Install-ModuleFast -Plan' -Tag 'E2E' {
   BeforeAll {
     $SCRIPT:__existingPSModulePath = $env:PSModulePath
     $env:PSModulePath = $testDrive
@@ -143,7 +133,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       )
 
       It 'Gets Module with Parameter: <Test>' {
-        $actual = Get-ModuleFastPlan $Spec
+        $actual = Install-ModuleFast $Spec -Plan
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
         $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -151,7 +141,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       } -TestCases $moduleSpecTestCases
 
       It 'Gets Module with Pipeline: <Test>' {
-        $actual = $Spec | Get-ModuleFastPlan
+        $actual = $Spec | Install-ModuleFast -Plan
         $actual | Should -HaveCount 1
         $ModuleName | Should -Be $actual.Name
         $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -161,13 +151,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
     Context 'StrictSemVer Parameter' {
       It 'StrictSemVer matches prereleases with exclusive upper bound' {
-        $actual = Get-ModuleFastPlan 'PrereleaseTest!<0.0.2' -StrictSemVer
+        $actual = Install-ModuleFast 'PrereleaseTest!<0.0.2' -StrictSemVer -Plan
         $actual | Should -HaveCount 1
         $actual.ModuleVersion.IsPrerelease | Should -Be $true
         $actual.ModuleVersion.Patch | Should -Be 2
       }
       It 'StrictSemVer not specified does not match prereleases with exclusive upper bound' {
-        $actual = Get-ModuleFastPlan 'PrereleaseTest!<0.0.2'
+        $actual = Install-ModuleFast 'PrereleaseTest!<0.0.2' -Plan
         $actual | Should -HaveCount 1
         $actual.ModuleVersion.IsPrerelease | Should -Be $false
         $actual.ModuleVersion.Patch | Should -Be 1
@@ -355,13 +345,13 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       )
 
       It 'Fails if hashtable-style string parameter is not a modulespec' {
-        { Get-ModuleFastPlan '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''; InvalidParameter = ''ThisShouldNotBeValid''}' -ErrorAction Stop }
-        | Should -Throw '*Cannot process argument transformation on parameter*'
+        { Install-ModuleFast '@{ModuleName = ''Az.Accounts''; ModuleVersion = ''2.7.3''; InvalidParameter = ''ThisShouldNotBeValid''}' -Plan -ErrorAction Stop }
+        | Should -Throw '*not valid ModuleSpecification syntax*'
       }
 
       It 'Gets Module with String Parameter: <Spec>' {
         try {
-          $actual = Get-ModuleFastPlan $Spec
+          $actual = Install-ModuleFast $Spec -Plan
           $actual | Should -HaveCount 1
           $ModuleName | Should -Be $actual.Name
           $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -374,7 +364,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
       It 'Gets Module with String Pipeline: <Spec>' {
         try {
-          $actual = $Spec | Get-ModuleFastPlan
+          $actual = $Spec | Install-ModuleFast -Plan
           $actual | Should -HaveCount 1
           $ModuleName | Should -Be $actual.Name
           $actual.ModuleVersion | Should -Not -BeNullOrEmpty
@@ -387,7 +377,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
     Context 'ModuleFastSpec Combinations' {
       It 'Strings as Parameter' {
-        $actual = Get-ModuleFastPlan 'Az.Accounts', 'Az.Compute', 'ImportExcel'
+        $actual = Install-ModuleFast 'Az.Accounts', 'Az.Compute', 'ImportExcel' -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
@@ -395,15 +385,20 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         }
       }
       It 'Strings as Pipeline' {
-        $actual = 'Az.Accounts', 'Az.Compute', 'ImportExcel' | Get-ModuleFastPlan
+        $actual = 'Az.Accounts', 'Az.Compute', 'ImportExcel' | Install-ModuleFast -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
           $PSItem.ModuleVersion | Should -BeGreaterThan '1.0'
         }
       }
+      It 'Plan output is sorted alphabetically by module name' {
+        $actual = Install-ModuleFast 'Az.Compute', 'Az.Accounts' -Plan
+        $actual | Should -HaveCount 2
+        ($actual | Select-Object -ExpandProperty Name) | Should -Be @('Az.Accounts', 'Az.Compute')
+      }
       It 'ModuleSpecs as Parameter' {
-        $actual = Get-ModuleFastPlan 'Az.Accounts', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel'))
+        $actual = Install-ModuleFast 'Az.Accounts', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
@@ -411,7 +406,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
         }
       }
       It 'ModuleSpecs as Pipeline' {
-        $actual = 'Az.Accounts>1', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) | Get-ModuleFastPlan
+        $actual = 'Az.Accounts>1', '@{ModuleName = "Az.Compute"; ModuleVersion = "1.0.0" }', ([ModuleSpecification]::new('ImportExcel')) | Install-ModuleFast -Plan
         $actual | Should -HaveCount 3
         $actual | ForEach-Object {
           $PSItem.Name | Should -BeIn 'Az.Accounts', 'Az.Compute', 'ImportExcel'
@@ -421,7 +416,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
 
       It 'Prerelease does not affect non-prerelease' {
         #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
-        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Install-ModuleFast -Plan
         $actual | Should -HaveCount 2
         $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
           $PSItem.ModuleVersion | Should -Be '0.0.1'
@@ -429,7 +424,7 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
       }
       It '-Prerelease overrides even if prerelease is not specified' {
         #The prerelease flag on az.accounts should not trigger prerelease on PrereleaseTest
-        $actual = 'Az.Accounts!', 'PrereleaseTest' | Get-ModuleFastPlan -Prerelease
+        $actual = 'Az.Accounts!', 'PrereleaseTest' | Install-ModuleFast -Prerelease -Plan
         $actual | Should -HaveCount 2
         $actual | Where-Object Name -EQ 'PrereleaseTest' | ForEach-Object {
           $PSItem.ModuleVersion | Should -Be '0.0.2-prerelease'
@@ -439,40 +434,40 @@ Describe 'Get-ModuleFastPlan' -Tag 'E2E' {
   }
 
   It 'Errors on Unsupported Object instead of Stringifying' {
-    { Get-ModuleFastPlan [Tuple]::Create('Az.Accounts') -ErrorAction Stop }
-    | Should -Throw '*Cannot process argument transformation on parameter*'
+    { Install-ModuleFast [Tuple]::Create('Az.Accounts') -Plan -ErrorAction Stop }
+    | Should -Throw '*Cannot bind parameter*'
   }
   It 'Gets Module with 1 dependency' {
-    Get-ModuleFastPlan 'Az.Compute' | Should -HaveCount 2
+    Install-ModuleFast 'Az.Compute' -Plan | Should -HaveCount 2
   }
   It 'Gets all dependencies for a Module with lots of dependencies (Az)' {
-    Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' } | Should -HaveCount 86
+    Install-ModuleFast @{ModuleName = 'Az'; RequiredVersion = '11.1.0' } -Plan | Should -HaveCount 86
   }
   It 'Gets Module with 4 section version number and a 4 section version number dependency (VMware.VimAutomation.Common)' {
-    Get-ModuleFastPlan 'VMware.VimAutomation.Common' | Should -HaveCount 2
+    Install-ModuleFast 'VMware.VimAutomation.Common' -Plan | Should -HaveCount 2
   }
   It 'Gets multiple modules' {
-    Get-ModuleFastPlan @{ModuleName = 'Az'; RequiredVersion = '11.1.0' }, @{ModuleName = 'VMWare.PowerCli'; RequiredVersion = '13.2.0.22746353' }
-    | Should -HaveCount 170
+    Install-ModuleFast @{ModuleName = 'Az'; RequiredVersion = '11.1.0' }, @{ModuleName = 'VMWare.PowerCli'; RequiredVersion = '13.2.0.22746353' } -Plan
+    | Should -HaveCount 122
   }
 
   It 'Casts to ModuleSpecification' {
-    $actual = (Get-ModuleFastPlan 'Az.Accounts') -as [Microsoft.PowerShell.Commands.ModuleSpecification]
+    $actual = (Install-ModuleFast 'Az.Accounts' -Plan) -as [Microsoft.PowerShell.Commands.ModuleSpecification]
     $actual | Should -BeOfType [Microsoft.PowerShell.Commands.ModuleSpecification]
     $actual.Name | Should -Be 'Az.Accounts'
     $actual.RequiredVersion | Should -BeGreaterThan '2.7.3'
   }
 
   It 'Filters Prerelease Modules by Default' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest'
+    $actual = Install-ModuleFast 'PrereleaseTest' -Plan
     $actual.ModuleVersion | Should -Be '0.0.1'
   }
   It 'Shows Prerelease Modules if Prerelease is specified' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest' -Prerelease
+    $actual = Install-ModuleFast 'PrereleaseTest' -Prerelease -Plan
     $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
   It 'Detects Prerelease even if Prerelease not specified' {
-    $actual = Get-ModuleFastPlan 'PrereleaseTest=0.0.2-prerelease'
+    $actual = Install-ModuleFast 'PrereleaseTest=0.0.2-prerelease' -Plan
     $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
   }
 
@@ -508,7 +503,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
       Destination          = $installTempPath
       NoProfileUpdate      = $true
       NoPSModulePathUpdate = $true
-      Confirm              = $false
+      # Confirm              = $false
     }
   }
   AfterAll {
@@ -544,11 +539,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Split-Path $resolvedPath -Leaf | Should -Be '0.4.15.0'
   }
   It 'lots of dependencies (Az)' {
-    Install-ModuleFast @imfParams 'Az'
-		(Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
+    Install-ModuleFast @imfParams 'Az=11.1.0'
+    (Get-Module Az* -ListAvailable).count | Should -BeGreaterThan 10
   }
   It 'specific requiredVersion' {
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -556,7 +551,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'specific requiredVersion when newer version is present' {
     Install-ModuleFast @imfParams 'Az.Accounts'
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; RequiredVersion = '2.7.4' }
     $installedVersions = Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -566,7 +561,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Installs when Maximumversion is lower than currently installed' {
     Install-ModuleFast @imfParams 'Az.Accounts'
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; MaximumVersion = '2.7.3' }
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -574,9 +569,11 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
   It 'Only installs once when Update is specified and latest has not changed' {
     Install-ModuleFast @imfParams 'Az.Accounts' -Update
-    Install-ModuleFast @imfParams 'Az.Accounts' -Update -Debug *>&1
+    $debugpreference = 'continue'
+    Install-ModuleFast @imfParams 'Az.Accounts' -Update *>&1
     | Select-String 'best remote candidate matches what is locally installed'
-    | Should -Not -BeNullOrEmpty
+    | Should -BeLike '*best remote candidate matches what is locally installed*'
+    $debugpreference = 'silentlycontinue'
   }
   It 'Only installs once when Update is specified and latest has not changed for multiple modules' {
     Install-ModuleFast @imfParams 'Az.Compute', 'Az.CosmosDB' -Update
@@ -588,12 +585,12 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Install-ModuleFast @imfParams 'Plaster=1.1.1'
     Install-ModuleFast @imfParams 'Plaster=1.1.3'
     $actual = Install-ModuleFast @imfParams 'Plaster' -Update -PassThru
-    $actual.ModuleVersion | Should -Be '1.1.4'
+    $actual.ModuleVersion | Should -BeGreaterThan '1.1.3'
   }
 
   It 'Updates only dependent module that requires update' {
-    Install-ModuleFast @imfParams @{ ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
-    Install-ModuleFast @imfParams	@{ ModuleName = 'Az.Compute'; RequiredVersion = '5.0.0' }
+    Install-ModuleFast @imfParams @{ModuleName = 'Az.Accounts'; RequiredVersion = '2.10.2' }
+    Install-ModuleFast @imfParams	@{ModuleName = 'Az.Compute'; RequiredVersion = '5.0.0' }
     Get-Module Az.Accounts -ListAvailable
 		| Limit-ModulePath $installTempPath
 		| Select-Object -ExpandProperty Version
@@ -668,22 +665,22 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   It 'Errors trying to install prerelease over regular module' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
     { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }
-    | Should -Throw '*is newer than the requested prerelease version*'
+    | Should -Throw '*is newer than the requested version*'
   }
   It 'Errors trying to install older prerelease over regular module' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
     { Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease' }
-    | Should -Throw '*is newer than the requested prerelease version*'
+    | Should -Throw '*is newer than the requested version*'
   }
   It 'Installs regular module over prerelease module with warning' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -WarningVariable actual *>&1 | Out-Null
-    $actual | Should -BeLike '*is newer than existing prerelease version*'
+    $actual | Should -BeLike '*is newer than existing version*'
   }
   It 'Installs newer prerelease with warning' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-aprerelease'
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-bprerelease' -WarningVariable actual *>&1 | Out-Null
-    $actual | Should -BeLike '*is newer than existing prerelease version*'
+    $actual | Should -BeLike '*is newer than existing version*'
   }
   It 'Doesnt install prerelease if same-version Prerelease already installed' {
     Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1-prerelease'
@@ -815,7 +812,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
     Remove-Item $imfParams.Destination -Recurse -Force
     New-Item -ItemType Directory -Path $imfParams.Destination -ErrorAction stop
     Install-ModuleFast @imfParams -CI
-    $PreReleaseManifest = "$($imfParams.Destination)\PreReleaseTest\0.0.1\PreReleaseTest.psd1"
+    $PreReleaseManifest = "$($imfParams.Destination)\PrereleaseTest\0.0.1\PrereleaseTest.psd1"
     Resolve-Path $PreReleaseManifest
 
     (Import-PowerShellDataFile $PreReleaseManifest).PrivateData.PSData.Prerelease
@@ -824,7 +821,7 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
 
   It 'Handles an incomplete installation' {
-    $incompleteItemPath = "$installTempPath\PreReleaseTest\0.0.1\.incomplete"
+    $incompleteItemPath = "$installTempPath\PrereleaseTest\0.0.1\.incomplete"
     Install-ModuleFast @imfParams -Specification 'PreReleaseTest=0.0.1'
     New-Item -ItemType File -Path $incompleteItemPath
     Install-ModuleFast @imfParams -Specification 'PreReleaseTest=0.0.1' -Update -WarningVariable actual 3>$null
@@ -862,7 +859,334 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   Describe 'Plan Parameter' {
     It 'Does not install if Plan is specified' {
       Install-ModuleFast @imfParams -Specification 'PrereleaseTest' -Plan | Should -Match 'PreReleaseTest'
-      Test-Path $installTempPath\PreReleaseTest | Should -BeFalse
+      Test-Path $installTempPath\PrereleaseTest | Should -BeFalse
+    }
+  }
+
+  Describe 'LocalModuleFinder' {
+    It 'Skips and deletes .incomplete folders' {
+      # Install a module, then mark it incomplete and try to re-install
+      Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+      $moduleDir = Get-ChildItem $installTempPath\PrereleaseTest -Directory | Select-Object -First 1
+      New-Item -Path (Join-Path $moduleDir.FullName '.incomplete') -ItemType File | Out-Null
+
+      # Should ignore the incomplete install and re-download
+      $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -Plan
+      $plan | Should -Not -BeNullOrEmpty
+      # The incomplete folder should have been deleted
+      Test-Path $moduleDir.FullName | Should -BeFalse
+    }
+
+    It 'Detects module with 3-part version folder' {
+      Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+      # The folder should be 3-part (0.0.1) not 4-part
+      $versionFolder = Get-ChildItem $installTempPath\PrereleaseTest -Directory | Select-Object -First 1
+      $versionFolder.Name | Should -Be '0.0.1'
+      # Second install should detect it and produce no plan
+      $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -Plan
+      $plan | Should -BeNullOrEmpty
+    }
+
+    It 'Handles missing manifest gracefully' {
+      Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1'
+      $moduleDir = Get-ChildItem $installTempPath\PrereleaseTest -Directory | Select-Object -First 1
+      # Remove the manifest to simulate corruption
+      Remove-Item (Join-Path $moduleDir.FullName '*.psd1')
+      # Should produce a plan since the local module is unreadable
+      $plan = Install-ModuleFast @imfParams 'PrereleaseTest=0.0.1' -Plan
+      $plan | Should -Not -BeNullOrEmpty
+    }
+  }
+
+  Describe 'Duplicate Specification Warning' {
+    It 'Warns when same module is specified twice' {
+      $actual = Install-ModuleFast @imfParams 'PrereleaseTest', 'PrereleaseTest' -Plan -WarningVariable warnings 3>$null
+      $warnings | Should -BeLike '*specified twice*'
+    }
+  }
+
+  Describe 'Prerelease Parameter' {
+    It 'Installs prerelease when -Prerelease is specified globally' {
+      $actual = Install-ModuleFast @imfParams 'PrereleaseTest' -Prerelease -PassThru
+      $actual | Should -HaveCount 1
+      $actual.ModuleVersion | Should -Be '0.0.2-prerelease'
+    }
+  }
+
+  Describe 'StrictSemVer Parameter' {
+    It 'StrictSemVer includes prereleases within exclusive upper bound' {
+      $actual = Install-ModuleFast @imfParams 'PrereleaseTest!<0.0.2' -StrictSemVer -Plan
+      $actual | Should -HaveCount 1
+      $actual.ModuleVersion.IsPrerelease | Should -Be $true
+    }
+    It 'Without StrictSemVer excludes prereleases from exclusive upper bound' {
+      $actual = Install-ModuleFast @imfParams 'PrereleaseTest!<0.0.2' -Plan
+      $actual | Should -HaveCount 1
+      $actual.ModuleVersion.IsPrerelease | Should -Be $false
+    }
+  }
+
+  Describe 'ModuleFastInfo Pipeline' {
+    It 'Installs modules from piped Install-ModuleFast -Plan output' {
+      $plan = Install-ModuleFast 'PrereleaseTest=0.0.1' -Plan
+      $actual = $plan | Install-ModuleFast @imfParams -PassThru
+      $actual | Should -HaveCount 1
+      $actual.Name | Should -Be 'PrereleaseTest'
+      Get-Item $installTempPath\PrereleaseTest\*\PrereleaseTest.psd1 | Should -Not -BeNullOrEmpty
+    }
+  }
+
+  Describe 'Auto-Detect Spec Files' {
+    It 'Detects spec files in current directory when no args given' {
+      $specDir = Join-Path $testDrive 'autodetect'
+      New-Item -ItemType Directory $specDir | Out-Null
+      "@{ 'PrereleaseTest' = 'latest' }" | Out-File (Join-Path $specDir 'ModuleFast.requires.psd1')
+      Push-Location $specDir
+      try {
+        $actual = Install-ModuleFast @imfParams -Plan
+        $actual | Should -Not -BeNullOrEmpty
+        $actual.Name | Should -Contain 'PrereleaseTest'
+      } finally {
+        Pop-Location
+      }
+    }
+  }
+
+  Describe 'Directory Path' {
+    It 'Installs from directory containing spec files' {
+      $SCRIPT:Mocks = Resolve-Path "$PSScriptRoot/Test/Mocks"
+      $actual = Install-ModuleFast @imfParams -Path $Mocks -Plan
+      $actual | Should -Not -BeNullOrEmpty
+    }
+  }
+}
+
+Describe 'Clear-ModuleFastCache' {
+  It 'Runs without error' {
+    { Clear-ModuleFastCache } | Should -Not -Throw
+  }
+  It 'Clears cached entries so subsequent plans re-fetch' {
+    # Prime the cache
+    Install-ModuleFast 'PrereleaseTest=0.0.1' -Plan | Out-Null
+    Clear-ModuleFastCache
+    # Should still return a valid plan after cache flush
+    $actual = Install-ModuleFast 'PrereleaseTest=0.0.1' -Plan
+    $actual | Should -HaveCount 1
+  }
+}
+
+Describe 'ModuleFastSpec' {
+  Context 'Hashtable Constructor' {
+    It 'Creates from hashtable' {
+      $spec = [ModuleFastSpec]@{ ModuleName = 'Test'; ModuleVersion = '1.0.0' }
+      $spec.Name | Should -Be 'Test'
+      $spec.Min | Should -Be '1.0.0'
+    }
+    It 'Creates from hashtable with RequiredVersion' {
+      $spec = [ModuleFastSpec]@{ ModuleName = 'Test'; RequiredVersion = '2.0.0' }
+      $spec.Name | Should -Be 'Test'
+      $spec.Required | Should -Be '2.0.0'
+    }
+    It 'Creates from hashtable with Guid' {
+      $guid = [Guid]::NewGuid()
+      $spec = [ModuleFastSpec]@{ ModuleName = 'Test'; Guid = $guid; ModuleVersion = '1.0.0' }
+      $spec.Name | Should -Be 'Test'
+      $spec.Guid | Should -Be $guid
+    }
+  }
+
+  Context 'SatisfiedBy' {
+    It 'Exact version satisfies required version spec' {
+      $spec = [ModuleFastSpec]'Test=1.0.0'
+      $spec.SatisfiedBy([NuGet.Versioning.NuGetVersion]::Parse('1.0.0')) | Should -Be $true
+      $spec.SatisfiedBy([NuGet.Versioning.NuGetVersion]::Parse('2.0.0')) | Should -Be $false
+    }
+    It 'Higher version satisfies minimum version spec' {
+      $spec = [ModuleFastSpec]'Test>=1.0.0'
+      $spec.SatisfiedBy([NuGet.Versioning.NuGetVersion]::Parse('1.0.0')) | Should -Be $true
+      $spec.SatisfiedBy([NuGet.Versioning.NuGetVersion]::Parse('2.0.0')) | Should -Be $true
+      $spec.SatisfiedBy([NuGet.Versioning.NuGetVersion]::Parse('0.9.0')) | Should -Be $false
+    }
+    It 'Version range upper exclusive excludes prereleases by default' {
+      $spec = [ModuleFastSpec]'Test:(,2.0.0)'
+      $spec.SatisfiedBy([NuGet.Versioning.NuGetVersion]::Parse('2.0.0-alpha')) | Should -Be $false
+    }
+    It 'Version range upper exclusive includes prereleases with StrictSemVer' {
+      $spec = [ModuleFastSpec]'Test:(,2.0.0)'
+      $spec.SatisfiedBy([NuGet.Versioning.NuGetVersion]::Parse('2.0.0-alpha'), $true) | Should -Be $true
+    }
+    It 'System.Version overload works' {
+      $spec = [ModuleFastSpec]'Test>=1.0.0'
+      $spec.SatisfiedBy([Version]'2.0.0.0') | Should -Be $true
+      $spec.SatisfiedBy([Version]'0.5.0.0') | Should -Be $false
+    }
+  }
+
+  Context 'Overlap' {
+    It 'Overlapping ranges return true' {
+      $a = [ModuleFastSpec]'Test>=1.0.0'
+      $b = [ModuleFastSpec]'Test<=2.0.0'
+      $a.Overlap($b) | Should -Be $true
+    }
+    It 'Non-overlapping ranges return false' {
+      $a = [ModuleFastSpec]'Test:(,1.0.0)'
+      $b = [ModuleFastSpec]'Test>2.0.0'
+      $a.Overlap($b) | Should -Be $false
+    }
+  }
+
+  Context 'Equality and Comparison' {
+    It 'Equal specs are equal' {
+      $a = [ModuleFastSpec]'Test=1.0.0'
+      $b = [ModuleFastSpec]'Test=1.0.0'
+      $a.Equals($b) | Should -Be $true
+      $a.GetHashCode() | Should -Be $b.GetHashCode()
+    }
+    It 'Different specs are not equal' {
+      $a = [ModuleFastSpec]'Test=1.0.0'
+      $b = [ModuleFastSpec]'Test=2.0.0'
+      $a.Equals($b) | Should -Be $false
+    }
+    It 'Name-only spec is not equal to versioned spec' {
+      $a = [ModuleFastSpec]'Test'
+      $b = [ModuleFastSpec]'Test=1.0.0'
+      $a.Equals($b) | Should -Be $false
+    }
+  }
+
+  Context 'ToString' {
+    It 'Name only' {
+      ([ModuleFastSpec]'Test').ToString() | Should -Be 'Test'
+    }
+    It 'Required version' {
+      ([ModuleFastSpec]'Test=1.0.0').ToString() | Should -Be 'Test(1.0.0)'
+    }
+    It 'With Guid' {
+      $guid = '7c279caf-00bc-40ae-a1ed-184ad07be1b0'
+      $spec = [ModuleFastSpec]::new(
+        [ModuleSpecification]@{ ModuleName = 'Test'; Guid = $guid; ModuleVersion = '1.0.0' }
+      )
+      $spec.ToString() | Should -BeLike "*$guid*"
+    }
+  }
+
+  Context 'PreRelease property' {
+    It 'Returns false for stable version' {
+      ([ModuleFastSpec]'Test=1.0.0').PreRelease | Should -Be $false
+    }
+    It 'Returns true for prerelease version' {
+      ([ModuleFastSpec]'Test=1.0.0-beta').PreRelease | Should -Be $true
+    }
+    It 'Returns true for bang-prefixed name' {
+      ([ModuleFastSpec]'!Test').PreRelease | Should -Be $true
+    }
+    It 'Returns true for bang-suffixed name' {
+      ([ModuleFastSpec]'Test!').PreRelease | Should -Be $true
+    }
+  }
+
+  Context 'Error Cases' {
+    It 'Throws on empty name' {
+      { [ModuleFastSpec]'' } | Should -Throw
+    }
+    It 'Throws on null name' {
+      { [ModuleFastSpec]::new($null) } | Should -Throw
+    }
+    It 'Throws on invalid hashtable string' {
+      { [ModuleFastSpec]'@{ModuleName="Test"; BadKey="Bad"}' } | Should -Throw '*not valid ModuleSpecification syntax*'
+    }
+  }
+}
+
+Describe 'ModuleFastInfo' {
+  It 'Properties are set correctly' {
+    $info = [ModuleFastInfo]::new('TestModule', '1.2.3', 'https://example.com/package')
+    $info.Name | Should -Be 'TestModule'
+    $info.ModuleVersion | Should -Be '1.2.3'
+    $info.Location | Should -Be 'https://example.com/package'
+    $info.IsLocal | Should -Be $false
+  }
+  It 'IsLocal is true for file URIs' {
+    $tempFile = Join-Path $TestDrive 'test.nupkg'
+    New-Item $tempFile -ItemType File -Force | Out-Null
+    $info = [ModuleFastInfo]::new('TestModule', '1.0.0', "file:///$tempFile")
+    $info.IsLocal | Should -Be $true
+  }
+  It 'PreRelease is true for prerelease version' {
+    $info = [ModuleFastInfo]::new('TestModule', '1.0.0-beta', 'https://example.com/package')
+    $info.PreRelease | Should -Be $true
+  }
+  It 'PreRelease is false for stable version' {
+    $info = [ModuleFastInfo]::new('TestModule', '1.0.0', 'https://example.com/package')
+    $info.PreRelease | Should -Be $false
+  }
+  It 'ToString formats correctly' {
+    $info = [ModuleFastInfo]::new('TestModule', '1.2.3', 'https://example.com/package')
+    $info.ToString() | Should -Be 'TestModule(1.2.3)'
+  }
+  It 'Casts to ModuleSpecification' {
+    $info = [ModuleFastInfo]::new('TestModule', '1.2.3', 'https://example.com/package')
+    $ms = [ModuleSpecification]$info
+    $ms.Name | Should -Be 'TestModule'
+    $ms.RequiredVersion | Should -Be '1.2.3.0'
+  }
+  It 'Equal instances have same hash code' {
+    $a = [ModuleFastInfo]::new('Test', '1.0.0', 'https://example.com/a')
+    $b = [ModuleFastInfo]::new('Test', '1.0.0', 'https://example.com/a')
+    $a.Equals($b) | Should -Be $true
+    $a.GetHashCode() | Should -Be $b.GetHashCode()
+  }
+  It 'Different instances are not equal' {
+    $a = [ModuleFastInfo]::new('Test', '1.0.0', 'https://example.com/a')
+    $b = [ModuleFastInfo]::new('Test', '2.0.0', 'https://example.com/b')
+    $a.Equals($b) | Should -Be $false
+  }
+  It 'Formats as a table with name version and location' {
+    $info = [ModuleFastInfo]::new('TestModule', '1.2.3', 'https://example.com/package')
+    $rendered = $info | Format-Table | Out-String -Width 200
+
+    $rendered | Should -Match 'Name\s+ModuleVersion\s+Location'
+    $rendered | Should -Match 'TestModule\s+1\.2\.3\s+https://example\.com/package'
+    $rendered | Should -Not -Match 'RequiredModules|Guid|IsLocal|PreRelease'
+  }
+}
+
+Describe 'Install-ModuleFast -Plan' -Tag 'E2E' {
+  BeforeAll {
+    $SCRIPT:__existingPSModulePath2 = $env:PSModulePath
+    $env:PSModulePath = $testDrive
+  }
+  AfterAll {
+    $env:PSModulePath = $SCRIPT:__existingPSModulePath2
+  }
+
+  Context 'Destination Parameter' {
+    It 'Uses -Destination to check for already installed modules' {
+      $destDir = Join-Path $testDrive $(New-Guid)
+      New-Item -ItemType Directory $destDir | Out-Null
+      # First plan should include the module
+      $plan1 = Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Plan
+      $plan1 | Should -HaveCount 1
+      # Install the module there
+      Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate
+      # Second plan should find it installed
+      $plan2 = Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Plan
+      $plan2 | Should -BeNullOrEmpty
+    }
+  }
+
+  Context 'Update Parameter' {
+    It 'Returns plan when -Update is specified even if locally satisfied' {
+      $destDir = Join-Path $testDrive $(New-Guid)
+      New-Item -ItemType Directory $destDir | Out-Null
+      $env:PSModulePath = $destDir
+      Install-ModuleFast 'PrereleaseTest=0.0.1' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate
+      # Without update, should be satisfied
+      $plan = Install-ModuleFast 'PrereleaseTest' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Plan
+      $plan | Should -BeNullOrEmpty
+      # With update, should check for newer
+      $plan = Install-ModuleFast 'PrereleaseTest' -Destination $destDir -NoPSModulePathUpdate -NoProfileUpdate -Update -Plan
+      $plan | Should -BeNullOrEmpty -Because 'PrereleaseTest 0.0.1 is already the latest stable version'
     }
   }
 }

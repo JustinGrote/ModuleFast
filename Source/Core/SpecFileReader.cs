@@ -1,0 +1,378 @@
+using System.Collections;
+using System.Collections.ObjectModel;
+using System.Management.Automation;
+using System.Management.Automation.Language;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
+using Microsoft.PowerShell.Commands;
+
+using NuGet.Versioning;
+
+namespace ModuleFast;
+
+public enum SpecFileType { AutoDetect, ModuleFast, PSResourceGet, PSDepend }
+
+public static class SpecFileReader
+{
+  private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
+  private static readonly Regex _psDependExtendedKeyRegex = new(@"^(.+)::(.+)$", RegexOptions.Compiled);
+
+  public static IEnumerable<string> FindRequiredSpecFiles(string path)
+  {
+    string resolvedPath = Path.GetFullPath(path);
+    string[] requireFiles = Directory.GetFiles(resolvedPath, "*.requires.*")
+        .Where(f =>
+        {
+          string ext = Path.GetExtension(f);
+          return ext is ".psd1" or ".ps1" or ".psm1" or ".json" or ".jsonc";
+        })
+        .ToArray();
+
+    if (requireFiles.Length == 0)
+      throw new NotSupportedException($"Could not find any required spec files in {path}. Verify the path is correct or provide Module Specifications.");
+
+    return requireFiles;
+  }
+
+  public static SpecFileType SelectRequiredSpecFileType(IDictionary spec)
+  {
+    foreach (string key in spec.Keys.Cast<object>().Select(k => k?.ToString() ?? ""))
+    {
+      if (key.Contains("::") || key.Contains("/"))
+        return SpecFileType.PSDepend;
+      if (key == "PSDependOptions")
+        return SpecFileType.PSDepend;
+
+      if (spec[key] is IDictionary valueDict)
+      {
+        if (valueDict.Contains("DependencyType"))
+          return SpecFileType.PSDepend;
+        if (valueDict.Contains("Repository") || valueDict.Contains("Version"))
+          return SpecFileType.PSResourceGet;
+      }
+    }
+    return SpecFileType.ModuleFast;
+  }
+
+  public static ModuleFastSpec[] ConvertFromRequiredSpec(
+      string requiredSpecPath,
+      SpecFileType fileType = SpecFileType.AutoDetect,
+      CmdletInteraction? cmdlet = null)
+  {
+    object spec = ReadRequiredSpecFile(requiredSpecPath, cmdlet).GetAwaiter().GetResult();
+    return ConvertFromObject(spec, fileType, cmdlet);
+  }
+
+  private static ModuleFastSpec[] ConvertFromObject(object? requiredSpec, SpecFileType fileType, CmdletInteraction? logger)
+  {
+    if (requiredSpec == null)
+      throw new InvalidDataException("Could not evaluate the Required Specification to a known format.");
+
+    // Pass-through types
+    if (requiredSpec is ModuleFastSpec[] mfSpecArray) return mfSpecArray;
+    if (requiredSpec is ModuleFastSpec mfSpec) return [mfSpec];
+    if (requiredSpec is string[] strArray) return strArray.Select(s => new ModuleFastSpec(s)).ToArray();
+    if (requiredSpec is string str) return [new ModuleFastSpec(str)];
+
+    if (requiredSpec is IDictionary dict)
+    {
+      if (fileType == SpecFileType.AutoDetect)
+        fileType = SelectRequiredSpecFileType(dict);
+
+      return fileType switch
+      {
+        SpecFileType.PSDepend => ConvertFromPSDepend(dict, logger),
+        SpecFileType.PSResourceGet => ConvertFromPSResourceGet(dict, logger),
+        _ => ConvertFromModuleFastDict(dict)
+      };
+    }
+
+    // Handle arrays
+    if (requiredSpec is object[] objArr)
+    {
+      if (objArr.All(o => o is string))
+        return objArr.Cast<string>().Select(s => new ModuleFastSpec(s)).ToArray();
+    }
+
+    throw new InvalidDataException("Could not evaluate the Required Specification to a known format.");
+  }
+
+  private static ModuleFastSpec[] ConvertFromModuleFastDict(IDictionary dict)
+  {
+    List<ModuleFastSpec> results = [];
+    foreach (DictionaryEntry kv in dict)
+    {
+      string key = kv.Key?.ToString() ?? throw new InvalidDataException("Keys must be strings");
+      string value = kv.Value?.ToString() ?? "";
+
+      if (kv.Value is IDictionary)
+        throw new NotSupportedException("ModuleFast SpecFile detected but the value is a hashtable. Try using -SpecFileType parameter if you expected another format.");
+
+      if (kv.Value is not string)
+        throw new NotSupportedException("Only strings and hashtables are supported on the right hand side.");
+
+      if (value == "latest")
+      {
+        results.Add(new ModuleFastSpec(key));
+        continue;
+      }
+      if (NuGetVersion.TryParse(value, out _))
+      {
+        results.Add(new ModuleFastSpec(key, value));
+        continue;
+      }
+      if (VersionRange.TryParse(value, out VersionRange? vr) && vr != null)
+      {
+        results.Add(new ModuleFastSpec(key, vr));
+        continue;
+      }
+      try
+      {
+        results.Add(new ModuleFastSpec($"{key}{value}"));
+      }
+      catch
+      {
+        throw new NotSupportedException($"Could not parse {value} as a valid ModuleFastSpec.");
+      }
+    }
+    return results.ToArray();
+  }
+
+  public static ModuleFastSpec[] ConvertFromPSDepend(IDictionary spec, CmdletInteraction? logger)
+  {
+    Dictionary<string, string> initialSpec = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    Hashtable specCopy = new Hashtable(StringComparer.OrdinalIgnoreCase);
+    foreach (DictionaryEntry kv in spec)
+      specCopy[kv.Key?.ToString() ?? ""] = kv.Value;
+
+    if (specCopy.Contains("PSDependOptions"))
+    {
+      logger?.Debug("PSDepend Parse: PSDependOptions detected. Removing...");
+      if (specCopy["PSDependOptions"] is IDictionary options)
+      {
+        if (options["DependencyType"] != null)
+          throw new NotSupportedException("PSDepend Parse: Top-Level DependencyType in PSDependOptions is not currently supported.");
+        if (options["Target"] != null)
+          logger?.Warning("PSDepend Parse: Target in PSDependOptions is not currently supported.");
+      }
+      specCopy.Remove("PSDependOptions");
+    }
+
+    foreach (DictionaryEntry kv in specCopy)
+    {
+      string key = kv.Key?.ToString() ?? "";
+      if (string.IsNullOrEmpty(key)) continue;
+
+      if (key.Contains("/"))
+      {
+        logger?.Debug($"PSDepend Parse: Skipping Unsupported GitHub module {key}");
+        continue;
+      }
+
+      Match colonMatch = _psDependExtendedKeyRegex.Match(key);
+      if (colonMatch.Success)
+      {
+        if (colonMatch.Groups[1].Value != "PSGalleryModule")
+        {
+          logger?.Debug($"PSDepend Parse: Skipping {key} because its extended type is not PSGalleryModule");
+          continue;
+        }
+        initialSpec[colonMatch.Groups[2].Value] = kv.Value?.ToString() ?? "latest";
+        continue;
+      }
+
+      if (kv.Value is string strValue)
+      {
+        initialSpec[key] = strValue;
+        continue;
+      }
+
+      if (kv.Value is not IDictionary extValue)
+        throw new NotSupportedException("PSDepend Parse: Value target must be a string or hashtable");
+
+      if (extValue["DependencyType"]?.ToString() != "PSGalleryModule")
+      {
+        logger?.Debug($"PSDepend Parse: Skipping {key} because DependencyType is not PSGalleryModule");
+        continue;
+      }
+
+      string version = extValue["Version"]?.ToString() ?? "latest";
+      string name = extValue["Name"]?.ToString() ?? key;
+
+      if (extValue["Parameters"] is IDictionary parameters)
+      {
+        if (parameters["AllowPrerelease"] != null)
+          name = $"!{name}";
+      }
+
+      initialSpec[name] = version;
+    }
+
+    return initialSpec
+        .Select(kv => kv.Value == "latest"
+            ? new ModuleFastSpec(kv.Key)
+            : new ModuleFastSpec(kv.Key, kv.Value))
+        .ToArray();
+  }
+
+  public static ModuleFastSpec[] ConvertFromPSResourceGet(IDictionary spec, CmdletInteraction? logger)
+  {
+    Dictionary<string, string> initialSpec = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (DictionaryEntry kv in spec)
+    {
+      string key = kv.Key?.ToString() ?? throw new InvalidDataException("PSResourceGet Parse: Keys must be strings.");
+
+      if (kv.Value is string strValue)
+      {
+        initialSpec[key] = strValue;
+        continue;
+      }
+
+      if (kv.Value is not IDictionary extValue)
+        throw new NotSupportedException("PSResourceGet Parse: Value target must be a string or hashtable");
+
+      string version = extValue["Version"]?.ToString() ?? "latest";
+
+      if (extValue["Prerelease"] != null)
+      {
+        logger?.Debug($"PSResourceGet Parse: Prerelease detected for {key}");
+        key = $"!{key}";
+      }
+      if (extValue["Repository"] != null)
+        logger?.Warning($"PSResourceGet Parse: Repository specification for {key} is not currently supported.");
+
+      initialSpec[key] = version;
+    }
+
+    List<ModuleFastSpec> results = [];
+    foreach (KeyValuePair<string, string> kv in initialSpec)
+    {
+      if (kv.Value == "latest")
+      {
+        results.Add(new ModuleFastSpec(kv.Key));
+        continue;
+      }
+
+      string value = kv.Value;
+      if (value.StartsWith('[') || value.StartsWith('(') || value.Contains('*'))
+      {
+        results.Add(new ModuleFastSpec(kv.Key, VersionRange.Parse(value)));
+      }
+      else
+      {
+        results.Add(new ModuleFastSpec(kv.Key, value));
+      }
+    }
+    return results.ToArray();
+  }
+
+  internal static async Task<object> ReadRequiredSpecFile(string requiredSpecPath, CmdletInteraction? cmdlet)
+  {
+    if (Uri.TryCreate(requiredSpecPath, UriKind.Absolute, out Uri? uri) &&
+        uri.Scheme is "http" or "https")
+    {
+      var proxy = EnvironmentProxy.Create();
+      var handler = new SocketsHttpHandler();
+      if (proxy != null)
+      {
+        handler.Proxy = proxy;
+        handler.UseProxy = true;
+      }
+      using HttpClient client = new(handler);
+      string content = await client.GetStringAsync(requiredSpecPath).ConfigureAwait(false);
+      if (content.AsSpan().TrimStart().StartsWith("@{".AsSpan()))
+      {
+        return PSDataFileReader.Parse(content, requiredSpecPath, default, cmdlet);
+      }
+      return JsonSerializer.Deserialize<object>(content, _jsonOpts)!;
+    }
+
+    string resolvedPath = Path.GetFullPath(requiredSpecPath);
+    string extension = Path.GetExtension(resolvedPath).ToLowerInvariant();
+
+    if (extension == ".psd1")
+    {
+      Hashtable dataFile = await PSDataFileReader.Import(resolvedPath, default, cmdlet);
+      if (dataFile.ContainsKey("ModuleVersion"))
+      {
+        cmdlet?.Debug("Detected a Module Manifest, evaluating RequiredModules");
+        object? reqModules = dataFile["RequiredModules"];
+        if (reqModules == null)
+          throw new InvalidDataException("The manifest does not have a RequiredModules key so ModuleFast does not know what this module requires.");
+
+        return ConvertRequiredModulesToSpecs(reqModules);
+      }
+      else
+      {
+        cmdlet?.Debug("Did not detect a module manifest, passing through as-is");
+        return dataFile;
+      }
+    }
+
+    if (extension is ".ps1" or ".psm1")
+    {
+      cmdlet?.Debug("PowerShell Script/Module file detected, checking for #Requires");
+      ScriptBlockAst ast = Parser.ParseFile(resolvedPath, out _, out _);
+      ModuleSpecification[]? requiredModules = ast.ScriptRequirements?.RequiredModules?.ToArray();
+
+      if (requiredModules == null || requiredModules.Length == 0)
+        throw new NotSupportedException("The script does not have a #Requires -Module statement so ModuleFast does not know what this module requires. See Get-Help about_requires for more.");
+
+      return requiredModules.Select(ms => new ModuleFastSpec(ms)).ToArray();
+    }
+
+    if (extension is ".json" or ".jsonc")
+    {
+      string content = File.ReadAllText(resolvedPath);
+      JsonElement json = JsonSerializer.Deserialize<JsonElement>(content, _jsonOpts);
+      if (json.ValueKind == JsonValueKind.Array)
+      {
+        string[] strings = json.EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+        return strings;
+      }
+      // Convert to dictionary
+      Hashtable dict = new Hashtable(StringComparer.OrdinalIgnoreCase);
+      foreach (JsonProperty prop in json.EnumerateObject())
+        dict[prop.Name] = prop.Value.ToString();
+      return dict;
+    }
+
+    throw new NotSupportedException("Only .ps1, .psm1, .psd1, and .json files are supported.");
+  }
+
+  private static ModuleFastSpec[] ConvertRequiredModulesToSpecs(object requiredModules)
+  {
+    if (requiredModules is IEnumerable<PSModuleInfo> moduleInfos)
+      return moduleInfos.Select(moduleInfo => new ModuleFastSpec(new ModuleSpecification(new Hashtable
+      {
+        { "ModuleName", moduleInfo.Name },
+        { "Guid", moduleInfo.Guid },
+        { "RequiredVersion", moduleInfo.Version }
+      }))).ToArray();
+
+    if (requiredModules is object[] arr)
+    {
+      List<ModuleFastSpec> specs = [];
+      foreach (object item in arr)
+      {
+        if (item is string s)
+          specs.Add(new ModuleFastSpec(s));
+        else if (item is ModuleSpecification ms)
+          specs.Add(new ModuleFastSpec(ms));
+        else if (item is Hashtable ht)
+          specs.Add(new ModuleFastSpec(new ModuleSpecification(ht)));
+        else if (item is PSObject pso)
+        {
+          if (pso.BaseObject is ModuleSpecification ms2)
+            specs.Add(new ModuleFastSpec(ms2));
+          else if (pso.BaseObject is string str)
+            specs.Add(new ModuleFastSpec(str));
+        }
+      }
+      return specs.ToArray();
+    }
+    return [];
+  }
+}

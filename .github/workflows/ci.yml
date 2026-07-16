@@ -1,0 +1,110 @@
+name: ♻️ ModuleFast CI
+
+on:
+  push:
+    branches:
+      - '*'
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  pull_request:
+    branches: [ main ]
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    name: 👷 Build
+    runs-on: ubuntu-24.04
+    outputs:
+      nupkg_artifact_id: ${{ steps.upload_nupkg.outputs.artifact-id }}
+    steps:
+    - name: 🚚 Checkout
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: ⚡ Setup .NET
+      uses: actions/setup-dotnet@v5
+
+    - name: ⚡ Cache NuGet packages
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/packages.lock.json', '**/Directory.Packages.props') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+    - name: 👷 Build & Package
+      env:
+        MODULEVERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || null }}
+      run: |
+        try { ./build.ps1 BuildNoTest }
+        catch {
+          "::error::Build failed: $($_.Exception.Message)`n$(Get-Error | Out-String)" -replace "`n","%0A"
+          throw
+        }
+    - name: 📤 Upload Module
+      uses: actions/upload-artifact@v7
+      with:
+        name: ModuleFast
+        path: ./Artifacts/Module
+    - name: 📤 Upload Nupkg
+      id: upload_nupkg
+      uses: actions/upload-artifact@v7
+      with:
+        name: ModuleFast-nupkg
+        path: ./Artifacts/*.nupkg
+        archive: false
+
+  test:
+    name: 🧪 Test (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: 🚚 Checkout
+      uses: actions/checkout@v7
+    - name: 📥 Download Module
+      uses: actions/download-artifact@v8
+      with:
+        name: ModuleFast
+        path: ./Artifacts/Module
+    - name: 🧪 Test
+      run: |
+        $errorView = 'DetailedView'
+        .\build.ps1 Pester
+
+  publish:
+    name: 🚢 Publish to PowerShell Gallery
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, test]
+    environment:
+      name: PowerShell Gallery
+      url: https://www.powershellgallery.com/packages/ModuleFast
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📥 Download Nupkg
+      uses: actions/download-artifact@v8
+      with:
+        artifact-ids: ${{ needs.build.outputs.nupkg_artifact_id }}
+        path: ./Release
+    - name: 🚢 Publish to PowerShell Gallery
+      env:
+        PSGALLERY_API_KEY: ${{ secrets.PSGALLERY }}
+      run: |
+        $DebugPreference = 'Continue'
+        $VerbosePreference = 'Continue'
+
+        $nupkg = Get-ChildItem -Path ./Release/*.nupkg
+        if ($nupkg.Count -eq 0) {
+          throw "No nupkg found in Release directory"
+        } elseif ($nupkg.Count -gt 1) {
+          throw "Multiple nupkg files found: $($nupkg.FullName -join ', ')"
+        }
+
+        Register-PSResourceRepository -PSGallery -Force
+        Publish-PSResource -Nupkg $nupkg.FullName -ApiKey $env:PSGALLERY_API_KEY

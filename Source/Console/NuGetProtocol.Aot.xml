@@ -1,0 +1,14 @@
+<linker>
+  <assembly fullname="NuGet.Protocol">
+    <type fullname="NuGet.Protocol.*" preserve="all" />
+  </assembly>
+  <assembly fullname="NuGet.Packaging">
+    <type fullname="NuGet.Packaging.*" preserve="all" />
+  </assembly>
+  <assembly fullname="NuGet.Versioning">
+    <type fullname="NuGet.Versioning.*" preserve="all" />
+  </assembly>
+  <assembly fullname="NuGet.Frameworks">
+    <type fullname="NuGet.Frameworks.*" preserve="all" />
+  </assembly>
+</linker>

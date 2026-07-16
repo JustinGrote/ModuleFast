@@ -33,7 +33,7 @@
     Description       = 'Optimizes the PowerShell Module Installation Process to be as fast as possible and operate in CI/CD scenarios in a declarative manner'
 
     # Minimum version of the PowerShell engine required by this module
-    PowerShellVersion = '7.2' #Due to use of CLEAN block
+    PowerShellVersion = '7.6' #Due to use of new ZIP apis
 
     # Name of the PowerShell host required by this module
     # PowerShellHostName = ''
@@ -63,16 +63,16 @@
     # TypesToProcess = @()
 
     # Format files (.ps1xml) to be loaded when importing this module
-    # FormatsToProcess = @()
+    FormatsToProcess = @('ModuleFast.Format.ps1xml')
 
     # Modules to import as nested modules of the module specified in RootModule/ModuleToProcess
     # NestedModules = @()
 
     # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-    FunctionsToExport = 'Install-ModuleFast', 'Get-ModuleFastPlan', 'Clear-ModuleFastCache'
+    FunctionsToExport = @()
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
-    #CmdletsToExport   = '*'
+    CmdletsToExport   = 'Install-ModuleFast', 'Clear-ModuleFastCache'
 
     # Variables to export from this module
     #VariablesToExport = '*'

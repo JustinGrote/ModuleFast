@@ -4,7 +4,6 @@ using namespace System.IO.Compression
 using namespace System.Reflection
 
 #requires -version 7.2
-
 # This is the bootstrap script for Modules
 
 #We cannot use CmdletBinding here because we need the special $args variable for passthrough to Install-ModuleFast
@@ -15,18 +14,12 @@ param (
   [string]$User = 'JustinGrote',
   #Specify the repo
   [string]$Repo = 'ModuleFast',
-  #Specify the module file
-  [string]$ModuleFile = 'ModuleFast.psm1',
   #Entrypoint to be used if additional args are specified
   [string]$EntryPoint = 'Install-ModuleFast',
   #Specify the module name
   [string]$ModuleName = 'ModuleFast',
   #Path of the module to bootstrap. You normally won't change this but you can override it if you want
-  [string]$Uri = $(
-    $base = "https://github.com/$User/$Repo/releases/{0}/$ModuleFile"
-    $version = if ($Release -eq 'latest') { 'latest/download' } else { "download/$Release" }
-    $base -f $version
-  ),
+  [string]$Uri,
   #Used for testing
   [switch]$ImportNugetVersioning,
   #Used for testing
@@ -36,15 +29,15 @@ param (
   [switch]$Confirm
 )
 
-if ($verbose) { $VerbosePreference = 'Continue' }
-if ($debug) { $DebugPreference = 'Continue' }
-
-$ErrorActionPreference = 'Stop'
-
 #Bootstrap via IEX does not evaluate requires so we need an additional check here:
 if ($PSVersionTable.PSVersion -lt '7.2.0') {
   throw [NotSupportedException]'The ModuleFast Bootstrap script requires PowerShell 7.2 or higher. Specific ModuleFast versions may have more strict requirements.'
 }
+
+if ($verbose) { $VerbosePreference = 'Continue' }
+if ($debug) { $DebugPreference = 'Continue' }
+
+$ErrorActionPreference = 'Stop'
 
 #We need to load the versioning assembly before we load the dependent classes
 #We inline this in order to keep ModuleFast self-contained
@@ -70,37 +63,79 @@ vL0HfFzFtQc8t+zdorZF2lUvbqy1K2FbuFPcjcG9U4wsS2t7saQVu5KxMTZSTO+OCcWBgMEkECCEGgiQ
     }
   }
 }
-Import-NuGetVersioningAssembly
-if ($ImportNugetVersioning) { return }
 
-if (-not (Get-Module $ModuleName)) {
-  #Dont use a release, use the latest commit on main
-  if ($UseMain -or $Release -eq 'main') {
-    $Uri = "https://raw.githubusercontent.com/$User/$Repo/main/$ModuleName.psm1"
-  }
-
-  Write-Debug "Fetching $ModuleName from $Uri"
-  $ProgressPreference = 'SilentlyContinue'
-  try {
-    $response = [HttpClient]::new().GetStringAsync($Uri).GetAwaiter().GetResult()
-  } catch {
-    $PSItem.ErrorDetails = "Failed to fetch $ModuleName from $Uri`: $PSItem"
-    $PSCmdlet.ThrowTerminatingError($PSItem)
-  }
-  Write-Debug 'Fetched response'
-  $scriptBlock = [ScriptBlock]::Create($response)
-  $ProgressPreference = 'Continue'
-
-  $bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptblock
-  Write-Debug "Loaded Module $ModuleName"
-} else {
-  Write-Warning "Module $ModuleName already loaded, skipping bootstrap."
+function Get-ReleaseBaseUri {
+  $version = if ($Release -eq 'latest') { 'latest/download' } else { "download/$Release" }
+  $base = "https://github.com/$User/$Repo/releases/{0}/"
+  $base -f $version
 }
 
-#This is ModuleFast specific
-if ($UseMain) {
-  Write-Debug 'UseMain Specified, ModuleFast will use preview.pwsh.gallery'
-  & $bootstrapModule { $SCRIPT:DefaultSource = 'https://preview.pwsh.gallery/index.json' }
+function Import-LegacyModuleFast {
+  param(
+    [string]$LegacyRelease = '0.6.1'
+  )
+
+  Import-NuGetVersioningAssembly
+  if ($ImportNugetVersioning) { return $null }
+
+  $legacyUri = "https://github.com/$User/$Repo/releases/download/v$LegacyRelease/ModuleFast.psm1"
+  Write-Debug "Fetching legacy $ModuleName from $legacyUri"
+  try {
+    $response = [HttpClient]::new().GetStringAsync($legacyUri).GetAwaiter().GetResult()
+  } catch {
+    throw "Failed to fetch $ModuleName from $legacyUri`: $PSItem"
+  }
+
+  Write-Debug 'Fetched legacy module response'
+  $scriptBlock = [ScriptBlock]::Create($response)
+  $script:bootstrapModule = New-Module -Name $ModuleName -ScriptBlock $scriptBlock
+  Write-Debug "Loaded legacy script module $ModuleName $LegacyRelease"
+  return $script:bootstrapModule
+}
+
+if (-not (Get-Module $ModuleName)) {
+  $useBinaryModule = $PSVersionTable.PSVersion -gt '7.6.0'
+
+  if ($useBinaryModule -and -not ($UseMain -or $Release -eq 'main')) {
+    Write-Debug 'PowerShell > 7.6 detected, trying binary module bootstrap from latest release'
+    try {
+      $releaseCacheKey = if ($Release -eq 'latest') { 'latest' } else { $Release }
+      $extractPath = [Path]::Combine([Path]::GetTempPath(), 'ModuleFast-Bootstrap', $releaseCacheKey)
+      $manifestPath = Join-Path $extractPath "$ModuleName.psd1"
+
+      if (-not (Test-Path $manifestPath)) {
+        [Directory]::CreateDirectory($extractPath) | Out-Null
+        $nupkgPath = Join-Path $extractPath 'ModuleFast.nupkg'
+        $downloadUrl = (Get-ReleaseBaseUri) + 'ModuleFast.nupkg'
+
+        Write-Debug "Downloading nupkg from $downloadUrl to $nupkgPath"
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-RestMethod -Uri $downloadUrl -OutFile $nupkgPath -Debug:$false -ErrorAction Stop
+        Write-Debug "Extracting nupkg from $nupkgPath to $extractPath"
+        [ZipFile]::ExtractToDirectory($nupkgPath, $extractPath, $true)
+      } else {
+        Write-Debug "Bootstrap cache exists at $extractPath"
+      }
+
+      if (-not (Test-Path $manifestPath)) {
+        throw "Module manifest not found at $manifestPath after extraction"
+      }
+
+      Import-Module $manifestPath -Global
+      Write-Debug "Loaded binary module $ModuleName from $extractPath"
+    } catch {
+      if (-not $PSItem.Exception.StatusCode) {
+        Write-Verbose "Binary bootstrap failed with unknown error: $($PSItem.Exception.Message). Falling back to legacy 0.6.1 bootstrap."
+      } elseif ($PSItem.Exception.StatusCode -eq 'NotFound') {
+        Write-Verbose "Module $Release nupkg not found at $downloadUrl. This is probably a bug. Falling back to legacy 0.6.1 bootstrap."
+      } else {
+        Write-Verbose "Binary bootstrap failed with status code $($PSItem.Exception.StatusCode). Falling back to legacy 0.6.1 bootstrap."
+      }
+      Import-LegacyModuleFast | Out-Null
+    } finally {
+      $ProgressPreference = 'Continue'
+    }
+  }
 }
 
 if ($args) {
