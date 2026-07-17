@@ -961,6 +961,80 @@ Describe 'Install-ModuleFast' -Tag 'E2E' {
   }
 }
 
+Describe 'Documentation examples' -Tag 'E2E' {
+  BeforeEach {
+    $destination = Join-Path $TestDrive $(New-Guid)
+    New-Item -ItemType Directory -Path $destination | Out-Null
+    $installParameters = @{
+      Destination          = $destination
+      NoPSModulePathUpdate = $true
+      NoProfileUpdate      = $true
+    }
+  }
+
+  It 'Example 1 installs a module and returns PassThru information' {
+    $actual = Install-ModuleFast @installParameters 'PrereleaseTest' -PassThru
+    $actual.Name | Should -Be 'PrereleaseTest'
+    $actual.ModuleVersion | Should -Be '0.0.1'
+  }
+
+  It 'Example 2 returns a plan for multiple specifications' {
+    $actual = Install-ModuleFast @installParameters 'PrereleaseTest', 'PrereleaseTest=0.0.1' -Plan
+    $actual | Should -HaveCount 1
+    $actual.Name | Should -Be 'PrereleaseTest'
+  }
+
+  It 'Example 3 accepts specifications from the pipeline' {
+    $actual = 'PrereleaseTest' | Install-ModuleFast @installParameters -Plan
+    $actual | Should -HaveCount 1
+    $actual.Name | Should -Be 'PrereleaseTest'
+  }
+
+  It 'Example 4 installs a saved plan through the pipeline' {
+    $plan = Install-ModuleFast @installParameters 'PrereleaseTest=0.0.1' -Plan
+    $actual = $plan | Install-ModuleFast @installParameters -PassThru
+    $actual.Name | Should -Be 'PrereleaseTest'
+    Test-Path (Join-Path $destination 'PrereleaseTest/0.0.1/PrereleaseTest.psd1') | Should -BeTrue
+  }
+
+  It 'Example 5 accepts a ModuleSpecification hashtable' {
+    $actual = Install-ModuleFast @installParameters @{ ModuleName = 'PrereleaseTest'; RequiredVersion = '0.0.1' } -PassThru
+    $actual.ModuleVersion | Should -Be '0.0.1'
+  }
+
+  It 'Example 6 reads dependencies from a script requirement file' {
+    $actual = Install-ModuleFast @installParameters -Path (Join-Path $PSScriptRoot 'Test/Mocks/RequiresScript.ps1') -Plan
+    $actual.Name | Should -Be 'PrereleaseTest'
+  }
+
+  It 'Example 7 autodetects a requirement file in the current directory' {
+    $specDirectory = Join-Path $TestDrive $(New-Guid)
+    New-Item -ItemType Directory -Path $specDirectory | Out-Null
+    "@{ 'PrereleaseTest' = 'latest' }" | Out-File (Join-Path $specDirectory 'ModuleFast.requires.psd1')
+    Push-Location $specDirectory
+    try {
+      $actual = Install-ModuleFast @installParameters -Plan
+      $actual.Name | Should -Be 'PrereleaseTest'
+    } finally {
+      Pop-Location
+    }
+  }
+
+  It 'Example 8 writes and consumes a CI lockfile' {
+    Push-Location $TestDrive
+    try {
+      Install-ModuleFast @installParameters 'PrereleaseTest=0.0.1' -CI
+      Test-Path (Join-Path $TestDrive 'requires.lock.json') | Should -BeTrue
+      Remove-Item $destination -Recurse -Force
+      New-Item -ItemType Directory -Path $destination | Out-Null
+      Install-ModuleFast @installParameters -CI
+      Test-Path (Join-Path $destination 'PrereleaseTest/0.0.1/PrereleaseTest.psd1') | Should -BeTrue
+    } finally {
+      Pop-Location
+    }
+  }
+}
+
 Describe 'Clear-ModuleFastCache' {
   It 'Runs without error' {
     { Clear-ModuleFastCache } | Should -Not -Throw
@@ -972,6 +1046,10 @@ Describe 'Clear-ModuleFastCache' {
     # Should still return a valid plan after cache flush
     $actual = Install-ModuleFast 'PrereleaseTest=0.0.1' -Plan
     $actual | Should -HaveCount 1
+  }
+
+  It 'Documentation example clears the request cache' {
+    { Clear-ModuleFastCache } | Should -Not -Throw
   }
 }
 
