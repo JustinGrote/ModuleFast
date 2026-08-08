@@ -1,0 +1,37 @@
+name: GitHub Pages Docs Site
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Deploy Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Deploy Astro site
+        id: deployment
+        uses: withastro/action@v6
+        with:
+          path: Source/Docs
+          package-manager: pnpm
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: GitHub Pages Docs Site
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
