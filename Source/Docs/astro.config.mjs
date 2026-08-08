@@ -3,9 +3,13 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
+const repo = process.env.GITHUB_REPOSITORY;
+const site = repo ? `https://${repo.split('/')[0]}.github.io` : undefined;
+const base = repo ? `/${repo.split('/')[1]}/` : undefined;
+
 export default defineConfig({
-	site: 'https://justingrote.github.io',
-	base: '/ModuleFast/',
+	site,
+	base,
 	integrations: [
 		starlight({
 			title: 'My Docs',
