@@ -7,6 +7,8 @@ Module Name: ModuleFast
 ms.date: 07/17/2026
 PlatyPS schema version: 2024-05-01
 title: Install-ModuleFast
+sidebar:
+  order: 3
 ---
 
 # Install-ModuleFast

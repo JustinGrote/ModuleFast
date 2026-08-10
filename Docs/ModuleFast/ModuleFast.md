@@ -8,6 +8,8 @@ Module Name: ModuleFast
 ms.date: 07/17/2026
 PlatyPS schema version: 2024-05-01
 title: ModuleFast Module
+sidebar:
+  order: 1
 ---
 
 # ModuleFast Module

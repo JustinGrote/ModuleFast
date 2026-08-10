@@ -7,6 +7,8 @@ Module Name: ModuleFast
 ms.date: 07/17/2026
 PlatyPS schema version: 2024-05-01
 title: Clear-ModuleFastCache
+sidebar:
+  order: 2
 ---
 
 # Clear-ModuleFastCache

@@ -6,34 +6,41 @@ hero:
   image:
     file: ../../../../../images/logo.gif
   actions:
-    - text: Example Guide
-      link: /guides/example/
+    - text: Quick start
+      link: /guides/bootstrap-quick-start/
       icon: right-arrow
-    - text: Read the Starlight docs
-      link: https://starlight.astro.build
-      icon: external
+    - text: Command reference
+      link: /reference/install-modulefast/
+      icon: document
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-## Next steps
+## Start here
 
 <CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
-	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
-	</Card>
+	<LinkCard title="Bootstrap Quick Start" href="/guides/bootstrap-quick-start/" icon="rocket">
+		Load ModuleFast without PowerShellGet and install your first module.
+	</LinkCard>
+	<LinkCard title="Module Specifications" href="/guides/module-specification-syntax/" icon="document">
+		Choose exact versions, ranges, prereleases, and floating versions.
+	</LinkCard>
+	<LinkCard title="Dependency Resolution" href="/guides/dependency-resolution/" icon="open-book">
+		Understand plans, local modules, updates, and reproducible installs.
+	</LinkCard>
+</CardGrid>
+
+## Command reference
+
+<CardGrid>
+	<LinkCard title="Install-ModuleFast" href="/reference/install-modulefast/" icon="add-document">
+		Install modules from specifications or requirement files.
+	</LinkCard>
+	<LinkCard title="ModuleFast Module" href="/reference/modulefast/" icon="document">
+		Read the module overview, supported formats, and platform requirements.
+	</LinkCard>
+	<LinkCard title="Clear-ModuleFastCache" href="/reference/clear-modulefastcache/" icon="refresh">
+		Refresh cached repository metadata during a PowerShell session.
+	</LinkCard>
 </CardGrid>
