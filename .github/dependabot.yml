@@ -14,6 +14,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      #We will manually bump SMA because it isn't actually included in the packaging but we want to ensure we don't use newer APIs that might be a breaking change.
+      - dependency-name: System.Management.Automation
   - package-ecosystem: dotnet-sdk
     directory: /
     schedule:
