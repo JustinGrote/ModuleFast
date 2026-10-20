@@ -74,6 +74,37 @@ Describe 'ModuleFastSpec' {
   }
 }
 
+Describe 'C# package extraction URL-encoded paths' {
+  It 'Decodes URL-encoded file and directory names' {
+    $archiveStream = [IO.MemoryStream]::new()
+    $archive = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create, $true)
+    $archive.CreateEntry('sub%20folder/') | Out-Null
+    $entry = $archive.CreateEntry('sub%20folder/file%20with%20spaces.txt')
+    $writer = [IO.StreamWriter]::new($entry.Open())
+    $writer.Write('decoded')
+    $writer.Dispose()
+    $archive.Dispose()
+    $archiveStream.Position = 0
+
+    $destination = Join-Path $TestDrive 'decoded-package'
+    $installerType = [ModuleFastInfo].Assembly.GetType('ModuleFast.ModuleFastInstaller')
+    $extractor = $installerType.GetMethod(
+      'ExtractPackageAsync',
+      [Reflection.BindingFlags]::Static -bor [Reflection.BindingFlags]::NonPublic
+    )
+    $arguments = [object[]]::new(3)
+    $arguments[0] = $archiveStream
+    $arguments[1] = [string]$destination
+    $arguments[2] = [Threading.CancellationToken]::None
+    $extractor.Invoke($null, $arguments).GetAwaiter().GetResult()
+
+    $installedFile = Join-Path $destination 'sub folder/file with spaces.txt'
+    Get-Content $installedFile -Raw | Should -Be 'decoded'
+    Test-Path (Join-Path $destination 'sub%20folder/file%20with%20spaces.txt') | Should -BeFalse
+    $archiveStream.Dispose()
+  }
+}
+
 Describe 'Install-ModuleFast -Plan' -Tag 'E2E' {
   BeforeAll {
     $SCRIPT:__existingPSModulePath = $env:PSModulePath

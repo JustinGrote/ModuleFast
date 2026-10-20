@@ -30,6 +30,45 @@ public class ModuleFastInstaller
          : null;
   }
 
+  private static async Task ExtractPackageAsync(Stream packageStream, string destination, CancellationToken ct)
+  {
+    string extractionRoot = Path.GetFullPath(destination);
+    string extractionRootWithSeparator = Path.EndsInDirectorySeparator(extractionRoot)
+        ? extractionRoot
+        : extractionRoot + Path.DirectorySeparatorChar;
+    StringComparison pathComparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
+
+    using ZipArchive archive = new(packageStream, ZipArchiveMode.Read, leaveOpen: true);
+    foreach (ZipArchiveEntry entry in archive.Entries)
+    {
+      string entryName = Uri.UnescapeDataString(entry.FullName);
+      string entryPath = Path.GetFullPath(Path.Combine(
+          extractionRoot,
+          entryName.Replace('/', Path.DirectorySeparatorChar)));
+      if (!entryPath.StartsWith(extractionRootWithSeparator, pathComparison))
+        throw new InvalidDataException($"Package entry '{entry.FullName}' resolves outside the extraction directory.");
+
+      if (entryName.EndsWith('/'))
+      {
+        Directory.CreateDirectory(entryPath);
+        continue;
+      }
+
+      Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
+      await using Stream entryStream = entry.Open();
+      await using FileStream fileStream = new(entryPath, new FileStreamOptions
+      {
+        Mode = FileMode.CreateNew,
+        Access = FileAccess.Write,
+        Share = FileShare.None,
+        Options = FileOptions.Asynchronous,
+      });
+      await entryStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
+    }
+  }
+
   public ModuleFastInstaller(string source)
   {
     _sourceRepository = new SourceRepository(
@@ -183,9 +222,7 @@ public class ModuleFastInstaller
       Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
     })) { /* zero-byte sentinel; just creating the file is enough */ }
 
-    // ZipFile.ExtractToDirectoryAsync (.NET 10) uses async file I/O internally and
-    // includes built-in zip-slip protection, replacing the custom ExtractZipAsync method.
-    await ZipFile.ExtractToDirectoryAsync(packageStream, installPath, overwriteFiles: false, ct).ConfigureAwait(false);
+    await ExtractPackageAsync(packageStream, installPath, ct).ConfigureAwait(false);
 
     string manifestPath = FindManifestPath(installPath, module.Name)
       ?? throw new FileNotFoundException(
