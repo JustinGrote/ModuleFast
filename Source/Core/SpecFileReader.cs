@@ -15,7 +15,6 @@ public enum SpecFileType { AutoDetect, ModuleFast, PSResourceGet, PSDepend }
 
 public static class SpecFileReader
 {
-  private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
   private static readonly Regex _psDependExtendedKeyRegex = new(@"^(.+)::(.+)$", RegexOptions.Compiled);
 
   public static IEnumerable<string> FindRequiredSpecFiles(string path)
@@ -286,7 +285,8 @@ public static class SpecFileReader
       {
         return PSDataFileReader.Parse(content, requiredSpecPath, default, cmdlet);
       }
-      return JsonSerializer.Deserialize<object>(content, _jsonOpts)!;
+      using JsonDocument document = JsonDocument.Parse(content);
+      return document.RootElement.Clone();
     }
 
     string resolvedPath = Path.GetFullPath(requiredSpecPath);
@@ -326,7 +326,8 @@ public static class SpecFileReader
     if (extension is ".json" or ".jsonc")
     {
       string content = File.ReadAllText(resolvedPath);
-      JsonElement json = JsonSerializer.Deserialize<JsonElement>(content, _jsonOpts);
+      using JsonDocument document = JsonDocument.Parse(content);
+      JsonElement json = document.RootElement;
       if (json.ValueKind == JsonValueKind.Array)
       {
         string[] strings = json.EnumerateArray().Select(e => e.GetString() ?? "").ToArray();

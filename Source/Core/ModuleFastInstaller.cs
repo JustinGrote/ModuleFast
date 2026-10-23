@@ -88,7 +88,8 @@ public class ModuleFastInstaller
 
     FindPackageByIdResource findPackageByIdResource = await _sourceRepository
         .GetResourceAsync<FindPackageByIdResource>(ct)
-        .ConfigureAwait(false);
+        .ConfigureAwait(false)
+        ?? throw new InvalidOperationException("The package source does not provide package lookup.");
 
     ConcurrentBag<ModuleFastInfo> results = [];
     ParallelOptions opts = new()
