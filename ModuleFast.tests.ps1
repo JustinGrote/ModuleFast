@@ -103,6 +103,36 @@ Describe 'C# package extraction URL-encoded paths' {
     $archiveStream.Dispose()
   }
 
+  It 'Replaces invalid filename characters after decoding' {
+    $invalidCharacter = [IO.Path]::GetInvalidFileNameChars() |
+      Where-Object { $_ -ne [IO.Path]::DirectorySeparatorChar -and $_ -ne [IO.Path]::AltDirectorySeparatorChar } |
+      Select-Object -First 1
+    $escapedInvalidCharacter = [Uri]::EscapeDataString([string]$invalidCharacter)
+    $archiveStream = [IO.MemoryStream]::new()
+    $archive = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create, $true)
+    $entry = $archive.CreateEntry("folder$escapedInvalidCharacter/file$escapedInvalidCharacter.txt")
+    $writer = [IO.StreamWriter]::new($entry.Open())
+    $writer.Write('sanitized')
+    $writer.Dispose()
+    $archive.Dispose()
+    $archiveStream.Position = 0
+
+    $destination = Join-Path $TestDrive 'sanitized-package'
+    $installerType = [ModuleFastInfo].Assembly.GetType('ModuleFast.ModuleFastInstaller')
+    $extractor = $installerType.GetMethod(
+      'ExtractPackageAsync',
+      [Reflection.BindingFlags]::Static -bor [Reflection.BindingFlags]::NonPublic
+    )
+    $arguments = [object[]]::new(3)
+    $arguments[0] = $archiveStream
+    $arguments[1] = [string]$destination
+    $arguments[2] = [Threading.CancellationToken]::None
+    $extractor.Invoke($null, $arguments).GetAwaiter().GetResult()
+
+    Get-Content (Join-Path $destination 'folder_/file_.txt') -Raw | Should -Be 'sanitized'
+    $archiveStream.Dispose()
+  }
+
   It 'Stops before extracting directory entries when canceled' {
     $archiveStream = [IO.MemoryStream]::new()
     $archive = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create, $true)

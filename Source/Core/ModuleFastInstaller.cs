@@ -46,6 +46,13 @@ public class ModuleFastInstaller
       ct.ThrowIfCancellationRequested();
 
       string entryName = Uri.UnescapeDataString(entry.FullName);
+      char[] invalidFileNameChars = Path.GetInvalidFileNameChars();
+      entryName = new string(entryName.Select(character =>
+          invalidFileNameChars.Contains(character) &&
+          character != Path.DirectorySeparatorChar &&
+          character != Path.AltDirectorySeparatorChar
+              ? '_'
+              : character).ToArray());
       string entryPath = Path.GetFullPath(Path.Combine(
           extractionRoot,
           entryName.Replace('/', Path.DirectorySeparatorChar)));
