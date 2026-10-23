@@ -43,6 +43,7 @@ public class ModuleFastInstaller
     using ZipArchive archive = new(packageStream, ZipArchiveMode.Read, leaveOpen: true);
     foreach (ZipArchiveEntry entry in archive.Entries)
     {
+      ct.ThrowIfCancellationRequested();
       string entryName = Uri.UnescapeDataString(entry.FullName);
       string entryPath = Path.GetFullPath(Path.Combine(
           extractionRoot,
