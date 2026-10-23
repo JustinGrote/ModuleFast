@@ -31,7 +31,8 @@ public class ModuleFastPlanner(
   {
     PackageMetadataResource metadataResource = await _sourceRepository
       .GetResourceAsync<PackageMetadataResource>(ct)
-      .ConfigureAwait(false);
+      .ConfigureAwait(false)
+      ?? throw new InvalidOperationException("The package source does not provide package metadata.");
 
     ConcurrentDictionary<ModuleFastInfo, byte> modulesToInstall = [];
     ConcurrentDictionary<ModuleFastSpec, ModuleFastInfo> bestLocalCandidates = [];

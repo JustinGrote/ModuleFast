@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Management.Automation" PrivateAssets="all" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
     <PackageReference Include="NuGet.Protocol" />
     <PackageReference Include="NuGet.Versioning" />
     <PackageReference Include="Polly.Core" />

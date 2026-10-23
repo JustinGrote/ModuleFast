@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Management.Automation;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 using static System.IO.Path;
 
@@ -371,7 +372,7 @@ public class InstallModuleFastCommand : TaskCmdlet
           foreach (ModuleFastInfo m in finalInstallPlan)
             lockFile[m.Name] = m.ModuleVersion.ToString();
 
-          string json = JsonSerializer.Serialize(lockFile, new JsonSerializerOptions { WriteIndented = true });
+          string json = JsonSerializer.Serialize(lockFile, InstallJsonContext.Default.DictionaryStringString);
           File.WriteAllText(CILockFilePath, json);
         }
       }
@@ -389,3 +390,7 @@ public class InstallModuleFastCommand : TaskCmdlet
     }
   }
 }
+
+[JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSourceGenerationOptions(WriteIndented = true)]
+internal partial class InstallJsonContext : JsonSerializerContext { }

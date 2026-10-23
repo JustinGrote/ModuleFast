@@ -30,6 +30,46 @@ public class ModuleFastInstaller
          : null;
   }
 
+  private static async Task ExtractPackageAsync(Stream packageStream, string destination, CancellationToken ct)
+  {
+    string extractionRoot = Path.GetFullPath(destination);
+    string extractionRootWithSeparator = Path.EndsInDirectorySeparator(extractionRoot)
+        ? extractionRoot
+        : extractionRoot + Path.DirectorySeparatorChar;
+    StringComparison pathComparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
+
+    using ZipArchive archive = new(packageStream, ZipArchiveMode.Read, leaveOpen: true);
+    foreach (ZipArchiveEntry entry in archive.Entries)
+    {
+      ct.ThrowIfCancellationRequested();
+
+      string entryName = Uri.UnescapeDataString(entry.FullName);
+      char[] invalidFileNameChars = Path.GetInvalidFileNameChars();
+      entryName = new string(entryName.Select(character =>
+          invalidFileNameChars.Contains(character) &&
+          character != Path.DirectorySeparatorChar &&
+          character != Path.AltDirectorySeparatorChar
+              ? '_'
+              : character).ToArray());
+      string entryPath = Path.GetFullPath(Path.Combine(
+          extractionRoot,
+          entryName.Replace('/', Path.DirectorySeparatorChar)));
+      if (!entryPath.StartsWith(extractionRootWithSeparator, pathComparison))
+        throw new InvalidDataException($"Package entry '{entry.FullName}' resolves outside the extraction directory.");
+
+      if (Path.EndsInDirectorySeparator(entryName))
+      {
+        Directory.CreateDirectory(entryPath);
+        continue;
+      }
+
+      Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
+      await entry.ExtractToFileAsync(entryPath, overwrite: false, ct).ConfigureAwait(false);
+    }
+  }
+
   public ModuleFastInstaller(string source)
   {
     _sourceRepository = new SourceRepository(
@@ -55,7 +95,8 @@ public class ModuleFastInstaller
 
     FindPackageByIdResource findPackageByIdResource = await _sourceRepository
         .GetResourceAsync<FindPackageByIdResource>(ct)
-        .ConfigureAwait(false);
+        .ConfigureAwait(false)
+        ?? throw new InvalidOperationException("The package source does not provide package lookup.");
 
     ConcurrentBag<ModuleFastInfo> results = [];
     ParallelOptions opts = new()
@@ -183,9 +224,7 @@ public class ModuleFastInstaller
       Options = FileOptions.WriteThrough | FileOptions.Asynchronous,
     })) { /* zero-byte sentinel; just creating the file is enough */ }
 
-    // ZipFile.ExtractToDirectoryAsync (.NET 10) uses async file I/O internally and
-    // includes built-in zip-slip protection, replacing the custom ExtractZipAsync method.
-    await ZipFile.ExtractToDirectoryAsync(packageStream, installPath, overwriteFiles: false, ct).ConfigureAwait(false);
+    await ExtractPackageAsync(packageStream, installPath, ct).ConfigureAwait(false);
 
     string manifestPath = FindManifestPath(installPath, module.Name)
       ?? throw new FileNotFoundException(
