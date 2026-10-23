@@ -103,6 +103,34 @@ Describe 'C# package extraction URL-encoded paths' {
     Test-Path (Join-Path $destination 'sub%20folder/file%20with%20spaces.txt') | Should -BeFalse
     $archiveStream.Dispose()
   }
+
+  It 'Stops before extracting directory entries when canceled' {
+    $archiveStream = [IO.MemoryStream]::new()
+    $archive = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create, $true)
+    $archive.CreateEntry('subfolder/') | Out-Null
+    $archive.Dispose()
+    $archiveStream.Position = 0
+
+    $destination = Join-Path $TestDrive 'canceled-package'
+    $installerType = [ModuleFastInfo].Assembly.GetType('ModuleFast.ModuleFastInstaller')
+    $extractor = $installerType.GetMethod(
+      'ExtractPackageAsync',
+      [Reflection.BindingFlags]::Static -bor [Reflection.BindingFlags]::NonPublic
+    )
+    $cancellationSource = [Threading.CancellationTokenSource]::new()
+    $cancellationSource.Cancel()
+    $arguments = [object[]]::new(3)
+    $arguments[0] = $archiveStream
+    $arguments[1] = [string]$destination
+    $arguments[2] = $cancellationSource.Token
+
+    {
+      $extractor.Invoke($null, $arguments).GetAwaiter().GetResult()
+    } | Should -Throw
+    Test-Path (Join-Path $destination 'subfolder') | Should -BeFalse
+    $cancellationSource.Dispose()
+    $archiveStream.Dispose()
+  }
 }
 
 Describe 'Install-ModuleFast -Plan' -Tag 'E2E' {
