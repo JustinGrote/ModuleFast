@@ -43,7 +43,8 @@ public class ModuleFastInstaller
     using ZipArchive archive = new(packageStream, ZipArchiveMode.Read, leaveOpen: true);
     foreach (ZipArchiveEntry entry in archive.Entries)
     {
-      ct.ThrowIfCancellationRequested();
+      ct.ThrowIfCancellationRequested();
+
       string entryName = Uri.UnescapeDataString(entry.FullName);
       string entryPath = Path.GetFullPath(Path.Combine(
           extractionRoot,
@@ -57,15 +58,7 @@ public class ModuleFastInstaller
         continue;
       }
 
-      Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
-      await using Stream entryStream = entry.Open();
-      await using FileStream fileStream = new(entryPath, new FileStreamOptions
-      {
-        Mode = FileMode.CreateNew,
-        Access = FileAccess.Write,
-        Share = FileShare.None,
-        Options = FileOptions.Asynchronous,
-      });
+      await entry.ExtractToFileAsync(entryPath, overwrite: false, ct).ConfigureAwait(false);
       await entryStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
     }
   }
