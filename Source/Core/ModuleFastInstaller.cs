@@ -52,15 +52,14 @@ public class ModuleFastInstaller
       if (!entryPath.StartsWith(extractionRootWithSeparator, pathComparison))
         throw new InvalidDataException($"Package entry '{entry.FullName}' resolves outside the extraction directory.");
 
-      if (Path.EndsInDirectorySeparator(entryName))
+      if (Path.EndsInDirectorySeparator(entryName))
       {
         Directory.CreateDirectory(entryPath);
         continue;
       }
 
+      Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
       await entry.ExtractToFileAsync(entryPath, overwrite: false, ct).ConfigureAwait(false);
-
-      await entryStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
     }
   }
 

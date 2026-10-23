@@ -78,7 +78,6 @@ Describe 'C# package extraction URL-encoded paths' {
   It 'Decodes URL-encoded file and directory names' {
     $archiveStream = [IO.MemoryStream]::new()
     $archive = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create, $true)
-    $archive.CreateEntry('sub%20folder/') | Out-Null
     $entry = $archive.CreateEntry('sub%20folder/file%20with%20spaces.txt')
     $writer = [IO.StreamWriter]::new($entry.Open())
     $writer.Write('decoded')
